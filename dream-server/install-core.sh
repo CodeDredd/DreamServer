@@ -96,6 +96,10 @@ Tiers:
     3 - Pro           (24GB+ VRAM, 32B models)
     4 - Enterprise    (48GB+ VRAM or dual GPU, 72B models)
 
+Port Configuration:
+    All service ports are configurable via .env (see .env.example).
+    Example: WEBUI_PORT=8080 OLLAMA_PORT=11435 ./install.sh
+
 Examples:
     $0                           # Interactive setup
     $0 --tier 2 --voice          # Tier 2 with voice

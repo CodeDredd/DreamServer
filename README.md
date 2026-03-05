@@ -28,6 +28,8 @@
 > | **macOS** (Apple Silicon) | **Coming soon** — target mid-March 2026 |
 > | **Windows** | **Coming soon** — target end of March 2026 |
 >
+> **Tested Linux distros:** Ubuntu 24.04/22.04, Debian 12, Fedora 41+, Arch Linux, CachyOS, openSUSE Tumbleweed. Other distros using apt, dnf, pacman, or zypper should also work — [open an issue](https://github.com/Light-Heart-Labs/DreamServer/issues) if yours doesn't.
+>
 > macOS and Windows installers currently provide system diagnostics and preflight checks only.
 > Full runtime support for both platforms is in active development.
 > For a working setup today, use Linux. See the [Support Matrix](dream-server/docs/SUPPORT-MATRIX.md) for details.
@@ -48,6 +50,11 @@ curl -fsSL https://raw.githubusercontent.com/Light-Heart-Labs/DreamServer/main/d
 ```
 
 Open **http://localhost:3000** and start chatting.
+
+> **Port conflicts?** Every port is configurable via environment variables. See [`.env.example`](dream-server/.env.example) for the full list, or override at install time:
+> ```bash
+> WEBUI_PORT=9090 ./install.sh
+> ```
 
 <div align="center">
 
