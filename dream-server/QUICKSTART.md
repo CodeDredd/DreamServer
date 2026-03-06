@@ -2,7 +2,7 @@
 
 One command to a fully running local AI stack. No manual config, no dependency hell.
 
-> **This quickstart is for Linux (NVIDIA + AMD).** macOS and Windows support is coming soon — see [Platform Support](README.md#platform-support) for the roadmap and current status.
+> **This quickstart covers Linux and Windows.** For Windows, see the [Windows install section](#windows) below. macOS support is coming soon — see [Platform Support](README.md#platform-support) for the roadmap.
 
 ## Prerequisites
 
@@ -19,7 +19,9 @@ One command to a fully running local AI stack. No manual config, no dependency h
 - `/dev/kfd` and `/dev/dri` accessible (user in `video` + `render` groups)
 - 60GB+ disk space (for GGUF model files)
 
-## Step 1: Run the Installer
+**Windows:** See [Windows section](#windows) below.
+
+## Step 1: Run the Installer (Linux)
 
 ```bash
 ./install.sh
@@ -196,6 +198,44 @@ LLAMA_SERVER_PORT=8081    # LLM inference port
 
 ---
 
+## Windows
+
+### Prerequisites
+
+- Windows 10/11 with [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) (WSL2 backend enabled)
+- NVIDIA GPU with 8GB+ VRAM, or AMD Strix Halo APU
+- 40GB+ free disk space
+
+### Install
+
+```powershell
+git clone https://github.com/Light-Heart-Labs/DreamServer.git
+cd DreamServer
+.\install.ps1
+```
+
+The installer handles everything — GPU detection, tier selection, Docker setup, credential generation, service startup, and Desktop/Start Menu shortcuts.
+
+### Manage
+
+```powershell
+.\dream-server\installers\windows\dream.ps1 status           # Health checks + GPU status
+.\dream-server\installers\windows\dream.ps1 start            # Start all services
+.\dream-server\installers\windows\dream.ps1 stop             # Stop all services
+.\dream-server\installers\windows\dream.ps1 restart           # Restart all services
+.\dream-server\installers\windows\dream.ps1 logs llm          # Tail LLM logs
+```
+
+### Common Windows Issues
+
+**Ollama conflict:** If Ollama Desktop is running, it uses port 11434 which conflicts with llama-server. The installer will detect this and offer to stop it.
+
+**Docker Desktop not running:** Start Docker Desktop from the Start Menu before running the installer.
+
+**WSL2 backend not enabled:** Open Docker Desktop > Settings > General > check "Use WSL 2 based engine".
+
+---
+
 ## Stopping
 
 ```bash
@@ -204,6 +244,11 @@ docker compose down
 
 # AMD Strix Halo
 docker compose -f docker-compose.base.yml -f docker-compose.amd.yml down
+```
+
+```powershell
+# Windows
+.\dream-server\installers\windows\dream.ps1 stop
 ```
 
 ## Updating
@@ -216,6 +261,11 @@ docker compose up -d
 # AMD Strix Halo
 docker compose -f docker-compose.base.yml -f docker-compose.amd.yml pull
 docker compose -f docker-compose.base.yml -f docker-compose.amd.yml up -d --build
+```
+
+```powershell
+# Windows
+.\dream-server\installers\windows\dream.ps1 update
 ```
 
 ---

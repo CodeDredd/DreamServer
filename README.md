@@ -25,14 +25,16 @@
 > | Platform | Status |
 > |----------|--------|
 > | **Linux** (NVIDIA + AMD) | **Supported** — install and run today |
+> | **Windows** (NVIDIA + AMD) | **Supported** — install and run today |
 > | **macOS** (Apple Silicon) | **Coming soon** — target mid-March 2026 |
-> | **Windows** | **Coming soon** — target end of March 2026 |
 >
 > **Tested Linux distros:** Ubuntu 24.04/22.04, Debian 12, Fedora 41+, Arch Linux, CachyOS, openSUSE Tumbleweed. Other distros using apt, dnf, pacman, or zypper should also work — [open an issue](https://github.com/Light-Heart-Labs/DreamServer/issues) if yours doesn't.
 >
-> macOS and Windows installers currently provide system diagnostics and preflight checks only.
-> Full runtime support for both platforms is in active development.
-> For a working setup today, use Linux. See the [Support Matrix](dream-server/docs/SUPPORT-MATRIX.md) for details.
+> **Windows:** Requires Docker Desktop with WSL2 backend. NVIDIA GPUs use Docker GPU passthrough; AMD Strix Halo runs llama-server natively with Vulkan.
+>
+> The macOS installer currently provides system diagnostics and preflight checks only.
+> Full macOS runtime support is in active development.
+> See the [Support Matrix](dream-server/docs/SUPPORT-MATRIX.md) for details.
 
 ---
 
@@ -81,24 +83,30 @@ cd DreamServer/dream-server
 </details>
 
 <details>
-<summary><b>macOS / Windows (coming soon — not yet functional)</b></summary>
+<summary><b>Windows (PowerShell)</b></summary>
 
-Full runtime support for macOS and Windows is on the roadmap (see platform table above). The installers below currently run **preflight diagnostics only** — they will check your system but will not produce a working AI stack yet.
+Requires Docker Desktop with WSL2 backend enabled.
 
-**macOS (Apple Silicon) — target mid-March 2026:**
+```powershell
+git clone https://github.com/Light-Heart-Labs/DreamServer.git
+cd DreamServer
+.\install.ps1
+```
+
+The installer detects your GPU, picks the right model, generates credentials, starts all services, and creates a Desktop shortcut to the Dashboard. Manage with `.\dream-server\installers\windows\dream.ps1 status`.
+
+</details>
+
+<details>
+<summary><b>macOS (coming soon — not yet functional)</b></summary>
+
+The macOS installer currently runs **preflight diagnostics only** — it will check your system but will not produce a working AI stack yet. Full runtime support for Apple Silicon is in active development (target mid-March 2026).
+
 ```bash
 git clone https://github.com/Light-Heart-Labs/DreamServer.git
 cd DreamServer/dream-server
 ./install.sh    # Runs preflight checks; full runtime coming soon
 ```
-
-**Windows (PowerShell) — target end of March 2026:**
-```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Light-Heart-Labs/DreamServer/main/install.ps1" -OutFile install.ps1
-.\install.ps1    # Runs WSL2/Docker/GPU preflight checks; full runtime coming soon
-```
-
-For a working setup today, use Linux.
 
 </details>
 
