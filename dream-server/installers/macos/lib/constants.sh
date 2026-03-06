@@ -26,9 +26,18 @@ LLAMA_SERVER_PID_FILE="${DS_INSTALL_DIR}/data/.llama-server.pid"
 LLAMA_SERVER_LOG="${DS_INSTALL_DIR}/data/llama-server.log"
 
 # llama.cpp release for macOS Metal build (update when new releases ship)
-LLAMA_CPP_RELEASE_TAG="b5570"
-LLAMA_CPP_MACOS_ASSET="llama-${LLAMA_CPP_RELEASE_TAG}-bin-macos-arm64.zip"
+LLAMA_CPP_RELEASE_TAG="b8210"
+LLAMA_CPP_MACOS_ASSET="llama-${LLAMA_CPP_RELEASE_TAG}-bin-macos-arm64.tar.gz"
 LLAMA_CPP_MACOS_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_RELEASE_TAG}/${LLAMA_CPP_MACOS_ASSET}"
+
+# OpenCode (host-level AI coding IDE, not a Docker service)
+OPENCODE_VERSION="1.2.18"
+OPENCODE_DIR="$HOME/.opencode"
+OPENCODE_BIN="$HOME/.opencode/bin/opencode"
+OPENCODE_CONFIG_DIR="$HOME/.config/opencode"
+OPENCODE_PORT=3003
+OPENCODE_PLIST_LABEL="com.dreamserver.opencode-web"
+OPENCODE_PLIST="$HOME/Library/LaunchAgents/${OPENCODE_PLIST_LABEL}.plist"
 
 # Docker
 DOCKER_COMPOSE_CMD="docker compose"

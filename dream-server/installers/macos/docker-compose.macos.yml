@@ -6,13 +6,22 @@
 
 services:
   llama-server:
+    image: busybox:latest   # Placeholder -- container never runs (replicas: 0)
     deploy:
       replicas: 0    # Disabled -- running natively on macOS host via Metal
 
   dashboard-api:
     environment:
       - OLLAMA_URL=http://host.docker.internal:8080
+      - OLLAMA_HOST=host.docker.internal
+      # Override GPU_BACKEND so manifest filter discovers services.
+      # gpu.py detection returns None gracefully (no nvidia-smi in Docker on Mac).
+      - GPU_BACKEND=nvidia
 
   open-webui:
     environment:
       OPENAI_API_BASE_URL: "http://host.docker.internal:8080/v1"
+
+  # TEI has no arm64 image -- run under Rosetta 2 emulation
+  embeddings:
+    platform: linux/amd64

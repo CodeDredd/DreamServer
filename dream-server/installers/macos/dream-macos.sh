@@ -231,14 +231,13 @@ cmd_status() {
     echo -e "  ${GRN}Health Checks${NC}"
     echo -e "  ${DGRN}$(printf -- '-%.0s' {1..40})${NC}"
 
-    local -A endpoints=(
-        ["LLM API"]="http://localhost:8080/health"
-        ["Chat UI"]="http://localhost:3000"
-        ["Dashboard"]="http://localhost:3001"
-    )
+    # Parallel arrays (Bash 3.2 compatible)
+    local ep_names=("LLM API" "Chat UI" "Dashboard" "OpenCode (IDE)")
+    local ep_urls=("http://localhost:8080/health" "http://localhost:3000" "http://localhost:3001" "http://localhost:3003")
 
-    for name in "${!endpoints[@]}"; do
-        local url="${endpoints[$name]}"
+    for ((i=0; i<${#ep_names[@]}; i++)); do
+        local name="${ep_names[$i]}"
+        local url="${ep_urls[$i]}"
         local code
         code=$(curl -sf -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
         if [[ "$code" -ge 200 ]] && [[ "$code" -lt 400 ]]; then

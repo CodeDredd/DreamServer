@@ -18,7 +18,7 @@ resolve_installer_target() {
             echo "$SCRIPT_DIR/installers/windows/install-windows.ps1"
             ;;
         macos)
-            echo "$SCRIPT_DIR/installers/macos.sh"
+            echo "$SCRIPT_DIR/installers/macos/install-macos.sh"
             ;;
         *)
             echo "unsupported:unknown"

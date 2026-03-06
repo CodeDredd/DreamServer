@@ -147,7 +147,7 @@ if $OLLAMA_RUNNING; then
 fi
 
 # Port conflict checks
-for port_check in 8080 11434 3000 3001; do
+for port_check in 8080 11434 3000 3001 3003; do
     if check_port_conflict "$port_check"; then
         ai_warn "Port ${port_check} is in use by ${PORT_CONFLICT_PROC} (PID ${PORT_CONFLICT_PID})"
     fi
@@ -433,7 +433,12 @@ else
                 mkdir -p "$LLAMA_SERVER_DIR"
                 TEMP_EXTRACT="/tmp/llama-extract-$$"
                 mkdir -p "$TEMP_EXTRACT"
-                unzip -o -q "$LLAMA_ZIP" -d "$TEMP_EXTRACT"
+                # Format-aware extraction (handles .tar.gz and .zip)
+                if [[ "$LLAMA_ZIP" == *.tar.gz ]] || [[ "$LLAMA_ZIP" == *.tgz ]]; then
+                    tar xzf "$LLAMA_ZIP" -C "$TEMP_EXTRACT"
+                else
+                    unzip -o -q "$LLAMA_ZIP" -d "$TEMP_EXTRACT"
+                fi
 
                 # Find llama-server binary (may be in a subdirectory)
                 FOUND_BIN=$(find "$TEMP_EXTRACT" -name "llama-server" -type f | head -1)
@@ -441,9 +446,10 @@ else
                     cp "$FOUND_BIN" "$LLAMA_SERVER_BIN"
                     chmod +x "$LLAMA_SERVER_BIN"
 
-                    # Also copy any companion dylibs
+                    # Also copy any companion dylibs and Metal libraries
                     FOUND_DIR=$(dirname "$FOUND_BIN")
                     find "$FOUND_DIR" -name "*.dylib" -exec cp {} "$LLAMA_SERVER_DIR/" \; 2>/dev/null || true
+                    find "$FOUND_DIR" -name "*.metal" -exec cp {} "$LLAMA_SERVER_DIR/" \; 2>/dev/null || true
 
                     ai_ok "Extracted llama-server"
                 else
@@ -615,6 +621,115 @@ else
 
     # Save compose flags for dream-macos.sh
     echo "${COMPOSE_FLAGS[*]}" > "${INSTALL_DIR}/.compose-flags"
+
+    # ── Install & start OpenCode (native host binary) ──
+    chapter "OPENCODE (AI CODING IDE)"
+
+    if [[ ! -x "$OPENCODE_BIN" ]]; then
+        ai "Installing OpenCode..."
+        tmpfile=$(mktemp /tmp/opencode-install.XXXXXX.sh)
+        if curl -fsSL https://opencode.ai/install -o "$tmpfile" 2>/dev/null && bash "$tmpfile" >> "$DS_LOG_FILE" 2>&1; then
+            ai_ok "OpenCode installed (~/.opencode/bin/opencode)"
+        else
+            ai_warn "OpenCode install failed — install later with: curl -fsSL https://opencode.ai/install | bash"
+        fi
+        rm -f "$tmpfile"
+    else
+        ai_ok "OpenCode already installed"
+    fi
+
+    # Configure OpenCode to use local llama-server (native Metal, port 8080)
+    if [[ -x "$OPENCODE_BIN" ]]; then
+        mkdir -p "$OPENCODE_CONFIG_DIR"
+        if [[ ! -f "$OPENCODE_CONFIG_DIR/opencode.json" ]]; then
+            cat > "$OPENCODE_CONFIG_DIR/opencode.json" <<OPENCODE_EOF
+{
+  "\$schema": "https://opencode.ai/config.json",
+  "model": "llama-server/${LLM_MODEL}",
+  "provider": {
+    "llama-server": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "llama-server (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8080/v1",
+        "apiKey": "no-key"
+      },
+      "models": {
+        "${LLM_MODEL}": {
+          "name": "${LLM_MODEL}",
+          "limit": {
+            "context": ${MAX_CONTEXT:-32768},
+            "output": 32768
+          }
+        }
+      }
+    }
+  }
+}
+OPENCODE_EOF
+            ai_ok "OpenCode configured for local llama-server (model: ${LLM_MODEL})"
+        else
+            ai_ok "OpenCode config already exists"
+        fi
+
+        # Read OPENCODE_SERVER_PASSWORD from .env
+        OPENCODE_SERVER_PASSWORD=""
+        if [[ -f "$INSTALL_DIR/.env" ]]; then
+            OPENCODE_SERVER_PASSWORD=$(grep -m1 '^OPENCODE_SERVER_PASSWORD=' "$INSTALL_DIR/.env" | cut -d= -f2- || true)
+        fi
+
+        # Install as macOS LaunchAgent (auto-start on login)
+        mkdir -p "$HOME/Library/LaunchAgents"
+        cat > "$OPENCODE_PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${OPENCODE_PLIST_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${HOME}/.opencode/bin/opencode</string>
+        <string>web</string>
+        <string>--port</string>
+        <string>3003</string>
+        <string>--hostname</string>
+        <string>0.0.0.0</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${HOME}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>${HOME}</string>
+        <key>PATH</key>
+        <string>${HOME}/.opencode/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>OPENCODE_SERVER_PASSWORD</key>
+        <string>${OPENCODE_SERVER_PASSWORD}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${INSTALL_DIR}/data/opencode-web.log</string>
+    <key>StandardErrorPath</key>
+    <string>${INSTALL_DIR}/data/opencode-web.log</string>
+</dict>
+</plist>
+PLIST_EOF
+
+        # Unload existing (if any) and load new plist
+        launchctl bootout "gui/$(id -u)/${OPENCODE_PLIST_LABEL}" 2>/dev/null || true
+        if launchctl bootstrap "gui/$(id -u)" "$OPENCODE_PLIST" 2>/dev/null; then
+            ai_ok "OpenCode Web UI service installed (LaunchAgent, port 3003)"
+        else
+            ai_warn "OpenCode LaunchAgent failed — start manually: opencode web --port 3003"
+        fi
+    fi
 fi
 
 # ============================================================================
@@ -635,16 +750,16 @@ ai "Running health checks..."
 MAX_ATTEMPTS=30
 ALL_HEALTHY=true
 
-declare -A HEALTH_ENDPOINTS
-HEALTH_ENDPOINTS=(
-    ["LLM (llama-server)"]="http://localhost:8080/health"
-    ["Chat UI (Open WebUI)"]="http://localhost:3000"
-)
-$ENABLE_VOICE && HEALTH_ENDPOINTS["Whisper (STT)"]="http://localhost:9000/health"
-$ENABLE_WORKFLOWS && HEALTH_ENDPOINTS["n8n (Workflows)"]="http://localhost:5678/healthz"
+# Parallel arrays (Bash 3.2 compatible -- no associative arrays)
+HEALTH_NAMES=("LLM (llama-server)" "Chat UI (Open WebUI)")
+HEALTH_URLS=("http://localhost:8080/health" "http://localhost:3000")
+$ENABLE_VOICE && HEALTH_NAMES+=("Whisper (STT)") && HEALTH_URLS+=("http://localhost:9000/health")
+$ENABLE_WORKFLOWS && HEALTH_NAMES+=("n8n (Workflows)") && HEALTH_URLS+=("http://localhost:5678/healthz")
+[[ -x "$OPENCODE_BIN" ]] && HEALTH_NAMES+=("OpenCode (IDE)") && HEALTH_URLS+=("http://localhost:${OPENCODE_PORT}")
 
-for NAME in "${!HEALTH_ENDPOINTS[@]}"; do
-    URL="${HEALTH_ENDPOINTS[$NAME]}"
+for ((idx=0; idx<${#HEALTH_NAMES[@]}; idx++)); do
+    NAME="${HEALTH_NAMES[$idx]}"
+    URL="${HEALTH_URLS[$idx]}"
     HEALTHY=false
 
     for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
