@@ -67,6 +67,8 @@ To skip bootstrap and wait for the full model: `./install.sh --no-bootstrap`
 
 ### macOS (Apple Silicon)
 
+> **Prerequisite:** Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and make sure it is running before you start.
+
 ```bash
 ./install.sh    # Auto-detects chip, launches Metal-accelerated inference + Docker services
 ```
@@ -74,6 +76,8 @@ To skip bootstrap and wait for the full model: `./install.sh --no-bootstrap`
 llama-server runs natively with Metal GPU acceleration; all other services run in Docker. See [`docs/MACOS-QUICKSTART.md`](docs/MACOS-QUICKSTART.md) for details.
 
 ### Windows (NVIDIA + AMD)
+
+> **Prerequisite:** Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) with WSL2 backend and make sure it is running before you start.
 
 ```powershell
 .\install.ps1   # Auto-detects GPU, launches all services via Docker Desktop + WSL2

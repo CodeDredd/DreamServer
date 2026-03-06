@@ -85,7 +85,8 @@ cd DreamServer/dream-server
 <details>
 <summary><b>Windows (PowerShell)</b></summary>
 
-Requires Docker Desktop with WSL2 backend enabled.
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) with WSL2 backend enabled.
+**Install Docker Desktop first and make sure it is running before you start.**
 
 ```powershell
 git clone https://github.com/Light-Heart-Labs/DreamServer.git
@@ -100,7 +101,8 @@ The installer detects your GPU, picks the right model, generates credentials, st
 <details>
 <summary><b>macOS (Apple Silicon)</b></summary>
 
-Requires Apple Silicon (M1+) and Docker Desktop.
+Requires Apple Silicon (M1+) and [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+**Install Docker Desktop first and make sure it is running before you start.**
 
 ```bash
 git clone https://github.com/Light-Heart-Labs/DreamServer.git
