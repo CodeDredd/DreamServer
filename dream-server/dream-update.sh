@@ -294,11 +294,20 @@ cmd_update() {
     
     # Restart services
     log_info "Restarting services..."
-    local compose_file="${INSTALL_DIR}/docker-compose.yml"
-    if [[ -f "$compose_file" ]]; then
+    local compose_flags
+    if [[ -x "${INSTALL_DIR}/scripts/resolve-compose-stack.sh" ]]; then
+        compose_flags=$(bash "${INSTALL_DIR}/scripts/resolve-compose-stack.sh" --script-dir "$INSTALL_DIR" 2>/dev/null | tail -1)
+    fi
+    if [[ -n "${compose_flags:-}" ]]; then
+        cd "$INSTALL_DIR"
+        docker compose $compose_flags down --remove-orphans 2>/dev/null || docker-compose $compose_flags down --remove-orphans
+        docker compose $compose_flags up -d 2>/dev/null || docker-compose $compose_flags up -d
+    elif [[ -f "${INSTALL_DIR}/docker-compose.yml" ]]; then
         cd "$INSTALL_DIR"
         docker compose down --remove-orphans 2>/dev/null || docker-compose down --remove-orphans
         docker compose up -d 2>/dev/null || docker-compose up -d
+    else
+        log_warn "No compose files found. Skipping container restart."
     fi
     
     # Run health checks
@@ -372,14 +381,16 @@ cmd_rollback() {
     cd "$INSTALL_DIR"
     docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
     
-    # Restore files
+    # Restore files (enable dotglob to include .env, .version, etc.)
     log_info "Restoring configuration files..."
+    shopt -s dotglob
     for file in "$backup_path"/*; do
         if [[ -f "$file" && "$(basename "$file")" != "metadata.json" ]]; then
             cp "$file" "$INSTALL_DIR/"
             log_info "  Restored: $(basename "$file")"
         fi
     done
+    shopt -u dotglob
     
     # Restart services
     log_info "Restarting services..."

@@ -321,7 +321,7 @@ async def _poll_remote_agents():
         try:
             # Poll remote agents (SSH-based)
             for agent in REMOTE_AGENTS:
-                status = _get_remote_session_status(agent)
+                status = await asyncio.to_thread(_get_remote_session_status, agent)
                 chars = status.get("current_history_chars", 0)
                 limit = get_agent_setting(agent, "session_char_limit")
                 if limit is None or limit <= 0:
@@ -659,7 +659,9 @@ async def _handle_streaming(client, raw_body, headers, model, sys_analysis,
             yield f"data: {json.dumps({'type': 'error', 'error': {'type': 'proxy_error', 'message': 'Upstream request failed'}})}\n\n"
         except Exception as e:
             log.error(f"Proxy stream error: {e}")
-            # Still try to log what we have
+        finally:
+            # Guarantee billing metrics are logged even on CancelledError
+            # (which is a BaseException and bypasses 'except Exception')
             if usage["input_tokens"] > 0:
                 _log_entry(
                     model, sys_analysis, msg_analysis, tools,
@@ -890,6 +892,8 @@ async def _handle_openai_streaming(client, raw_body, headers, model, sys_analysi
             yield f"data: {json.dumps({'error': {'message': 'Upstream request failed', 'type': 'proxy_error'}})}\n\n"
         except Exception as e:
             log.error(f"Proxy stream error: {e}")
+        finally:
+            # Guarantee billing metrics are logged even on CancelledError
             if usage["input_tokens"] > 0:
                 _log_entry(model, sys_analysis, msg_analysis, tools, raw_body, usage, start_time, provider_name="openai", filter_result=filter_result)
 

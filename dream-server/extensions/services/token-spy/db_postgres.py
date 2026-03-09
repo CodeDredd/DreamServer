@@ -135,6 +135,9 @@ def _get_or_create_agent(agent_name: str) -> UUID:
             conn.commit()
             _agent_cache[agent_name] = agent_id
             return agent_id
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         _put_conn(conn)
 
@@ -205,6 +208,9 @@ def log_usage(entry: dict):
                 )
             )
             conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         _put_conn(conn)
 
