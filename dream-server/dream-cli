@@ -153,7 +153,7 @@ cmd_status() {
 
         # For non-core services, only check if container is running
         if [[ "$cat" != "core" ]]; then
-            if ! docker compose $flags ps --format "{{.Name}}" 2>/dev/null | grep -q "dream-${sid}\|${sid}"; then
+            if ! docker compose $flags ps --format "{{.Name}}" 2>/dev/null | grep -qE "dream-${sid}|${sid}"; then
                 continue  # Not running, skip silently
             fi
         fi
@@ -563,7 +563,7 @@ cmd_preset() {
             # Save metadata
             cat > "$preset_dir/meta.txt" <<META
 name=$name
-created=$(date -Iseconds)
+created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 gpu_backend=${GPU_BACKEND:-unknown}
 tier=${TIER:-unknown}
 META
