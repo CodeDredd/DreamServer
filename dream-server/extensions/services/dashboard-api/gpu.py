@@ -264,9 +264,12 @@ def get_gpu_info_apple() -> Optional[GPUInfo]:
         if not host_ram_gb_str:
             return None
         try:
-            total_mb = int(float(host_ram_gb_str) * 1024)
+            host_ram_gb_float = float(host_ram_gb_str)
         except ValueError:
             return None
+        if host_ram_gb_float <= 0:
+            return None
+        total_mb = int(host_ram_gb_float * 1024)
         # Use /proc/meminfo for used memory (best available proxy inside container)
         # Note: used_mb reflects Docker Desktop VM memory pressure, not the host Mac's.
         # Total is correctly overridden by HOST_RAM_GB. See issue #102 for a future
@@ -285,7 +288,7 @@ def get_gpu_info_apple() -> Optional[GPUInfo]:
         except OSError:
             pass
         return GPUInfo(
-            name=f"Apple M-Series ({int(float(host_ram_gb_str))} GB Unified)",
+            name=f"Apple M-Series ({int(host_ram_gb_float)} GB Unified)",
             memory_used_mb=used_mb,
             memory_total_mb=total_mb,
             memory_percent=round(used_mb / total_mb * 100, 1) if total_mb > 0 else 0,

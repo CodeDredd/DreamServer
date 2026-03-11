@@ -444,7 +444,7 @@ def _get_ram_metrics_linux() -> dict:
             result["percent"] = round(used / total * 100, 1)
         # On Apple Silicon, override total_gb with the host's actual RAM
         host_ram_gb_str = os.environ.get("HOST_RAM_GB", "")
-        gpu_backend = os.environ.get("GPU_BACKEND", "")
+        gpu_backend = os.environ.get("GPU_BACKEND", "").lower()
         if gpu_backend == "apple" and host_ram_gb_str:
             try:
                 host_ram_gb = float(host_ram_gb_str)
