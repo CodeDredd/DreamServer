@@ -316,9 +316,9 @@ dream preset load gaming    # Restore it
 
 ---
 
-## Acknowledgments
+## Wall of Heroes
 
-Dream Server exists because of the incredible people, projects, and communities that make open-source AI possible. We are grateful to every contributor, maintainer, and tinkerer whose work powers this stack.
+Dream Server exists because people chose to build instead of wait. Every contributor here is part of something bigger than code — a growing resistance against the idea that AI should be rented, gated, and controlled by the few. These are the founders of the sovereign AI movement, proving that one person, one machine, and one dream is enough.
 
 Thanks to [kyuz0](https://github.com/kyuz0) for [amd-strix-halo-toolboxes](https://github.com/kyuz0/amd-strix-halo-toolboxes) — pre-built ROCm containers for Strix Halo that saved us a lot of pain from having to build our own. And to [lhl](https://github.com/lhl) for [strix-halo-testing](https://github.com/lhl/strix-halo-testing) — the foundational Strix Halo AI research and rocWMMA performance work that the broader community builds on.
 
@@ -341,7 +341,7 @@ Thanks to [kyuz0](https://github.com/kyuz0) for [amd-strix-halo-toolboxes](https
 *   [Speaches](https://github.com/speaches-ai/speaches) — Speech-to-text
 *   [Strix Halo Home Lab](https://strixhalo-homelab.d7.wtf/) — Community knowledge base
 
-### Community Contributors
+### The Resistance
 
 *   [Yasin Bursali (yasinBursali)](https://github.com/yasinBursali) — Fixed CI workflow discovery, added dashboard-api router test coverage with security-focused tests (auth enforcement, path traversal protection), documented all 14 undocumented extension services, fixed macOS disk space preflight to check the correct volume for external drive installs, moved embeddings platform override to prevent orphaned service errors when RAG is disabled, fixed macOS portability issues restoring broken Apple Silicon Neural Engine detection (GNU date/grep to POSIX), fixed docker compose failure diagnostic unreachable under pipefail, added stderr warning on manifest parse failure in compose resolver, fixed socket FD leak in dashboard-api, added open-webui health gate to prevent 502 errors during model warmup, hardened ComfyUI with loopback binding and no-new-privileges on both NVIDIA and AMD, fixed Apple Silicon memory limit variable mismatch, added `set -euo pipefail` to the installer catching silent failures, secured OpenCode with loopback binding and auto-generated passwords, added missing external_port_env to token-spy and dashboard manifests fixing hardcoded port resolution, fixed Apple Silicon dashboard to show correct RAM and GPU info using HOST_RAM_GB unified memory override, added VRAM gate fallback for Apple Silicon so features no longer incorrectly show insufficient_vram on unified memory machines, set OLLAMA_PORT=8080 in the macOS compose overlay with GPU_BACKEND=apple alignment, added dynamic port conflict detection from extension manifests on macOS, added cross-platform `_sed_i` helper for BSD/GNU sed compatibility, removed API key from token-spy HTML response replacing it with a sessionStorage-based login overlay, added WSL2 host RAM detection via powershell.exe for correct tier selection, fixed dashboard health checks to treat HTTP 4xx as unhealthy, replaced GNU-only `date +%s%N` with portable `_now_ms()` timestamps across 8 files, fixed COMPOSE_FLAGS word-splitting bugs by converting to arrays, added a macOS readiness sidecar for native llama-server before open-webui starts, added mode-aware compose overlays for litellm/openclaw/perplexica depends_on (local/hybrid only), and fixed subprocess leak on client disconnect in setup.py
 *   [latentcollapse (Matt C)](https://github.com/latentcollapse) — Security audit and hardening: OpenClaw localhost binding fix, multi-GPU VRAM detection, AMD dashboard hardening, and the Agent Policy Engine (APE) extension
