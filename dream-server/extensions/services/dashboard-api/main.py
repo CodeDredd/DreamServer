@@ -72,8 +72,8 @@ def get_allowed_origins():
             if ip.startswith(("192.168.", "10.", "172.")):
                 origins.append(f"http://{ip}:3001")
                 origins.append(f"http://{ip}:3000")
-    except Exception:
-        pass
+    except (OSError, socket.gaierror):
+        logger.debug("Could not detect LAN IPs for CORS origins")
     return origins
 
 app.add_middleware(
@@ -122,7 +122,7 @@ async def preflight_docker():
         return {"available": False, "error": "Docker not installed"}
     except subprocess.TimeoutExpired:
         return {"available": False, "error": "Docker check timed out"}
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         logger.exception("Docker preflight check failed")
         return {"available": False, "error": "Docker check failed"}
 
@@ -182,7 +182,7 @@ async def preflight_disk():
         check_path = DATA_DIR if os.path.exists(DATA_DIR) else Path.home()
         usage = shutil.disk_usage(check_path)
         return {"free": usage.free, "total": usage.total, "used": usage.used, "path": str(check_path)}
-    except Exception:
+    except OSError:
         logger.exception("Disk preflight check failed")
         return {"error": "Disk check failed", "free": 0, "total": 0, "used": 0, "path": ""}
 
@@ -346,7 +346,7 @@ async def service_tokens():
                             break
                 else:
                     oc_token = path.read_text().strip()
-            except Exception:
+            except (OSError, ValueError):
                 continue
             if oc_token:
                 break
