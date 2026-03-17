@@ -33,7 +33,15 @@ sr_load() {
     _SR_COMPOSE_FLAGS_CACHE=""
 
     # Single Python pass: reads ALL manifests, emits sourceable bash
-    python3 - "$EXTENSIONS_DIR" <<'PYEOF' > "$_SR_CACHE"
+    PYTHON_CMD="python3"
+    if [[ -f "${SCRIPT_DIR:-$(pwd)}/lib/python-cmd.sh" ]]; then
+        . "${SCRIPT_DIR:-$(pwd)}/lib/python-cmd.sh"
+        PYTHON_CMD="$(ds_detect_python_cmd)"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+    fi
+
+    "$PYTHON_CMD" - "$EXTENSIONS_DIR" <<'PYEOF' > "$_SR_CACHE"
 import yaml, sys, os
 from pathlib import Path
 
