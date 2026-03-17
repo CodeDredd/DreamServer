@@ -53,6 +53,141 @@ check_install() {
     fi
 }
 
+# Extract the major component of a semver string (e.g. "2.1.0" → "2")
+_semver_major() {
+    echo "${1%%.*}"
+}
+
+# Read a top-level or nested string field from a JSON file without requiring jq.
+# Usage: _manifest_field <file> <field>   e.g. _manifest_field manifest.json dream_version
+_manifest_field() {
+    local file="$1" field="$2" value=""
+    if command -v jq &>/dev/null; then
+        value=$(jq -r --arg f "$field" '.[$f] // .release.version // empty' "$file" 2>/dev/null)
+    fi
+    if [[ -z "$value" ]] && command -v python3 &>/dev/null; then
+        value=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$file'))
+    print(d.get('$field') or d.get('release', {}).get('version') or '')
+except Exception:
+    pass
+" 2>/dev/null)
+    fi
+    echo "$value"
+}
+
+# Version compatibility check for dream update.
+# Returns 0 (ok), 1 (user aborted), or prints a warning and continues.
+# Sets _COMPAT_INSTALLED_VER and _COMPAT_TARGET_VER as side-effects.
+_check_version_compat() {
+    local force="${1:-false}"
+
+    # 1. Installed version — prefer DREAM_VERSION from .env, fall back to manifest
+    _COMPAT_INSTALLED_VER=$(grep '^DREAM_VERSION=' "$INSTALL_DIR/.env" 2>/dev/null \
+        | head -1 | cut -d= -f2 | tr -d '[:space:]')
+    if [[ -z "$_COMPAT_INSTALLED_VER" && -f "$INSTALL_DIR/manifest.json" ]]; then
+        _COMPAT_INSTALLED_VER=$(_manifest_field "$INSTALL_DIR/manifest.json" "dream_version")
+    fi
+    [[ -z "$_COMPAT_INSTALLED_VER" ]] && _COMPAT_INSTALLED_VER="$VERSION"
+
+    # 2. Target version — from the manifest.json on disk (updated via git pull / re-install)
+    _COMPAT_TARGET_VER=""
+    if [[ -f "$INSTALL_DIR/manifest.json" ]]; then
+        _COMPAT_TARGET_VER=$(_manifest_field "$INSTALL_DIR/manifest.json" "dream_version")
+    fi
+
+    # 3. min_compatible_dream_version — the oldest version that can safely update to target
+    local min_compat_ver=""
+    if [[ -f "$INSTALL_DIR/manifest.json" ]]; then
+        if command -v jq &>/dev/null; then
+            min_compat_ver=$(jq -r '.min_compatible_dream_version // empty' \
+                "$INSTALL_DIR/manifest.json" 2>/dev/null)
+        elif command -v python3 &>/dev/null; then
+            min_compat_ver=$(python3 -c "
+import json
+try:
+    d = json.load(open('$INSTALL_DIR/manifest.json'))
+    print(d.get('min_compatible_dream_version') or '')
+except Exception:
+    pass
+" 2>/dev/null)
+        fi
+    fi
+
+    # Skip checks if we can't determine versions
+    if [[ -z "$_COMPAT_INSTALLED_VER" || -z "$_COMPAT_TARGET_VER" ]]; then
+        return 0
+    fi
+    # Skip if installed == target (no actual update)
+    [[ "$_COMPAT_INSTALLED_VER" == "$_COMPAT_TARGET_VER" ]] && return 0
+
+    local cur_major new_major
+    cur_major=$(_semver_major "$_COMPAT_INSTALLED_VER")
+    new_major=$(_semver_major "$_COMPAT_TARGET_VER")
+    local major_jump=$(( new_major - cur_major ))
+
+    # 4. Hard block: installed version is below min_compatible_dream_version
+    if [[ -n "$min_compat_ver" ]]; then
+        local min_major
+        min_major=$(_semver_major "$min_compat_ver")
+        if [[ "$cur_major" =~ ^[0-9]+$ && "$min_major" =~ ^[0-9]+$ ]] \
+            && (( cur_major < min_major )); then
+            echo ""
+            echo -e "${RED}╔══════════════════════════════════════════════════════════╗${NC}"
+            echo -e "${RED}║  UPGRADE BLOCKED — installed version is too old          ║${NC}"
+            echo -e "${RED}╚══════════════════════════════════════════════════════════╝${NC}"
+            echo ""
+            warn "Installed : v${_COMPAT_INSTALLED_VER}"
+            warn "Target    : v${_COMPAT_TARGET_VER}"
+            warn "Minimum   : v${min_compat_ver} (min_compatible_dream_version)"
+            echo ""
+            log "Your installation is below the minimum supported upgrade version."
+            log "Upgrade incrementally: first update to v${min_compat_ver}, then re-run."
+            log "See CHANGELOG.md for migration steps."
+            echo ""
+            if [[ "$force" == "true" ]]; then
+                warn "--force specified: proceeding despite compatibility block. DATA LOSS RISK."
+            else
+                log "Use 'dream update --force' to override (not recommended)."
+                return 1
+            fi
+        fi
+    fi
+
+    # 5. Warn: major version jump > 1
+    if [[ "$major_jump" =~ ^[0-9]+$ ]] && (( major_jump > 1 )); then
+        echo ""
+        echo -e "${YELLOW}┌──────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${YELLOW}│  Major version jump detected                             │${NC}"
+        echo -e "${YELLOW}└──────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+        warn "Installed  : v${_COMPAT_INSTALLED_VER}  (major ${cur_major})"
+        warn "Target     : v${_COMPAT_TARGET_VER}  (major ${new_major})"
+        warn "Jump       : ${major_jump} major versions"
+        echo ""
+        log "Skipping more than 1 major version may introduce breaking changes."
+        log "Recommended: upgrade step-by-step (v${cur_major} → v$((cur_major+1)) → … → v${new_major})."
+        log "Review CHANGELOG.md for each major version before proceeding."
+        echo ""
+        if [[ "$force" == "true" ]]; then
+            warn "--force specified: skipping confirmation."
+        else
+            read -p "  Proceed with v${_COMPAT_INSTALLED_VER} → v${_COMPAT_TARGET_VER} anyway? [y/N] " -n 1 -r
+            echo ""
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                log "Update cancelled."
+                return 1
+            fi
+            warn "Proceeding — back up your data first: dream backup"
+        fi
+        echo ""
+    fi
+
+    return 0
+}
+
 #=============================================================================
 # Safe .env loading (no eval; use lib/safe-env.sh)
 #=============================================================================
@@ -378,16 +513,41 @@ cmd_update() {
     check_install
     cd "$INSTALL_DIR"
 
+    local force_flag="false"
+    local args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f) force_flag="true"; shift ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+
     local flags_str
     flags_str=$(get_compose_flags)
     local -a flags
     read -ra flags <<< "$flags_str"
+
+    # Version compatibility check — warn on major version jumps before touching anything
+    if ! _check_version_compat "$force_flag"; then
+        exit 0
+    fi
+
+    # Show what we're updating from/to (if versions were resolved)
+    if [[ -n "${_COMPAT_INSTALLED_VER:-}" && -n "${_COMPAT_TARGET_VER:-}" \
+          && "$_COMPAT_INSTALLED_VER" != "$_COMPAT_TARGET_VER" ]]; then
+        log "Updating: v${_COMPAT_INSTALLED_VER} → v${_COMPAT_TARGET_VER}"
+    fi
 
     log "Pulling latest images..."
     docker compose "${flags[@]}" pull
 
     log "Recreating containers with new images..."
     docker compose "${flags[@]}" up -d --force-recreate
+
+    # Persist the new installed version in .env so future runs know what's installed
+    if [[ -n "${_COMPAT_TARGET_VER:-}" ]]; then
+        _env_set "DREAM_VERSION" "$_COMPAT_TARGET_VER"
+    fi
 
     success "Update complete"
 
@@ -1381,7 +1541,7 @@ ${CYAN}Commands:${NC}
   restart [service]   Restart services (all if no service specified)
   start [service]     Start services
   stop [service]      Stop services
-  update              Pull latest images and restart
+  update [--force]    Pull latest images and restart (--force skips version-compat confirmation)
   shell <service>     Open shell in container
   config [show|edit|validate]
                       View, edit, or validate configuration
@@ -1479,7 +1639,7 @@ case "${1:-help}" in
     restart|r)   shift; cmd_restart "$@" ;;
     start)       shift; cmd_start "$@" ;;
     stop)        shift; cmd_stop "$@" ;;
-    update|u)    cmd_update ;;
+    update|u)    shift; cmd_update "$@" ;;
     shell|sh)    shift; cmd_shell "$@" ;;
     config|cfg)  shift; cmd_config "$@" ;;
     chat|c)      shift; cmd_chat "$@" ;;
