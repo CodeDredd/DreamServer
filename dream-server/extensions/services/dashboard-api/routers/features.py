@@ -194,6 +194,7 @@ async def feature_enable_instructions(feature_id: str, api_key: str = Depends(ve
         "workflows": {"steps": [f"Ensure n8n is running on port {_svc_port('n8n')}", "Open the Workflows page to see available automations", "Click 'Enable' on any workflow to import it"], "links": [{"label": "n8n Dashboard", "url": n8n_url}, {"label": "Workflows", "url": f"{dashboard_url}/workflows"}]},
         "images": {"steps": ["Image generation requires additional setup", "Coming soon in a future update"], "links": []},
         "coding": {"steps": ["Switch to the Qwen2.5-Coder model for best results", "Use the model manager to download and load it", "Chat will now be optimized for code"], "links": [{"label": "Model Manager", "url": f"{dashboard_url}/models"}]},
+        "observability": {"steps": [f"Langfuse is running on port {_svc_port('langfuse')}", "Open Langfuse to view LLM traces and evaluations", "LiteLLM automatically sends traces — no additional configuration needed"], "links": [{"label": "Open Langfuse", "url": _svc_url("langfuse")}]},
     }
 
     return {"featureId": feature_id, "name": feature["name"], "instructions": instructions.get(feature_id, {"steps": [], "links": []})}

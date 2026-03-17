@@ -10,6 +10,10 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PROJECT_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_PROJECT_SECRET_KEY:-}
+      - LANGFUSE_HOST=http://langfuse-web:3000
+      - LANGFUSE_TRACING_ENABLED=${LANGFUSE_ENABLED:-false}
     volumes:
       - ./config/litellm/${DREAM_MODE:-local}.yaml:/app/config.yaml:ro
     ports:
