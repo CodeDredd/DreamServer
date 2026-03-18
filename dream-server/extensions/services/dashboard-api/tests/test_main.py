@@ -1,6 +1,5 @@
 """Tests for main.py — core endpoints and helper functions."""
 
-import subprocess
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -54,12 +53,15 @@ class TestGetAllowedOrigins:
 class TestPreflightDocker:
 
     def test_docker_available(self, test_client, monkeypatch):
+        import asyncio
         import os.path as _ospath
         monkeypatch.setattr(_ospath, "exists", lambda p: False)
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "Docker version 24.0.7, build afdd53b"
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: mock_result)
+
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"Docker version 24.0.7, build afdd53b", b""))
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
 
         resp = test_client.get("/api/preflight/docker", headers=test_client.auth_headers)
         assert resp.status_code == 200
@@ -68,11 +70,12 @@ class TestPreflightDocker:
         assert "24.0.7" in data["version"]
 
     def test_docker_not_installed(self, test_client, monkeypatch):
+        import asyncio
         import os.path as _ospath
         monkeypatch.setattr(_ospath, "exists", lambda p: False)
         monkeypatch.setattr(
-            subprocess, "run",
-            MagicMock(side_effect=FileNotFoundError("docker not found")),
+            asyncio, "create_subprocess_exec",
+            AsyncMock(side_effect=FileNotFoundError("docker not found")),
         )
 
         resp = test_client.get("/api/preflight/docker", headers=test_client.auth_headers)
@@ -82,12 +85,15 @@ class TestPreflightDocker:
         assert "not installed" in data["error"]
 
     def test_docker_timeout(self, test_client, monkeypatch):
+        import asyncio
         import os.path as _ospath
         monkeypatch.setattr(_ospath, "exists", lambda p: False)
-        monkeypatch.setattr(
-            subprocess, "run",
-            MagicMock(side_effect=subprocess.TimeoutExpired(cmd=["docker"], timeout=5)),
-        )
+
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", AsyncMock(return_value=mock_proc))
+        monkeypatch.setattr(asyncio, "wait_for", AsyncMock(side_effect=asyncio.TimeoutError()))
 
         resp = test_client.get("/api/preflight/docker", headers=test_client.auth_headers)
         assert resp.status_code == 200

@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import os
-import subprocess
 
 import aiohttp
 from fastapi import APIRouter, Depends
