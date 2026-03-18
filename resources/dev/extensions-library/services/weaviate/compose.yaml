@@ -7,13 +7,15 @@ services:
       - no-new-privileges:true
     environment:
       - QUERY_DEFAULTS_LIMIT=25
-      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=false
+      - AUTHENTICATION_APIKEY_ENABLED=true
+      - AUTHENTICATION_APIKEY_ALLOWED_KEYS=${WEAVIATE_API_KEY:?WEAVIATE_API_KEY must be set}
       - PERSISTENCE_DATA_PATH=/var/lib/weaviate
     volumes:
       - ./data/weaviate:/var/lib/weaviate
     ports:
-      - "${WEAVIATE_PORT:-7811}:8080"
-      - "${WEAVIATE_GRPC_PORT:-50051}:50051"
+      - "127.0.0.1:${WEAVIATE_PORT:-7811}:8080"
+      - "127.0.0.1:${WEAVIATE_GRPC_PORT:-50051}:50051"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/.well-known/ready"]
       interval: 30s

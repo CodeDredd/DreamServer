@@ -12,15 +12,15 @@ services:
       - SECRETKEY_PATH=${FLOWISE_SECRETKEY_PATH:-/root/.flowise/secretkey}
       - LOG_PATH=/root/.flowise/logs
       - BLOB_STORAGE_PATH=/root/.flowise/storage
-      - FLOWISE_USERNAME=${FLOWISE_USERNAME:-}
-      - FLOWISE_PASSWORD=${FLOWISE_PASSWORD:-}
+      - FLOWISE_USERNAME=${FLOWISE_USERNAME:?FLOWISE_USERNAME must be set}
+      - FLOWISE_PASSWORD=${FLOWISE_PASSWORD:?FLOWISE_PASSWORD must be set}
       - FLOWISE_SECRETKEY_OVERWRITE=${FLOWISE_SECRETKEY_OVERWRITE:-}
       - IFRAME_ORIGINS=${FLOWISE_IFRAME_ORIGINS:-}
       - DISABLE_FLOWISE_TELEMETRY=${FLOWISE_DISABLE_TELEMETRY:-true}
     volumes:
       - ./data/flowise:/root/.flowise:rw
     ports:
-      - "${FLOWISE_PORT:-7801}:3000"
+      - "127.0.0.1:${FLOWISE_PORT:-7801}:3000"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/v1/health"]
       interval: 30s
