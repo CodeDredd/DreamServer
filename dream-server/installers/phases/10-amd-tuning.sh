@@ -24,6 +24,14 @@ if [[ "$GPU_BACKEND" == "amd" ]] && $DRY_RUN; then
 elif [[ "$GPU_BACKEND" == "amd" ]] && ! $DRY_RUN; then
     ai "Applying system tuning for AMD APU..."
 
+    # Ensure user is in render and video groups for ROCm GPU access
+    # Without these, containers can't access /dev/kfd and /dev/dri
+    if ! groups "$USER" 2>/dev/null | grep -qw render; then
+        sudo -n usermod -aG render,video "$USER" 2>/dev/null && \
+            ai_ok "Added $USER to render and video groups (needed for GPU access)" || \
+            ai_warn "Could not add $USER to render/video groups. Run: sudo usermod -aG render,video $USER"
+    fi
+
     # Management scripts and Memory Shepherd already copied by rsync/cp block above
     [[ -d "$INSTALL_DIR/memory-shepherd" ]] && ai_ok "Memory Shepherd installed"
 
