@@ -69,6 +69,8 @@ _check_health "ComfyUI" "http://localhost:${SERVICE_PORTS[comfyui]:-8188}${SERVI
 # Perplexica auto-config: seed chat model + embedding model on first boot.
 # The slim-latest image stores config in a database, not just config.json.
 # We use the /api/config HTTP endpoint to set values after the service starts.
+# Retry up to 5 times with 10s delay — Perplexica may still be starting
+# (especially if it was stuck in "Created" state and started late).
 if docker inspect dream-perplexica &>/dev/null; then
     PERPLEXICA_URL="http://localhost:${SERVICE_PORTS[perplexica]:-3004}"
     PYTHON_CMD="python3"
@@ -79,8 +81,13 @@ if docker inspect dream-perplexica &>/dev/null; then
         PYTHON_CMD="python"
     fi
 
-    PERPLEXICA_SETUP=$(curl -sf "${PERPLEXICA_URL}/api/config" 2>/dev/null | \
-        "$PYTHON_CMD" -c "import sys,json;d=json.load(sys.stdin);print('done' if d['values']['setupComplete'] else 'needed')" 2>/dev/null || echo "skip")
+    PERPLEXICA_SETUP="skip"
+    for _attempt in 1 2 3 4 5; do
+        PERPLEXICA_SETUP=$(curl -sf --max-time 5 "${PERPLEXICA_URL}/api/config" 2>/dev/null | \
+            "$PYTHON_CMD" -c "import sys,json;d=json.load(sys.stdin);print('done' if d['values']['setupComplete'] else 'needed')" 2>/dev/null || echo "skip")
+        [[ "$PERPLEXICA_SETUP" != "skip" ]] && break
+        [[ $_attempt -lt 5 ]] && sleep 10
+    done
 
     if [[ "$PERPLEXICA_SETUP" == "needed" ]]; then
         ai "Configuring Perplexica for ${LLM_MODEL}..."
