@@ -260,8 +260,14 @@ resolve_service() {
 get_compose_flags() {
     # Fast path: use saved flags from installer if available
     if [[ -f "$INSTALL_DIR/.compose-flags" ]]; then
-        cat "$INSTALL_DIR/.compose-flags"
-        return
+        local cached
+        cached=$(< "$INSTALL_DIR/.compose-flags")
+        if [[ "$cached" == -f\ * ]]; then
+            echo "$cached"
+            return
+        fi
+        # Stale or corrupt — remove and fall through to dynamic resolution
+        rm -f "$INSTALL_DIR/.compose-flags"
     fi
     # Fallback: resolve dynamically
     local base_flags
@@ -579,6 +585,14 @@ cmd_repair() {
     service=$(resolve_service "$service")
     local container="${SERVICE_CONTAINERS[$service]:-dream-$service}"
 
+    warn "This will destroy all data for $service and recreate it from scratch."
+    read -p "  Continue? [y/N] " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log "Repair cancelled."
+        return 0
+    fi
+
     local flags_str
     flags_str=$(get_compose_flags)
     local -a flags
@@ -588,19 +602,19 @@ cmd_repair() {
 
     # Stop and remove container
     log "Stopping $service..."
-    docker stop "$container" 2>/dev/null || true
-    docker rm "$container" 2>/dev/null || true
+    docker stop "$container" 2>/dev/null || warn "$container not running"
+    docker rm "$container" 2>/dev/null || warn "$container not found"
 
     # Find and remove service volumes
     local volumes
-    volumes=$(docker compose "${flags[@]}" config --volumes 2>/dev/null | grep -i "$service" || true)
+    volumes=$(docker compose "${flags[@]}" config --volumes 2>/dev/null | grep -iE "^${service}([-_]|$)" || true)
     local project
     project=$(basename "$INSTALL_DIR" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-')
     for vol in $volumes; do
         local full_vol="${project}_${vol}"
-        if docker volume inspect "$full_vol" &>/dev/null; then
+        if docker volume inspect "$full_vol" >/dev/null 2>&1; then
             log "Removing volume $full_vol..."
-            docker volume rm "$full_vol" 2>/dev/null || true
+            docker volume rm "$full_vol" || warn "Could not remove volume $full_vol"
         fi
     done
 
@@ -1132,6 +1146,7 @@ cmd_enable() {
         success "$service_id is already enabled."
     elif [[ -f "$disabled" ]]; then
         mv "$disabled" "$cf"
+        rm -f "$INSTALL_DIR/.compose-flags"
         success "$service_id enabled. Run 'dream start $service_id' to launch."
     else
         error "$service_id has no compose fragment (core service? already enabled?)"
@@ -1161,6 +1176,7 @@ cmd_disable() {
     read -ra flags <<< "$flags_str"
     docker compose "${flags[@]}" stop "$service_id" 2>/dev/null || true
     [[ -f "$cf" ]] && mv "$cf" "${cf}.disabled"
+    rm -f "$INSTALL_DIR/.compose-flags"
     success "$service_id disabled."
 }
 

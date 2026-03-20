@@ -29,7 +29,7 @@ else
     mkdir -p "$INSTALL_DIR/logs"
 
     # Persist compose flags so dream-cli can reuse them without re-resolving
-    echo "$COMPOSE_FLAGS" > "$INSTALL_DIR/.compose-flags"
+    echo "$COMPOSE_FLAGS" > "$INSTALL_DIR/.compose-flags" || warn "Could not cache compose flags (non-fatal)"
     log "Saved compose flags to $INSTALL_DIR/.compose-flags"
 
     # Cloud mode: skip model downloads, auto-enable litellm
