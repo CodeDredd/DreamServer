@@ -73,11 +73,12 @@ with open(db_path, "r", encoding="utf-8") as f:
     db = json.load(f)
 
 # --- Compose overlay mapping (backend → default overlays) ---
+# CPU backend uses nvidia overlay: llama-server image works in CPU-only mode (n-gpu-layers=0)
 OVERLAY_MAP = {
     "amd":    ["docker-compose.base.yml", "docker-compose.amd.yml"],
     "nvidia": ["docker-compose.base.yml", "docker-compose.nvidia.yml"],
     "apple":  ["docker-compose.base.yml", "docker-compose.apple.yml"],
-    "cpu":    ["docker-compose.base.yml"],
+    "cpu":    ["docker-compose.base.yml", "docker-compose.nvidia.yml"],
 }
 
 # --- Pass 1: Match known_gpus by device_id then name_patterns ---
