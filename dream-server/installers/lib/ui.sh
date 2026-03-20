@@ -285,10 +285,11 @@ check_service() {
     fi
 
     # Add timeout to prevent indefinite hangs
-    if timeout "$timeout" curl -sf "$url" > /dev/null 2>&1; then
+    # Capture exit code directly — an if/then would consume it (always 0)
+    timeout "$timeout" curl -sf "$url" > /dev/null 2>&1 && {
       printf "\r  ${BGRN}✓${NC} %-55s\n" "$name online"
       return 0
-    fi
+    }
 
     local curl_exit=$?
     elapsed=$((elapsed + backoff))
