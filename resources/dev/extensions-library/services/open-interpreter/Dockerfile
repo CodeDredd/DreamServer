@@ -3,7 +3,7 @@ FROM python:3.12-slim@sha256:ccc7089399c8bb65dd1fb3ed6d55efa538a3f5e7fca3f5988ac
 # Install dependencies
 RUN pip install --no-cache-dir \
     open-interpreter==0.4.3 \
-    fastapi==0.135.1 \
+    fastapi==0.111.0 \
     uvicorn==0.42.0 \
     pydantic==2.12.5
 
