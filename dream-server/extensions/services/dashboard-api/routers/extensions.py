@@ -224,7 +224,7 @@ def _copytree_safe(src: Path, dst: Path) -> None:
 
 # --- Host Agent Helpers ---
 
-_AGENT_TIMEOUT = 5  # seconds
+_AGENT_TIMEOUT = 60  # seconds — container starts can take 30s+ (image pulls, migrations)
 
 
 def _call_agent(action: str, service_id: str) -> bool:
@@ -678,9 +678,12 @@ def uninstall_extension(service_id: str, api_key: str = Depends(verify_api_key))
             status_code=404, detail=f"Extension not installed: {service_id}",
         )
 
-    # Stop container if enabled (best effort)
+    # Must be disabled before uninstall
     if (ext_dir / "compose.yaml").exists():
-        _call_agent("stop", service_id)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Disable extension before uninstalling. Run 'dream disable {service_id}' first.",
+        )
 
     with _extensions_lock():
         # Reject symlinks (checked under lock to prevent TOCTOU)
