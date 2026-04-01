@@ -27,6 +27,8 @@ log() { echo -e "${CYAN}[dream]${NC} $1"; }
 success() { echo -e "${GREEN}✓${NC} $1"; }
 warn() { echo -e "${YELLOW}⚠${NC} $1"; }
 error() { echo -e "${RED}✗${NC} $1"; exit 1; }
+log_warn() { echo -e "${YELLOW}⚠${NC} $1"; }
+log_error() { echo -e "${RED}✗${NC} $1" >&2; }
 
 # Update or add a key=value in .env
 _env_set() {
@@ -2514,6 +2516,11 @@ cmd_gpu() {
     esac
 }
 
+cmd_repair() {
+    warn "The 'repair' command is not yet implemented."
+    log "Run 'dream doctor' to diagnose issues, then check the output for suggested fixes."
+}
+
 cmd_help() {
     sr_load
     cat << EOF
@@ -2549,6 +2556,7 @@ ${CYAN}Commands:${NC}
   chat "<message>"    Quick chat with the LLM
   benchmark           Run a quick performance test
   doctor [report]     Run diagnostics and write JSON report
+  repair|fix          Run basic repairs (currently redirects to doctor)
   audit [extensions]  Audit extension manifests and compose contracts
   help                Show this help
 
