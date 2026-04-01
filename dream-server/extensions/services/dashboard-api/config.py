@@ -69,6 +69,12 @@ def load_extension_manifests(
 
     for path in manifest_files:
         try:
+            # Skip disabled extensions (compose.yaml.disabled convention)
+            ext_dir = path.parent
+            if (ext_dir / "compose.yaml.disabled").exists() or (ext_dir / "compose.yml.disabled").exists():
+                logger.debug("Skipping disabled extension: %s", ext_dir.name)
+                continue
+
             manifest = _read_manifest_file(path)
             if manifest.get("schema_version") != "dream.services.v1":
                 logger.warning("Skipping manifest with unsupported schema_version: %s", path)
