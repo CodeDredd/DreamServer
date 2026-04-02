@@ -260,7 +260,7 @@ def _copytree_safe(src: Path, dst: Path) -> None:
 
 # --- Host Agent Helpers ---
 
-_AGENT_TIMEOUT = 60  # seconds — container starts can take 30s+ (image pulls, migrations)
+_AGENT_TIMEOUT = 300  # seconds — image pulls can take several minutes on first install
 
 
 def _call_agent(action: str, service_id: str) -> bool:
