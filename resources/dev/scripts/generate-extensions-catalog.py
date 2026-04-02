@@ -103,8 +103,8 @@ def extract_entry(manifest: dict) -> dict | None:
         "external_port_default": service.get("external_port_default", 0),
         "health_endpoint": service.get("health", ""),
         "env_vars": strip_secrets(env_vars),
-        "tags": manifest.get("tags", []),
-        "features": manifest.get("features", []),
+        "tags": manifest.get("tags") or service.get("tags", []),
+        "features": manifest.get("features") or service.get("features", []),
     }
 
 
