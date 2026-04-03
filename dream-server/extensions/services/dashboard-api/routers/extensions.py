@@ -473,9 +473,15 @@ def install_extension(service_id: str, api_key: str = Depends(verify_api_key)):
 
     # Early check (non-authoritative, rechecked under lock)
     if dest.exists():
-        raise HTTPException(
-            status_code=409, detail=f"Extension already installed: {service_id}",
-        )
+        has_compose = (dest / "compose.yaml").exists()
+        has_disabled = (dest / "compose.yaml.disabled").exists()
+        if has_compose or has_disabled:
+            raise HTTPException(
+                status_code=409, detail=f"Extension already installed: {service_id}",
+            )
+        # Broken directory (no compose file) — clean up before reinstall
+        logger.warning("Cleaning up broken extension directory: %s", dest)
+        shutil.rmtree(dest)
 
     # Size check
     total_size = 0
@@ -492,10 +498,16 @@ def install_extension(service_id: str, api_key: str = Depends(verify_api_key)):
     with _extensions_lock():
         # Re-check under lock to prevent double-install race
         if dest.exists():
-            raise HTTPException(
-                status_code=409,
-                detail=f"Extension already installed: {service_id}",
-            )
+            has_compose = (dest / "compose.yaml").exists()
+            has_disabled = (dest / "compose.yaml.disabled").exists()
+            if has_compose or has_disabled:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Extension already installed: {service_id}",
+                )
+            # Broken directory (no compose file) — clean up before reinstall
+            logger.warning("Cleaning up broken extension directory under lock: %s", dest)
+            shutil.rmtree(dest)
 
         USER_EXTENSIONS_DIR.mkdir(parents=True, exist_ok=True)
         tmpdir = tempfile.mkdtemp(dir=str(USER_EXTENSIONS_DIR.parent))
@@ -573,6 +585,9 @@ def enable_extension(service_id: str, api_key: str = Depends(verify_api_key)):
         missing_deps = []
         for dep in depends_on:
             if not isinstance(dep, str) or not _SERVICE_ID_RE.match(dep):
+                continue
+            # Core services have compose in docker-compose.base.yml, not individual files
+            if dep in CORE_SERVICE_IDS:
                 continue
             # Check built-in extensions
             if (EXTENSIONS_DIR / dep / "compose.yaml").exists():
