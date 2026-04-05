@@ -738,6 +738,7 @@ class TestMutationPathTraversal:
             ("POST", "/api/extensions/{}/enable"),
             ("POST", "/api/extensions/{}/disable"),
             ("DELETE", "/api/extensions/{}"),
+            ("DELETE", "/api/extensions/{}/data"),
         ]
 
         for bad_id in bad_ids:
