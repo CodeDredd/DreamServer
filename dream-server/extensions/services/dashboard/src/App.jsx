@@ -7,31 +7,47 @@ import { useVersion } from './hooks/useVersion'
 import { getInternalRoutes } from './plugins/registry'
 import SplashScreen from './components/SplashScreen'
 
+function getStorageValue(storage, key) {
+  try {
+    return storage?.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function setStorageValue(storage, key, value) {
+  try {
+    storage?.setItem(key, value)
+  } catch {
+    // Ignore storage failures in private windows or restricted environments.
+  }
+}
+
 function App() {
   // Show splash only once per browser session — not on every F5 / new tab
   const [splashDone, setSplashDone] = useState(
-    () => sessionStorage.getItem('dream-splash-shown') === '1'
+    () => getStorageValue(globalThis.sessionStorage, 'dream-splash-shown') === '1'
   )
   const { status, loading, error } = useSystemStatus()
   const { version, dismissUpdate } = useVersion()
   const [firstRun, setFirstRun] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    return localStorage.getItem('dream-sidebar-collapsed') === 'true'
+    return getStorageValue(globalThis.localStorage, 'dream-sidebar-collapsed') === 'true'
   })
 
   useEffect(() => {
-    const hasVisited = localStorage.getItem('dream-dashboard-visited')
+    const hasVisited = getStorageValue(globalThis.localStorage, 'dream-dashboard-visited')
     if (!hasVisited) {
       setFirstRun(true)
     }
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('dream-sidebar-collapsed', sidebarCollapsed)
+    setStorageValue(globalThis.localStorage, 'dream-sidebar-collapsed', String(sidebarCollapsed))
   }, [sidebarCollapsed])
 
   const dismissFirstRun = () => {
-    localStorage.setItem('dream-dashboard-visited', 'true')
+    setStorageValue(globalThis.localStorage, 'dream-dashboard-visited', 'true')
     setFirstRun(false)
   }
 
@@ -41,7 +57,7 @@ function App() {
   return (
     <div className="flex min-h-screen bg-theme-bg text-theme-text relative">
       {!splashDone && <SplashScreen onComplete={() => {
-        sessionStorage.setItem('dream-splash-shown', '1')
+        setStorageValue(globalThis.sessionStorage, 'dream-splash-shown', '1')
         setSplashDone(true)
       }} />}
       <Sidebar

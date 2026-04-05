@@ -1,15 +1,62 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { gsap } from 'gsap'
-import { CustomEase } from 'gsap/CustomEase'
 
-gsap.registerPlugin(CustomEase)
-// Note: gsap@3 is free for open-source projects. CustomEase is bundled in the
-// free tier. trialWarn suppression removed — not needed with the npm package.
+const SPLASH_DURATION_MS = 2800
+const EXIT_PAUSE_MS = 300
+const FADE_DURATION_MS = 600
+const LOW_END_ELLIPSE_COUNT = 14
+const STANDARD_ELLIPSE_COUNT = 22
+const visuallyHiddenStyle = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  padding: 0,
+  margin: '-1px',
+  overflow: 'hidden',
+  clip: 'rect(0, 0, 0, 0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+}
+
+function prefersReducedMotion() {
+  try {
+    return typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
+function isLowPerformanceDevice() {
+  if (typeof navigator === 'undefined') return false
+
+  const memory = typeof navigator.deviceMemory === 'number' ? navigator.deviceMemory : Infinity
+  const cores = typeof navigator.hardwareConcurrency === 'number' ? navigator.hardwareConcurrency : Infinity
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection
+
+  return Boolean(connection?.saveData) || memory <= 4 || cores <= 4
+}
+
+function startAnimationFrame(callback) {
+  if (typeof requestAnimationFrame === 'function') {
+    return requestAnimationFrame(callback)
+  }
+
+  return setTimeout(() => callback(performance.now()), 16)
+}
+
+function stopAnimationFrame(frameId) {
+  if (typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(frameId)
+    return
+  }
+
+  clearTimeout(frameId)
+}
 
 // ─── Orb SVG animation — exact port of codepen.io/chrisgannon/pen/ZYQjZBr ───
-function OrbBackground({ reduced }) {
+function OrbBackground({ reduced, lowPerformance }) {
   const svgRef = useRef(null)
-  const ctxRef = useRef(null)
 
   useEffect(() => {
     const svg = svgRef.current
@@ -17,48 +64,60 @@ function OrbBackground({ reduced }) {
 
     const allEll = Array.from(svg.querySelectorAll('.ell'))
     const _ca = ['#f72585', '#7209b7', '#3a0ca3', '#4361ee', '#4cc9f0', '#D9F4FC']
-
-    const _eio = CustomEase.create('_eio', 'M0,0 C0.2,0 0.432,0.147 0.507,0.374 0.59,0.629 0.822,1 1,1')
-    const easeOut = CustomEase.create('_eout', 'M0,0 C0.271,0.302 0.323,0.535 0.453,0.775 0.528,0.914 0.78,1 1,1')
-    const easeIn = CustomEase.create('_ein', 'M0,0 C0.594,0.062 0.79,0.698 1,1')
-
-    const _rxf = 3.8, _ryf = 2.3, _ss = 10, _es = 100
+    const rxFactor = lowPerformance ? 2.4 : 3.2
+    const ryFactor = lowPerformance ? 1.5 : 2
+    const strokeStart = lowPerformance ? 8 : 10
+    const strokeEnd = lowPerformance ? 56 : 84
     const colorInterp = gsap.utils.interpolate(_ca)
 
     const ctx = gsap.context(() => {
-      const mainTl = gsap.timeline()
-
       gsap.set(svg, { visibility: 'visible' })
 
-      function _anm(el, _cn) {
-        const ___t = gsap.timeline({ defaults: { ease: _eio, duration: 1 }, repeat: -1 })
-        gsap.set(el, {
-          opacity: 1 - _cn / allEll.length,
-          stroke: colorInterp(_cn / allEll.length),
+      function animateEllipse(el, index) {
+        const offset = index + 1
+        const timeline = gsap.timeline({
+          defaults: { duration: lowPerformance ? 1.25 : 1, ease: 'sine.inOut' },
+          repeat: -1,
         })
 
-        ___t
-          .to(el, { attr: { rx: `+=${_cn * _rxf}`, ry: `-=${_cn * _ryf}` }, strokeWidth: _ss, ease: easeIn })
-          .to(el, { strokeWidth: _es, attr: { rx: `-=${_cn * _rxf}`, ry: `+=${_cn * _ryf}` }, ease: easeOut })
-          .to(el, { duration: 2, rotation: -360, transformOrigin: '50% 50%', ease: _eio }, 0)
-          .from(el, { duration: 1, scale: 0, transformOrigin: '50% 50%', ease: _eio }, 0)
-          .from(el, { duration: 1.5, ease: _eio }, 0)
-          .timeScale(0.5)
+        gsap.set(el, {
+          opacity: 1 - offset / allEll.length,
+          stroke: colorInterp(offset / allEll.length),
+        })
 
-        mainTl.add(___t, _cn / allEll.length)
+        timeline
+          .to(el, {
+            attr: { rx: `+=${offset * rxFactor}`, ry: `-=${offset * ryFactor}` },
+            strokeWidth: strokeStart,
+            ease: 'power2.in',
+          })
+          .to(el, {
+            strokeWidth: strokeEnd,
+            attr: { rx: `-=${offset * rxFactor}`, ry: `+=${offset * ryFactor}` },
+            ease: 'power2.out',
+          })
+          .to(el, {
+            duration: lowPerformance ? 2.5 : 2,
+            rotation: -360,
+            transformOrigin: '50% 50%',
+            ease: 'none',
+          }, 0)
+          .from(el, {
+            duration: lowPerformance ? 1.1 : 0.9,
+            scale: 0,
+            transformOrigin: '50% 50%',
+            ease: 'power2.out',
+          }, 0)
+          .timeScale(lowPerformance ? 0.42 : 0.54)
+
+        timeline.progress((offset / allEll.length) * 0.35)
       }
 
-      allEll.forEach((el, c) => _anm(el, c + 1))
-      // Scoped to this context so it does not bleed into other GSAP animations
-      gsap.globalTimeline.timeScale(1.3)
+      allEll.forEach(animateEllipse)
     }, svg)
 
-    ctxRef.current = ctx
-    return () => {
-      ctx.revert()
-      gsap.globalTimeline.timeScale(1)
-    }
-  }, [reduced])
+    return () => ctx.revert()
+  }, [lowPerformance, reduced])
 
   if (reduced) return null
 
@@ -78,7 +137,7 @@ function OrbBackground({ reduced }) {
         inset: 0,
       }}
     >
-      {Array.from({ length: 31 }, (_, i) => (
+      {Array.from({ length: lowPerformance ? LOW_END_ELLIPSE_COUNT : STANDARD_ELLIPSE_COUNT }, (_, i) => (
         <ellipse
           key={i}
           className="ell"
@@ -96,84 +155,105 @@ function OrbBackground({ reduced }) {
 
 // ─── Splash Screen ────────────────────────────────────────────────────────────
 export default function SplashScreen({ onComplete }) {
-  // Respect prefers-reduced-motion: skip animation entirely if set.
-  // Guard with try/catch: jsdom (vitest/jest) does not implement matchMedia.
-  const [reduced] = useState(() => {
-    try {
-      return typeof window !== 'undefined' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    } catch {
-      return false
-    }
-  })
+  const [reduced] = useState(prefersReducedMotion)
+  const [lowPerformance] = useState(isLowPerformanceDevice)
 
   const [progress, setProgress] = useState(0)
   const [glitching, setGlitching] = useState(false)
   const [done, setDone] = useState(false)
   const rafRef = useRef(null)
   const startRef = useRef(null)
-  // Store DURATION in a ref so the progress useEffect captures it without
-  // needing it in the dependency array (it won't change after mount).
-  const durationRef = useRef(reduced ? 0 : 2800)
+  const completionRef = useRef(false)
+  const timeoutsRef = useRef([])
+
+  const clearScheduledWork = useCallback(() => {
+    if (rafRef.current !== null) {
+      stopAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+
+    timeoutsRef.current.forEach(clearTimeout)
+    timeoutsRef.current = []
+  }, [])
+
+  const finishSplash = useCallback((delay = FADE_DURATION_MS) => {
+    if (completionRef.current) return
+
+    completionRef.current = true
+    clearScheduledWork()
+    setGlitching(false)
+    setProgress(100)
+    setDone(true)
+
+    if (delay <= 0) {
+      onComplete?.()
+      return
+    }
+
+    const timeoutId = setTimeout(() => onComplete?.(), delay)
+    timeoutsRef.current.push(timeoutId)
+  }, [clearScheduledWork, onComplete])
+
+  useEffect(() => {
+    return () => clearScheduledWork()
+  }, [clearScheduledWork])
 
   // If reduced motion, complete immediately without any animation
   useEffect(() => {
     if (reduced) {
-      onComplete?.()
+      finishSplash(0)
     }
-  }, [reduced, onComplete])
+  }, [finishSplash, reduced])
 
   // Progress bar
   useEffect(() => {
     if (reduced) return
     startRef.current = performance.now()
-    const duration = durationRef.current
+    const duration = SPLASH_DURATION_MS
     function tick(now) {
       const elapsed = now - startRef.current
       const p = Math.min(elapsed / duration, 1)
       const eased = 1 - Math.pow(1 - p, 3)
       setProgress(Math.floor(eased * 100))
       if (p < 1) {
-        rafRef.current = requestAnimationFrame(tick)
+        rafRef.current = startAnimationFrame(tick)
       } else {
         setProgress(100)
-        setTimeout(() => {
-          setDone(true)
-          setTimeout(() => onComplete?.(), 600)
-        }, 300)
+        const timeoutId = setTimeout(() => finishSplash(), EXIT_PAUSE_MS)
+        timeoutsRef.current.push(timeoutId)
       }
     }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(rafRef.current)
-  }, [reduced, onComplete])
+    rafRef.current = startAnimationFrame(tick)
+    return () => clearScheduledWork()
+  }, [clearScheduledWork, finishSplash, reduced])
 
   // Glitch
   useEffect(() => {
     if (reduced) return
-    let timeout
+    let timeoutId
     function schedule() {
-      timeout = setTimeout(() => {
+      timeoutId = setTimeout(() => {
         setGlitching(true)
-        setTimeout(() => { setGlitching(false); schedule() }, 80 + Math.random() * 120)
+        const toggleId = setTimeout(() => {
+          setGlitching(false)
+          schedule()
+        }, 80 + Math.random() * 120)
+        timeoutsRef.current.push(toggleId)
       }, Math.random() * 900 + 200)
+      timeoutsRef.current.push(timeoutId)
     }
     schedule()
-    return () => clearTimeout(timeout)
+    return () => clearTimeout(timeoutId)
   }, [reduced])
 
-  // Skip on click or Escape key
-  const skip = () => {
-    cancelAnimationFrame(rafRef.current)
-    setDone(true)
-    setTimeout(() => onComplete?.(), 300)
-  }
+  const skip = useCallback(() => finishSplash(300), [finishSplash])
 
   useEffect(() => {
     if (reduced) return
     const onKey = (e) => { if (e.key === 'Escape') skip() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [reduced]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [reduced, skip])
 
   if (reduced) return null
 
@@ -188,10 +268,10 @@ export default function SplashScreen({ onComplete }) {
 
   return (
     <div
-      role="status"
-      aria-live="polite"
-      aria-label="DreamServer is loading"
-      aria-busy={!done}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dream-splash-title"
+      aria-describedby="dream-splash-status dream-splash-hint"
       onClick={skip}
       style={{
         position: 'fixed', inset: 0, zIndex: 9999,
@@ -206,7 +286,7 @@ export default function SplashScreen({ onComplete }) {
     >
       {/* Decorative orb — hidden from assistive tech */}
       <div style={{ position: 'absolute', inset: 0, opacity: 0.75 }} aria-hidden="true">
-        <OrbBackground reduced={reduced} />
+        <OrbBackground reduced={reduced} lowPerformance={lowPerformance} />
       </div>
 
       {/* Content */}
@@ -215,8 +295,19 @@ export default function SplashScreen({ onComplete }) {
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         gap: '2rem', width: '100%', maxWidth: '520px', padding: '0 2rem',
       }}>
-        {/* Glitch title — decorative spans are aria-hidden; real label is on root */}
-        <div style={{ position: 'relative', userSelect: 'none' }} aria-hidden="true">
+        <p
+          id="dream-splash-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-busy={!done}
+          style={visuallyHiddenStyle}
+        >
+          {done ? 'DreamServer is ready.' : `Loading DreamServer. ${progress}% complete.`}
+        </p>
+
+        <h1 id="dream-splash-title" style={{ position: 'relative', userSelect: 'none', margin: 0 }}>
+          <span style={visuallyHiddenStyle}>DreamServer</span>
           {glitching && (
             <span style={{
               position: 'absolute', top: 0, left: '2px', color: '#f72585',
@@ -224,7 +315,7 @@ export default function SplashScreen({ onComplete }) {
               fontSize: 'clamp(2rem,6vw,3.5rem)', fontWeight: 900, letterSpacing: '0.05em',
               clipPath: 'polygon(0 20%,100% 20%,100% 45%,0 45%)',
               opacity: 0.9, pointerEvents: 'none',
-            }}>{displayTitle}</span>
+            }} aria-hidden="true">{displayTitle}</span>
           )}
           {glitching && (
             <span style={{
@@ -233,7 +324,7 @@ export default function SplashScreen({ onComplete }) {
               fontSize: 'clamp(2rem,6vw,3.5rem)', fontWeight: 900, letterSpacing: '0.05em',
               clipPath: 'polygon(0 60%,100% 60%,100% 80%,0 80%)',
               opacity: 0.85, pointerEvents: 'none',
-            }}>{displayTitle}</span>
+            }} aria-hidden="true">{displayTitle}</span>
           )}
           <span style={{
             fontFamily: "'JetBrains Mono','Courier New',monospace",
@@ -242,8 +333,8 @@ export default function SplashScreen({ onComplete }) {
             WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent',
             backgroundClip: 'text', display: 'inline-block',
             filter: glitching ? 'blur(0.5px)' : 'none', transition: 'filter 0.05s',
-          }}>{displayTitle}</span>
-        </div>
+          }} aria-hidden="true">{displayTitle}</span>
+        </h1>
 
         <p style={{
           color: '#71717a', fontSize: '0.85rem', letterSpacing: '0.2em',
@@ -273,11 +364,35 @@ export default function SplashScreen({ onComplete }) {
           </div>
         </div>
 
-        {/* Skip hint */}
-        <p style={{
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation()
+            skip()
+          }}
+          aria-label="Skip splash screen"
+          style={{
+            border: '1px solid #27272a',
+            borderRadius: '999px',
+            padding: '0.7rem 1rem',
+            background: 'rgba(24,24,27,0.92)',
+            color: '#e4e4e7',
+            fontFamily: "'JetBrains Mono','Courier New',monospace",
+            fontSize: '0.75rem',
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Skip intro
+        </button>
+
+        <p
+          id="dream-splash-hint"
+          style={{
           color: '#3f3f46', fontSize: '0.65rem', letterSpacing: '0.15em',
           textTransform: 'uppercase', fontFamily: 'monospace', margin: '-0.5rem 0 0',
-        }}>
+        }}
+        >
           Click or press Esc to skip
         </p>
       </div>
