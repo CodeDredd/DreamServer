@@ -91,6 +91,18 @@ else
 fi
 unset _comfyui_compose
 
+# Re-resolve compose flags now that feature selection may have disabled services.
+# Without this, Phases 4-11 use stale flags from Phase 2 that reference files
+# which were just renamed to .disabled.
+if [[ -x "$SCRIPT_DIR/scripts/resolve-compose-stack.sh" ]]; then
+    _refreshed_flags=$("$SCRIPT_DIR/scripts/resolve-compose-stack.sh" \
+        --script-dir "$SCRIPT_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}" 2>/dev/null) || true
+    if [[ -n "$_refreshed_flags" ]]; then
+        COMPOSE_FLAGS="$_refreshed_flags"
+        log "Compose flags refreshed after feature selection"
+    fi
+fi
+
 # All services are core — no profiles needed (compose profiles removed)
 
 # Select tier-appropriate OpenClaw config
@@ -109,9 +121,43 @@ fi
 
 log "All services enabled (core install)"
 
-# Early return if single gpu
+# Single GPU — generate a trivial assignment so the dashboard API can map
+# the GPU UUID to services (without this, /api/gpu/detailed shows empty
+# assigned_services).  Multi-GPU systems fall through to the full TUI below.
 if [[ "$GPU_COUNT" -le 1 ]]; then
-    log "Single GPU detected — skipping multi-GPU configuration."
+    if [[ "${GPU_BACKEND:-}" == "nvidia" ]]; then
+        _single_gpu_uuid=$(nvidia-smi --query-gpu=uuid --format=csv,noheader,nounits 2>/dev/null | sed -n '1p' || true)
+        if [[ -n "$_single_gpu_uuid" ]]; then
+            GPU_ASSIGNMENT_JSON=$(jq -n \
+                --arg uuid "$_single_gpu_uuid" \
+                '{
+                    gpu_assignment: {
+                        version: "1.0",
+                        strategy: "single",
+                        services: {
+                            llama_server: {
+                                gpus: [$uuid],
+                                parallelism: {
+                                    mode: "none",
+                                    tensor_parallel_size: 1,
+                                    pipeline_parallel_size: 1,
+                                    gpu_memory_utilization: 0.95
+                                }
+                            },
+                            whisper:    { gpus: [$uuid] },
+                            comfyui:    { gpus: [$uuid] },
+                            embeddings: { gpus: [$uuid] }
+                        }
+                    }
+                }')
+            log "Single GPU — assignment generated ($_single_gpu_uuid)"
+        else
+            log "Single GPU detected — no NVIDIA UUID available, skipping assignment."
+        fi
+        unset _single_gpu_uuid
+    else
+        log "Single GPU detected — non-NVIDIA backend, skipping GPU assignment."
+    fi
     return
 fi
 

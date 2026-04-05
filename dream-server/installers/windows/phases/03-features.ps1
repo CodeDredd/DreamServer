@@ -87,7 +87,7 @@ if (-not $nonInteractive -and -not $allFlag -and -not $dryRun) {
 }
 
 # Tier safety net: disable ComfyUI on Tier 0/1 or CLOUD in non-interactive mode.
-# Interactive mode has its own tier checks in the menu — this catches -NonInteractive.
+# Interactive mode has its own tier checks in the menu -- this catches -NonInteractive.
 if ($nonInteractive -and $enableComfyui -and ($selectedTier -eq "0" -or $selectedTier -eq "1")) {
     $enableComfyui = $false
     Write-AI "ComfyUI auto-disabled for Tier $selectedTier (insufficient RAM for shm_size 8GB)"

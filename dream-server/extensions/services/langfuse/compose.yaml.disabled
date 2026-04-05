@@ -1,5 +1,5 @@
 services:
-  langfuse-web:
+  langfuse:
     image: langfuse/langfuse:3.159.0
     container_name: dream-langfuse-web
     restart: unless-stopped
@@ -279,7 +279,7 @@ services:
     environment:
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PROJECT_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_PROJECT_SECRET_KEY:-}
-      - LANGFUSE_HOST=http://langfuse-web:3000
+      - LANGFUSE_HOST=http://langfuse:3000
       - LANGFUSE_TRACING_ENABLED=${LANGFUSE_ENABLED:-false}
 
 networks:

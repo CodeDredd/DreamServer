@@ -41,8 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yq (YAML processor used by service manifests and extension system)
+ARG YQ_VERSION=v4.52.5
 RUN ARCH=$(dpkg --print-architecture) && \
-    curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${ARCH}" \
+    curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${ARCH}" \
     -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
 
 # Install Docker CLI + Compose plugin (no daemon — we control the host Docker via socket)
@@ -53,9 +54,10 @@ RUN ARCH=$(uname -m) && \
 
 # Install Docker Compose plugin (required by install.sh for 'docker compose up')
 # Compose uses uname -m naming: x86_64, aarch64 (not amd64/arm64)
+ARG COMPOSE_VERSION=v2.32.4
 RUN ARCH=$(uname -m) && \
     mkdir -p /usr/local/lib/docker/cli-plugins && \
-    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${ARCH}" \
+    curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${ARCH}" \
     -o /usr/local/lib/docker/cli-plugins/docker-compose && \
     chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 

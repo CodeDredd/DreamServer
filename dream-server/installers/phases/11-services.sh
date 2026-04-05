@@ -24,6 +24,19 @@ if $DRY_RUN; then
     log "[DRY RUN] Would start services: $DOCKER_COMPOSE_CMD $COMPOSE_FLAGS up -d"
 else
     cd "$INSTALL_DIR" || exit 1
+
+    # Re-resolve compose flags against the actual install directory.
+    # Phase 03 may have disabled services (e.g., ComfyUI on Tier 0) after
+    # COMPOSE_FLAGS was first set in Phase 02, making the cached value stale.
+    if [[ -x "$INSTALL_DIR/scripts/resolve-compose-stack.sh" ]]; then
+        _refreshed_flags=$("$INSTALL_DIR/scripts/resolve-compose-stack.sh" \
+            --script-dir "$INSTALL_DIR" --tier "${TIER:-1}" --gpu-backend "${GPU_BACKEND:-nvidia}" 2>/dev/null) || true
+        if [[ -n "$_refreshed_flags" ]]; then
+            COMPOSE_FLAGS="$_refreshed_flags"
+            log "Compose flags refreshed from install directory"
+        fi
+    fi
+
     # Convert COMPOSE_FLAGS string to array for safe word-splitting
     read -ra COMPOSE_FLAGS_ARR <<< "$COMPOSE_FLAGS"
     mkdir -p "$INSTALL_DIR/logs"
@@ -266,6 +279,16 @@ MODELS_INI_EOF
         fi
         ai_ok "All service dependencies satisfied"
     fi
+
+    # ── Compose syntax validation ──────────────────────────────
+    ai "Validating compose stack configuration..."
+    if ! $DOCKER_COMPOSE_CMD "${COMPOSE_FLAGS_ARR[@]}" config --quiet 1>/dev/null 2>"$LOG_FILE.compose-check"; then
+        ai_bad "Compose configuration is invalid"
+        ai "Check $LOG_FILE.compose-check for details"
+        cat "$LOG_FILE.compose-check" >&2
+        exit 1
+    fi
+    ai_ok "Compose configuration valid"
 
     # Launch containers
     dream_progress 81 "services" "Launching containers"

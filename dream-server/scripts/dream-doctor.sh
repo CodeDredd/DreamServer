@@ -265,7 +265,7 @@ if runtime["docker_cli"] and not runtime["docker_daemon"]:
 if not runtime["compose_cli"]:
     fix_hints.append("Install Docker Compose v2 plugin (or docker-compose).")
 if runtime["docker_daemon"] and not runtime["dashboard_http"]:
-    fix_hints.append(f"Run installer/start command, then verify dashboard on http://localhost:{dashboard_port}.")
+    fix_hints.append(f"Run installer/start command, then verify dashboard on http://127.0.0.1:{dashboard_port}.")
 if runtime["docker_daemon"] and not runtime["webui_http"]:
     fix_hints.append(f"Verify Open WebUI container and port {webui_port} mapping.")
 

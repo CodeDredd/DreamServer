@@ -1,11 +1,14 @@
 schema_version: dream.services.v1
 
+compatibility:
+  dream_min: "2.0.0"
+
 service:
   id: langfuse
   name: Langfuse (LLM Observability)
   aliases: [observability, traces]
   container_name: dream-langfuse-web
-  default_host: langfuse-web
+  default_host: langfuse
   port: 3000
   external_port_env: LANGFUSE_PORT
   external_port_default: 3006

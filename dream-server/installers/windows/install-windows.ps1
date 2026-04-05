@@ -258,7 +258,7 @@ if ($dryRun) {
                 # --extra-models-dir: Lemonade auto-discovers GGUF files in this directory
                 # --no-tray: headless mode (no GUI system tray icon)
                 # --llamacpp vulkan: AMD Vulkan GPU acceleration
-                # Model loads automatically on first chat request — no /api/v1/load needed
+                # Model loads automatically on first chat request -- no /api/v1/load needed
                 Write-AI "Starting Lemonade server..."
                 $modelsDir = Join-Path (Join-Path $installDir "data") "models"
                 $lemonadeArgs = @(
@@ -405,7 +405,7 @@ if ($dryRun) {
                 Write-AIWarn "NVIDIA GPU passthrough unavailable -- falling back to CPU-only inference."
                 Write-AI "  Inference will be slower but functional. To fix GPU passthrough:"
                 Write-AI "  1. Restart Docker Desktop and WSL: wsl --shutdown"
-                Write-AI "  2. Verify: docker run --rm --gpus all nvidia/cuda:12.0-base-ubuntu22.04 nvidia-smi"
+                Write-AI "  2. Verify: docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi"
                 $composeFlags += @("-f", "docker-compose.cpu.yml")
             } else {
                 $composeFlags += @("-f", "docker-compose.nvidia.yml")
@@ -413,7 +413,7 @@ if ($dryRun) {
         } elseif ($gpuInfo.Backend -eq "amd") {
             $composeFlags += @("-f", "installers/windows/docker-compose.windows-amd.yml")
         } else {
-            # No supported GPU detected (Intel integrated, etc.) — use CPU-only overlay
+            # No supported GPU detected (Intel integrated, etc.) -- use CPU-only overlay
             Write-AIWarn "No supported GPU detected. Using CPU-only inference (slower)."
             $composeFlags += @("-f", "docker-compose.cpu.yml")
         }
@@ -560,7 +560,7 @@ if ($dryRun) {
 
                 # Write a temp wrapper script to avoid Windows/PowerShell quoting
                 # issues. Empty arguments (e.g., SHA256 for some tiers) get lost
-                # during command-line parsing — embedding them in a script file
+                # during command-line parsing -- embedding them in a script file
                 # with bash double-quotes preserves them correctly.
                 $wrapperScript = Join-Path $logDir "bootstrap-run.sh"
                 $wrapperContent = @"

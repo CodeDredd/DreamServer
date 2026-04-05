@@ -59,7 +59,7 @@ function Write-DreamComposeDiagnostics {
     )
 
     Write-Chapter "COMPOSE FAILURE DIAGNOSTICS"
-    Write-AI "Phase: $Phase — save this section if you report an issue."
+    Write-AI "Phase: $Phase -- save this section if you report an issue."
     Write-AI "Docs: dream-server/docs/WINDOWS-TROUBLESHOOTING-GUIDE.md (section: Docker Compose failed)"
     Write-Host ""
 
@@ -77,7 +77,7 @@ function Write-DreamComposeDiagnostics {
         Write-Host "  --- docker info (first 35 lines) ---" -ForegroundColor DarkGray
         $di = & docker info 2>&1 | ForEach-Object { $_.ToString() }
         if ($di) { $di | Select-Object -First 35 | ForEach-Object { Write-Host "  $_" } }
-        else { Write-Host "  (docker info failed — is Docker Desktop running?)" -ForegroundColor Yellow }
+        else { Write-Host "  (docker info failed -- is Docker Desktop running?)" -ForegroundColor Yellow }
         Write-Host ""
 
         $envArgs = Get-DreamComposeEnvFileArgs -InstallDir $InstallDir
