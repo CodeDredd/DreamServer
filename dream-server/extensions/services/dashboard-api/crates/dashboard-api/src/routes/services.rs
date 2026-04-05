@@ -139,3 +139,101 @@ pub async fn full_status_endpoint(State(state): State<AppState>) -> Json<Value> 
     };
     Json(serde_json::to_value(&status).unwrap_or(json!({})))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    fn auth_header() -> String {
+        "Bearer test-key".to_string()
+    }
+
+    #[tokio::test]
+    async fn services_requires_auth() {
+        let req = Request::builder()
+            .uri("/services")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn services_returns_json_array() {
+        let req = Request::builder()
+            .uri("/services")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.is_array(), "Expected array from /services, got: {val}");
+    }
+
+    #[tokio::test]
+    async fn disk_returns_json() {
+        let req = Request::builder()
+            .uri("/disk")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.is_object());
+    }
+
+    #[tokio::test]
+    async fn model_returns_json() {
+        let req = Request::builder()
+            .uri("/model")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn bootstrap_returns_json() {
+        let req = Request::builder()
+            .uri("/bootstrap")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.is_object());
+    }
+
+    #[tokio::test]
+    async fn full_status_returns_json() {
+        let req = Request::builder()
+            .uri("/status")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("timestamp").is_some());
+    }
+}

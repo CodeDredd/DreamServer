@@ -55,6 +55,15 @@ fn load_catalog() -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn user_extensions_dir() -> PathBuf {
+    let install = std::env::var("DREAM_INSTALL_DIR")
+        .unwrap_or_else(|_| shellexpand::tilde("~/dream-server").to_string());
+    PathBuf::from(
+        std::env::var("DREAM_USER_EXTENSIONS_DIR")
+            .unwrap_or_else(|_| format!("{install}/extensions/user")),
+    )
+}
+
 fn core_service_ids() -> std::collections::HashSet<String> {
     let install = std::env::var("DREAM_INSTALL_DIR")
         .unwrap_or_else(|_| shellexpand::tilde("~/dream-server").to_string());
@@ -272,12 +281,8 @@ pub async fn install_extension(
         return Json(json!({"error": format!("Extension not found in library: {id}")}));
     }
 
-    // Copy from library to extensions dir
-    let user_ext_dir = std::path::PathBuf::from(
-        std::env::var("DREAM_USER_EXTENSIONS_DIR").unwrap_or_else(|_| {
-            format!("{install}/extensions/user")
-        }),
-    );
+    // Copy from library to user extensions dir
+    let user_ext_dir = user_extensions_dir();
     let _ = std::fs::create_dir_all(&user_ext_dir);
     let dest = user_ext_dir.join(&id);
 
@@ -397,6 +402,69 @@ pub async fn extension_logs(
             Json(resp.json().await.unwrap_or(json!({})))
         }
         _ => Json(json!({"error": "Host agent unavailable — cannot fetch logs"})),
+    }
+}
+
+/// DELETE /api/extensions/:id — uninstall a disabled extension
+pub async fn uninstall_extension(
+    Path(id): Path<String>,
+) -> Json<Value> {
+    if let Err(msg) = validate_extension_id(&id) {
+        return Json(json!({"error": msg}));
+    }
+
+    // Reject core services
+    if core_service_ids().contains(&id) {
+        return Json(json!({"error": format!("Cannot uninstall core service: {id}")}));
+    }
+
+    let user_ext = user_extensions_dir().join(&id);
+
+    // Canonicalize and verify the path stays under user_extensions_dir
+    let base_canonical = match user_extensions_dir().canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Json(json!({"error": "User extensions directory not found"})),
+    };
+
+    if !user_ext.exists() {
+        return Json(json!({"error": format!("Extension not installed: {id}")}));
+    }
+
+    let ext_canonical = match user_ext.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return Json(json!({"error": format!("Extension not found: {id}")})),
+    };
+
+    if !ext_canonical.starts_with(&base_canonical) {
+        return Json(json!({"error": format!("Extension not found: {id}")}));
+    }
+
+    // Reject symlinks at the top level
+    match std::fs::symlink_metadata(&user_ext) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Json(json!({"error": "Extension directory is a symlink"}));
+        }
+        Err(e) => {
+            return Json(json!({"error": format!("Cannot read extension: {e}")}));
+        }
+        _ => {}
+    }
+
+    // Must be disabled before uninstall
+    if user_ext.join("compose.yaml").exists() {
+        return Json(json!({
+            "error": format!("Disable extension before uninstalling. Run 'dream disable {id}' first."),
+        }));
+    }
+
+    match std::fs::remove_dir_all(&ext_canonical) {
+        Ok(_) => Json(json!({
+            "id": id,
+            "action": "uninstalled",
+            "message": "Extension uninstalled. Docker volumes may remain — run 'docker volume ls' to check.",
+            "cleanup_hint": format!("To remove orphaned volumes: docker volume ls --filter 'name={id}' -q | xargs docker volume rm"),
+        })),
+        Err(e) => Json(json!({"error": format!("Failed to remove extension files: {e}")})),
     }
 }
 

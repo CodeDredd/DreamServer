@@ -159,3 +159,140 @@ pub async fn preflight_disk() -> Json<Value> {
         "free": 0, "total": 0, "used": 0, "path": "",
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    fn auth_header() -> String {
+        "Bearer test-key".to_string()
+    }
+
+    #[tokio::test]
+    async fn required_ports_is_public() {
+        // /api/preflight/required-ports is a public route
+        let req = Request::builder()
+            .uri("/api/preflight/required-ports")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val["ports"].is_array(), "Expected ports array");
+    }
+
+    #[tokio::test]
+    async fn preflight_docker_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/preflight/docker")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn preflight_docker_returns_available_key() {
+        let req = Request::builder()
+            .uri("/api/preflight/docker")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("available").is_some(), "Expected 'available' key");
+    }
+
+    #[tokio::test]
+    async fn preflight_gpu_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/preflight/gpu")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn preflight_gpu_returns_available_key() {
+        let req = Request::builder()
+            .uri("/api/preflight/gpu")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("available").is_some(), "Expected 'available' key");
+    }
+
+    #[tokio::test]
+    async fn preflight_disk_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/preflight/disk")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn preflight_disk_returns_disk_info() {
+        let req = Request::builder()
+            .uri("/api/preflight/disk")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("total").is_some(), "Expected 'total' key");
+        assert!(val.get("free").is_some(), "Expected 'free' key");
+    }
+
+    #[tokio::test]
+    async fn preflight_ports_requires_auth() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/preflight/ports")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"ports":[8080]}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn preflight_ports_returns_conflicts_shape() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/preflight/ports")
+            .header("authorization", auth_header())
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"ports":[59999]}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("conflicts").is_some(), "Expected 'conflicts' key");
+        assert!(val.get("available").is_some(), "Expected 'available' key");
+    }
+}

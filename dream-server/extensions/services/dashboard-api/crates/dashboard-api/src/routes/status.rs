@@ -221,3 +221,47 @@ async fn build_api_status(state: AppState) -> anyhow::Result<Value> {
         "manifest_errors": *state.manifest_errors,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn api_status_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/status")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn api_status_returns_json_with_expected_keys() {
+        let req = Request::builder()
+            .uri("/api/status")
+            .header("authorization", "Bearer test-key")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        // Should have core status keys (either from build or fallback)
+        assert!(val.get("version").is_some());
+        assert!(val.get("tier").is_some());
+        assert!(val.get("services").is_some());
+    }
+}

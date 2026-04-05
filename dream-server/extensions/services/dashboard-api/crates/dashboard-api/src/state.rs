@@ -68,7 +68,10 @@ impl AppState {
             features: Arc::new(features),
             manifest_errors: Arc::new(manifest_errors),
             api_key: Arc::new(api_key),
-            version: Arc::new("2.0.0".to_string()),
+            version: Arc::new(
+                std::env::var("DREAM_VERSION")
+                    .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
+            ),
             services_cache: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
@@ -87,7 +90,8 @@ mod tests {
         assert!(state.services.is_empty());
         assert!(state.features.is_empty());
         assert!(state.manifest_errors.is_empty());
-        assert_eq!(state.version.as_str(), "2.0.0");
+        // Falls back to CARGO_PKG_VERSION when DREAM_VERSION is unset
+        assert_eq!(state.version.as_str(), env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

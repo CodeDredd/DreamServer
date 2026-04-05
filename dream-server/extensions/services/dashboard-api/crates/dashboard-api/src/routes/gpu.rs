@@ -93,3 +93,66 @@ pub async fn poll_gpu_history() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn gpu_history_returns_history_array() {
+        let req = Request::builder()
+            .uri("/api/gpu/history")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val["history"].is_array(), "Expected history array");
+    }
+
+    #[tokio::test]
+    async fn gpu_history_is_public() {
+        // gpu/history is a public route — no auth header needed
+        let req = Request::builder()
+            .uri("/api/gpu/history")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn gpu_topology_is_public() {
+        let req = Request::builder()
+            .uri("/api/gpu/topology")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn gpu_detailed_is_public() {
+        // gpu/detailed is public but may return 503 without GPU hardware
+        let req = Request::builder()
+            .uri("/api/gpu/detailed")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        let status = resp.status().as_u16();
+        assert!(status == 200 || status == 503, "Expected 200 or 503, got {status}");
+    }
+}

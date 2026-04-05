@@ -48,7 +48,6 @@ pub fn build_router(app_state: AppState) -> Router {
         .route("/api/workflows", get(routes::workflows::list_workflows))
         .route("/api/workflows/categories", get(routes::workflows::workflow_categories))
         .route("/api/workflows/n8n/status", get(routes::workflows::n8n_status))
-        .route("/api/workflows/{id}", get(routes::workflows::get_workflow))
         .route("/api/workflows/{id}/enable", post(routes::workflows::enable_workflow))
         .route("/api/workflows/{id}/disable", post(routes::workflows::disable_workflow))
         .route("/api/workflows/{id}/executions", get(routes::workflows::workflow_executions))
@@ -72,11 +71,12 @@ pub fn build_router(app_state: AppState) -> Router {
         .route("/api/privacy-shield/toggle", post(routes::privacy::privacy_toggle))
         .route("/api/privacy-shield/stats", get(routes::privacy::privacy_stats))
         .route("/api/extensions/catalog", get(routes::extensions::extensions_catalog))
-        .route("/api/extensions/{id}", get(routes::extensions::get_extension))
+        .route("/api/extensions/{id}", get(routes::extensions::get_extension).delete(routes::extensions::uninstall_extension))
         .route("/api/extensions/{id}/install", post(routes::extensions::install_extension))
         .route("/api/extensions/{id}/enable", post(routes::extensions::enable_extension))
         .route("/api/extensions/{id}/disable", post(routes::extensions::disable_extension))
         .route("/api/extensions/{id}/logs", post(routes::extensions::extension_logs))
+        .route("/api/workflows/{id}", get(routes::workflows::get_workflow).delete(routes::workflows::disable_workflow))
         .layer(axum_mw::from_fn_with_state(app_state.clone(), require_api_key));
 
     Router::new()

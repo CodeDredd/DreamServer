@@ -243,3 +243,98 @@ pub async fn update_action(Json(body): Json<Value>) -> Json<Value> {
         _ => Json(json!({"status": "error", "message": format!("Unknown action: {action}")})),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    fn auth_header() -> String {
+        "Bearer test-key".to_string()
+    }
+
+    #[tokio::test]
+    async fn version_info_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/version")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn version_info_returns_shape() {
+        let req = Request::builder()
+            .uri("/api/version")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("current").is_some());
+        assert!(val.get("update_available").is_some());
+    }
+
+    #[tokio::test]
+    async fn update_dry_run_returns_shape() {
+        let req = Request::builder()
+            .uri("/api/update/dry-run")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(val["dry_run"], true);
+        assert!(val.get("current_version").is_some());
+        assert!(val.get("images").is_some());
+    }
+
+    #[tokio::test]
+    async fn update_action_unknown_returns_error() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/update")
+            .header("authorization", auth_header())
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"invalid"}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(val["status"], "error");
+    }
+
+    #[tokio::test]
+    async fn update_action_check_returns_redirect() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/update")
+            .header("authorization", auth_header())
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"action":"check"}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(val["action"], "check");
+        assert_eq!(val["status"], "ok");
+    }
+}

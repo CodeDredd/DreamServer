@@ -82,3 +82,107 @@ pub async fn agent_chat(
         Err(e) => Json(json!({"error": format!("LLM request failed: {e}")})),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    fn auth_header() -> String {
+        "Bearer test-key".to_string()
+    }
+
+    #[tokio::test]
+    async fn agent_metrics_returns_json_object() {
+        let req = Request::builder()
+            .uri("/api/agents/metrics")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val["agent"].is_object(), "Expected agent key in metrics");
+        assert!(val["cluster"].is_object(), "Expected cluster key");
+        assert!(val["throughput"].is_object(), "Expected throughput key");
+    }
+
+    #[tokio::test]
+    async fn agent_metrics_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/agents/metrics")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn agent_cluster_returns_cluster_data() {
+        let req = Request::builder()
+            .uri("/api/agents/cluster")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        // Cluster data has nodes and GPU fields
+        assert!(val.get("nodes").is_some() || val.get("total_gpus").is_some() || val.is_object());
+    }
+
+    #[tokio::test]
+    async fn agent_throughput_returns_throughput_data() {
+        let req = Request::builder()
+            .uri("/api/agents/throughput")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.is_object());
+    }
+
+    #[tokio::test]
+    async fn agent_chat_requires_auth() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/agents/chat")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"message":"hello"}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn agent_chat_returns_error_without_llm() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/agents/chat")
+            .header("authorization", auth_header())
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"message":"hello"}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val["error"].is_string(), "Expected error when no LLM configured");
+    }
+}

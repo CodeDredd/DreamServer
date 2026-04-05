@@ -165,3 +165,122 @@ pub async fn setup_chat(
         Err(e) => Json(json!({"error": format!("Chat failed: {e}")})),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::state::AppState;
+    use axum::body::Body;
+    use http::Request;
+    use http_body_util::BodyExt;
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use tower::ServiceExt;
+
+    fn app() -> axum::Router {
+        crate::build_router(AppState::new(
+            HashMap::new(), vec![], vec![], "test-key".into(),
+        ))
+    }
+
+    fn auth_header() -> String {
+        "Bearer test-key".to_string()
+    }
+
+    #[tokio::test]
+    async fn setup_status_requires_auth() {
+        let req = Request::builder()
+            .uri("/api/setup/status")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn setup_status_returns_shape() {
+        let req = Request::builder()
+            .uri("/api/setup/status")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val.get("setup_complete").is_some());
+        assert!(val.get("persona").is_some());
+        assert!(val.get("personas").is_some());
+    }
+
+    #[tokio::test]
+    async fn list_personas_returns_all_personas() {
+        let req = Request::builder()
+            .uri("/api/setup/personas")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        let personas = val["personas"].as_array().expect("personas should be array");
+        assert_eq!(personas.len(), 3, "Expected 3 personas (general, coding, creative)");
+    }
+
+    #[tokio::test]
+    async fn get_persona_known() {
+        let req = Request::builder()
+            .uri("/api/setup/persona/coding")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(val["id"], "coding");
+        assert_eq!(val["name"], "Coding Buddy");
+    }
+
+    #[tokio::test]
+    async fn get_persona_unknown_returns_error() {
+        let req = Request::builder()
+            .uri("/api/setup/persona/nonexistent")
+            .header("authorization", auth_header())
+            .body(Body::empty())
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val["error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn setup_chat_requires_auth() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/chat")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"message":"hi"}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn setup_chat_returns_error_without_llm() {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/chat")
+            .header("authorization", auth_header())
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"message":"hi"}"#))
+            .unwrap();
+        let resp = app().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let val: Value = serde_json::from_slice(&body).unwrap();
+        assert!(val["error"].is_string(), "Expected error when no LLM service");
+    }
+}
