@@ -282,7 +282,9 @@ def _copytree_safe(src: Path, dst: Path) -> None:
 def _get_service_data_info(service_id: str) -> dict | None:
     """Return data directory info for a service, or None if no data dir exists."""
     from helpers import dir_size_gb  # noqa: PLC0415 — deferred to avoid circular import at module level
-    data_path = Path(DATA_DIR) / service_id
+    data_path = (Path(DATA_DIR) / service_id).resolve()
+    if not data_path.is_relative_to(Path(DATA_DIR).resolve()):
+        return None
     if not data_path.is_dir():
         return None
     size_gb = dir_size_gb(data_path)
@@ -843,7 +845,7 @@ class PurgeRequest(BaseModel):
 
 
 @router.delete("/api/extensions/{service_id}/data")
-async def purge_extension_data(
+def purge_extension_data(
     service_id: str,
     body: PurgeRequest,
     api_key: str = Depends(verify_api_key),
@@ -855,34 +857,35 @@ async def purge_extension_data(
     if service_id in CORE_SERVICE_IDS:
         raise HTTPException(status_code=403, detail="Cannot purge core service data")
 
-    # Check if service is still enabled (built-in or user extension)
-    for check_dir in [Path(EXTENSIONS_DIR) / service_id, USER_EXTENSIONS_DIR / service_id]:
-        if (check_dir / "compose.yaml").exists():
-            raise HTTPException(status_code=400, detail=f"{service_id} is still enabled. Disable it first.")
+    with _extensions_lock():
+        # Check if service is still enabled (built-in or user extension)
+        for check_dir in [Path(EXTENSIONS_DIR) / service_id, USER_EXTENSIONS_DIR / service_id]:
+            if (check_dir / "compose.yaml").exists():
+                raise HTTPException(status_code=400, detail=f"{service_id} is still enabled. Disable it first.")
 
-    data_path = (Path(DATA_DIR) / service_id).resolve()
-    if not data_path.is_relative_to(Path(DATA_DIR).resolve()):
-        raise HTTPException(status_code=400, detail="Invalid data path")
+        data_path = (Path(DATA_DIR) / service_id).resolve()
+        if not data_path.is_relative_to(Path(DATA_DIR).resolve()):
+            raise HTTPException(status_code=400, detail="Invalid data path")
 
-    if not data_path.is_dir():
-        raise HTTPException(status_code=404, detail=f"No data directory found for {service_id}")
+        if not data_path.is_dir():
+            raise HTTPException(status_code=404, detail=f"No data directory found for {service_id}")
 
-    if not body.confirm:
-        raise HTTPException(status_code=400, detail="Confirmation required: set confirm=true")
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="Confirmation required: set confirm=true")
 
-    from helpers import dir_size_gb  # noqa: PLC0415
-    size_gb = dir_size_gb(data_path)
+        from helpers import dir_size_gb  # noqa: PLC0415
+        size_gb = dir_size_gb(data_path)
 
-    shutil.rmtree(data_path, ignore_errors=True)
+        shutil.rmtree(data_path, ignore_errors=True)
 
-    if data_path.exists():
-        raise HTTPException(status_code=500, detail=f"Could not fully remove {data_path}. Some files may be owned by root.")
+        if data_path.exists():
+            raise HTTPException(status_code=500, detail=f"Could not fully remove data/{service_id}. Some files may be owned by root.")
 
-    return {"id": service_id, "action": "purged", "size_gb_freed": size_gb}
+        return {"id": service_id, "action": "purged", "size_gb_freed": size_gb}
 
 
 @router.get("/api/storage/orphaned")
-async def orphaned_storage(api_key: str = Depends(verify_api_key)):
+def orphaned_storage(api_key: str = Depends(verify_api_key)):
     """Find data directories not belonging to any known service."""
     from helpers import dir_size_gb  # noqa: PLC0415
 
