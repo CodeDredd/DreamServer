@@ -86,6 +86,23 @@ def _cleanup_stale_progress() -> None:
             pass
 
 
+def _write_initial_progress(service_id: str) -> None:
+    """Write an initial progress file so the UI sees 'installing' immediately."""
+    progress_dir = Path(DATA_DIR) / "extension-progress"
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    progress = {
+        "service_id": service_id,
+        "status": "pulling",
+        "phase_label": "Starting installation...",
+        "error": None,
+        "started_at": now,
+        "updated_at": now,
+    }
+    progress_file = progress_dir / f"{service_id}.json"
+    progress_file.write_text(json.dumps(progress), encoding="utf-8")
+
+
 def _compute_extension_status(ext: dict, services_by_id: dict) -> str:
     """Compute the runtime status of an extension."""
     ext_id = ext["id"]
@@ -100,6 +117,13 @@ def _compute_extension_status(ext: dict, services_by_id: dict) -> str:
             return "setting_up"
         if ps == "error":
             return "error"
+        if ps == "started":
+            # Container is up but healthcheck may not have passed yet.
+            # Check actual health — if healthy, let it fall through to
+            # return "enabled"; otherwise keep showing "installing".
+            svc = services_by_id.get(ext_id)
+            if not (svc and svc.status == "healthy"):
+                return "installing"
 
     # Core service loaded from manifests
     if ext_id in SERVICES:
@@ -776,6 +800,10 @@ def install_extension(service_id: str, api_key: str = Depends(verify_api_key)):
             if Path(tmpdir).exists():
                 shutil.rmtree(tmpdir, ignore_errors=True)
 
+    # Write initial progress file so status shows "installing" immediately
+    # (before host agent starts processing — closes the race window)
+    _write_initial_progress(service_id)
+
     # Call host agent combined install (setup_hook → pull → start)
     agent_ok = _call_agent_install(service_id)
 
@@ -821,6 +849,7 @@ def enable_extension(service_id: str, api_key: str = Depends(verify_api_key)):
                 )
             _scan_compose_content(enabled_compose)
         # Dependencies were satisfied at install time; compose content is re-scanned above
+        _write_initial_progress(service_id)
         agent_ok = _call_agent("start", service_id)
         logger.info("Started stopped extension: %s", service_id)
         return {
