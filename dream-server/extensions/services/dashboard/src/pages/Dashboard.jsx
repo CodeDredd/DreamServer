@@ -413,6 +413,8 @@ export default function Dashboard({ status, loading }) {
               tokensPerSecond={status?.inference?.tokensPerSecond || 0}
               totalTokens={status?.inference?.lifetimeTokens || 0}
               gpuTemp={status?.gpu?.temperature}
+              cpuTemp={status?.cpu?.temp_c}
+              memFree={status?.ram ? Math.max(status.ram.total_gb - status.ram.used_gb, 0) : null}
               contextValue={status?.inference?.contextSize ? `${(status.inference.contextSize / 1024).toFixed(0)}k` : '—'}
             />
           </div>
@@ -527,7 +529,14 @@ const FeatureCard = memo(function FeatureCard({ icon: Icon, title, description, 
   return <Link to={href} className="block h-full liquid-metal-sequence-slot">{content}</Link>
 })
 
-const TokenSignalPanel = memo(function TokenSignalPanel({ tokensPerSecond, totalTokens, gpuTemp, contextValue }) {
+const TokenSignalPanel = memo(function TokenSignalPanel({
+  tokensPerSecond,
+  totalTokens,
+  gpuTemp,
+  cpuTemp,
+  memFree,
+  contextValue,
+}) {
   const throughputSeries = useMemo(() => buildTokenSamples(tokensPerSecond), [tokensPerSecond])
   const generatedSeries = useMemo(() => buildGeneratedTokenSamples(totalTokens), [totalTokens])
 
@@ -540,6 +549,9 @@ const TokenSignalPanel = memo(function TokenSignalPanel({ tokensPerSecond, total
         <h3 className="mt-1 text-base font-semibold text-theme-text">
           Inference telemetry
         </h3>
+        <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-theme-text-secondary">
+          Context {contextValue}
+        </p>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1.5">
@@ -547,7 +559,10 @@ const TokenSignalPanel = memo(function TokenSignalPanel({ tokensPerSecond, total
           GPU Temp {gpuTemp != null ? `${gpuTemp}°C` : '—'}
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-theme-text-secondary">
-          Context {contextValue}
+          CPU Temp {cpuTemp != null ? `${cpuTemp}°C` : 'Unavailable'}
+        </div>
+        <div className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-theme-text-secondary">
+          Mem Free {memFree != null ? `${memFree.toFixed(1)} GB` : '—'}
         </div>
       </div>
 
