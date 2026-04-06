@@ -748,6 +748,12 @@ class TestMutationPathTraversal:
                     resp = test_client.post(
                         url, headers=test_client.auth_headers,
                     )
+                elif "/data" in pattern:
+                    # Purge endpoint requires a JSON body (PurgeRequest)
+                    resp = test_client.request(
+                        "DELETE", url, headers=test_client.auth_headers,
+                        json={"confirm": False},
+                    )
                 else:
                     resp = test_client.delete(
                         url, headers=test_client.auth_headers,
