@@ -43,21 +43,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry and build
-        uses: actions/cache@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            dream-server/extensions/services/dashboard-api/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('dream-server/extensions/services/dashboard-api/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          python-version: "3.11"
 
       - name: API Syntax Check
-        run: cargo check --workspace
+        run: python -m py_compile main.py agent_monitor.py
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r tests/requirements-test.txt
 
       - name: Run Unit Tests
-        run: cargo test --workspace -- --test-threads=1
+        run: pytest tests/ -v --cov=. --cov-report=term --cov-report=lcov:coverage.lcov
