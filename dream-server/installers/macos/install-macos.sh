@@ -549,13 +549,19 @@ else
         # from consuming the entire token budget on internal reasoning)
         _reasoning=$(grep '^LLAMA_REASONING=' "$INSTALL_DIR/.env" 2>/dev/null | cut -d= -f2 || echo "")
         [[ -z "$_reasoning" ]] && _reasoning="off"
+        # Map .env values (off/on/auto) to llama-server --reasoning-format values
+        case "$_reasoning" in
+            off)  _reasoning_fmt="none" ;;
+            on)   _reasoning_fmt="deepseek" ;;
+            *)    _reasoning_fmt="$_reasoning" ;;
+        esac
 
         "$LLAMA_SERVER_BIN" \
             --host 0.0.0.0 --port 8080 \
             --model "$MODEL_FULL_PATH" \
             --ctx-size "$MAX_CONTEXT" \
             --n-gpu-layers 999 \
-            --reasoning "$_reasoning" \
+            --reasoning-format "$_reasoning_fmt" \
             --metrics \
             > "$LLAMA_SERVER_LOG" 2>&1 &
         LLAMA_PID=$!

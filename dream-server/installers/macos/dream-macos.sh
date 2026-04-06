@@ -149,13 +149,20 @@ start_native_llama() {
     mkdir -p "$(dirname "$LLAMA_SERVER_PID_FILE")"
 
     local reasoning="${ENV_LLAMA_REASONING:-off}"
+    # Map .env values (off/on/auto) to llama-server --reasoning-format values
+    local reasoning_fmt
+    case "$reasoning" in
+        off)  reasoning_fmt="none" ;;
+        on)   reasoning_fmt="deepseek" ;;
+        *)    reasoning_fmt="$reasoning" ;;
+    esac
 
     "$LLAMA_SERVER_BIN" \
         --host 0.0.0.0 --port 8080 \
         --model "$model_path" \
         --ctx-size "$ctx_size" \
         --n-gpu-layers 999 \
-        --reasoning "$reasoning" \
+        --reasoning-format "$reasoning_fmt" \
         --metrics \
         > "$LLAMA_SERVER_LOG" 2>&1 &
     local pid=$!
