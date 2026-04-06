@@ -1,7 +1,8 @@
 """Tests for extensions portal endpoints."""
 
+import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from models import ServiceStatus
@@ -274,7 +275,7 @@ class TestUserExtensionStatus:
         assert ext["status"] == "enabled"
 
     def test_user_ext_compose_yaml_no_service(self, test_client, monkeypatch, tmp_path):
-        """User extension with compose.yaml but no running container → enabled (file-based status)."""
+        """User extension with compose.yaml but no running container → stopped."""
         user_dir = tmp_path / "user"
         ext_dir = user_dir / "my-ext"
         ext_dir.mkdir(parents=True)
@@ -284,18 +285,20 @@ class TestUserExtensionStatus:
         _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
         monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_dir)
 
-        # No service in health results — svc is None
-        with patch("helpers.get_all_services", new_callable=AsyncMock,
-                   return_value=[]):
-            resp = test_client.get(
-                "/api/extensions/catalog",
-                headers=test_client.auth_headers,
-            )
+        # No service in health results — svc is None → stopped
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                resp = test_client.get(
+                    "/api/extensions/catalog",
+                    headers=test_client.auth_headers,
+                )
 
         assert resp.status_code == 200
         ext = resp.json()["extensions"][0]
         assert ext["id"] == "my-ext"
-        assert ext["status"] == "enabled"
+        assert ext["status"] == "stopped"
 
     def test_user_ext_compose_yaml_disabled(self, test_client, monkeypatch, tmp_path):
         """User extension with compose.yaml.disabled → disabled."""
@@ -526,8 +529,8 @@ class TestEnableExtension:
         assert (user_dir / "my-ext" / "compose.yaml").exists()
         assert not (user_dir / "my-ext" / "compose.yaml.disabled").exists()
 
-    def test_enable_already_enabled_409(self, test_client, monkeypatch, tmp_path):
-        """409 when extension is already enabled."""
+    def test_enable_stopped_starts_without_rename(self, test_client, monkeypatch, tmp_path):
+        """Enable when compose.yaml exists (stopped) → starts without rename."""
         user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=True)
         _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
 
@@ -535,7 +538,11 @@ class TestEnableExtension:
             "/api/extensions/my-ext/enable",
             headers=test_client.auth_headers,
         )
-        assert resp.status_code == 409
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        # compose.yaml still exists (no rename happened)
+        assert (user_dir / "my-ext" / "compose.yaml").exists()
 
     def test_enable_allows_core_service_dependency(self, test_client, monkeypatch, tmp_path):
         """Enable succeeds when depends_on includes a core service."""
@@ -1086,6 +1093,181 @@ class TestInstallSizeQuota:
         assert "50MB" in resp.json()["detail"]
 
 
+# --- Extension lifecycle status (stopped / health-based) ---
+
+
+class TestExtensionLifecycleStatus:
+
+    def test_user_extension_enabled_and_healthy(self, test_client, monkeypatch, tmp_path):
+        """User extension with compose.yaml + healthy container → enabled."""
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "my-ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "compose.yaml").write_text(_SAFE_COMPOSE)
+        (ext_dir / "manifest.yaml").write_text(yaml.dump({
+            "schema_version": "dream.services.v1",
+            "service": {"id": "my-ext", "name": "My Ext", "port": 8080,
+                         "health": "/health"},
+        }))
+
+        catalog = [_make_catalog_ext("my-ext", "My Extension")]
+        _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
+        monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_dir)
+
+        mock_svc = _make_service_status("my-ext", "healthy")
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={"my-ext": {"host": "my-ext", "port": 8080,
+                                             "health": "/health", "name": "My Ext"}}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                with patch("helpers.check_service_health", new_callable=AsyncMock,
+                           return_value=mock_svc):
+                    resp = test_client.get(
+                        "/api/extensions/catalog",
+                        headers=test_client.auth_headers,
+                    )
+
+        assert resp.status_code == 200
+        ext = resp.json()["extensions"][0]
+        assert ext["status"] == "enabled"
+
+    def test_user_extension_enabled_but_unhealthy(self, test_client, monkeypatch, tmp_path):
+        """User extension with compose.yaml + unhealthy container → stopped."""
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "my-ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "compose.yaml").write_text(_SAFE_COMPOSE)
+        (ext_dir / "manifest.yaml").write_text(yaml.dump({
+            "schema_version": "dream.services.v1",
+            "service": {"id": "my-ext", "name": "My Ext", "port": 8080,
+                         "health": "/health"},
+        }))
+
+        catalog = [_make_catalog_ext("my-ext", "My Extension")]
+        _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
+        monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_dir)
+
+        mock_svc = _make_service_status("my-ext", "down")
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={"my-ext": {"host": "my-ext", "port": 8080,
+                                             "health": "/health", "name": "My Ext"}}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                with patch("helpers.check_service_health", new_callable=AsyncMock,
+                           return_value=mock_svc):
+                    resp = test_client.get(
+                        "/api/extensions/catalog",
+                        headers=test_client.auth_headers,
+                    )
+
+        assert resp.status_code == 200
+        ext = resp.json()["extensions"][0]
+        assert ext["status"] == "stopped"
+
+    def test_user_extension_disabled_unchanged(self, test_client, monkeypatch, tmp_path):
+        """User extension with compose.yaml.disabled → disabled (unchanged)."""
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "my-ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "compose.yaml.disabled").write_text(_SAFE_COMPOSE)
+
+        catalog = [_make_catalog_ext("my-ext", "My Extension")]
+        _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
+        monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_dir)
+
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                resp = test_client.get(
+                    "/api/extensions/catalog",
+                    headers=test_client.auth_headers,
+                )
+
+        assert resp.status_code == 200
+        ext = resp.json()["extensions"][0]
+        assert ext["status"] == "disabled"
+
+    def test_core_service_status_unchanged(self, test_client, monkeypatch, tmp_path):
+        """Core service healthy → enabled, unhealthy → disabled (unchanged)."""
+        catalog = [_make_catalog_ext("core-svc", "Core Service")]
+        services = {"core-svc": {"host": "localhost", "port": 8080, "name": "Core"}}
+        _patch_extensions_config(monkeypatch, catalog, services, tmp_path=tmp_path)
+
+        mock_svc = _make_service_status("core-svc", "healthy")
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[mock_svc]):
+                resp = test_client.get(
+                    "/api/extensions/catalog",
+                    headers=test_client.auth_headers,
+                )
+
+        assert resp.status_code == 200
+        ext = resp.json()["extensions"][0]
+        assert ext["status"] == "enabled"
+
+    def test_catalog_includes_user_extension_health(self, test_client, monkeypatch, tmp_path):
+        """Catalog response includes 'stopped' in summary counts."""
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "my-ext"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "compose.yaml").write_text(_SAFE_COMPOSE)
+
+        catalog = [_make_catalog_ext("my-ext", "My Extension")]
+        _patch_extensions_config(monkeypatch, catalog, tmp_path=tmp_path)
+        monkeypatch.setattr("routers.extensions.USER_EXTENSIONS_DIR", user_dir)
+
+        # No health data → stopped
+        with patch("user_extensions.get_user_services_cached",
+                   return_value={}):
+            with patch("helpers.get_all_services", new_callable=AsyncMock,
+                       return_value=[]):
+                resp = test_client.get(
+                    "/api/extensions/catalog",
+                    headers=test_client.auth_headers,
+                )
+
+        assert resp.status_code == 200
+        summary = resp.json()["summary"]
+        assert summary["stopped"] == 1
+        assert summary["installed"] == 1
+
+    def test_enable_stopped_extension(self, test_client, monkeypatch, tmp_path):
+        """Enable when compose.yaml exists (stopped) → starts without rename."""
+        user_dir = _setup_user_ext(tmp_path, "my-ext", enabled=True)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "enabled"
+        # compose.yaml should still exist (not renamed)
+        assert (user_dir / "my-ext" / "compose.yaml").exists()
+
+    def test_enable_stopped_rejects_malicious_compose(self, test_client, monkeypatch, tmp_path):
+        """Enable stopped ext with malicious compose.yaml → 400."""
+        bad_compose = "services:\n  svc:\n    image: test\n    privileged: true\n"
+        user_dir = tmp_path / "user"
+        user_dir.mkdir(exist_ok=True)
+        ext_dir = user_dir / "bad-ext"
+        ext_dir.mkdir(exist_ok=True)
+        (ext_dir / "compose.yaml").write_text(bad_compose)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bad-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "privileged" in resp.json()["detail"]
+
+
 # --- Symlink handling ---
 
 
@@ -1105,6 +1287,26 @@ class TestSymlinkHandling:
 
         assert (dst / "real.txt").exists()
         assert not (dst / "link.txt").exists()
+
+    def test_enable_stopped_rejects_symlinked_compose(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Enable stopped ext rejects a compose.yaml that is a symlink."""
+        user_dir = tmp_path / "user"
+        ext_dir = user_dir / "my-ext"
+        ext_dir.mkdir(parents=True)
+        # Create a real file and symlink compose.yaml to it
+        real_compose = tmp_path / "real-compose.yaml"
+        real_compose.write_text(_SAFE_COMPOSE)
+        (ext_dir / "compose.yaml").symlink_to(real_compose)
+        _patch_mutation_config(monkeypatch, tmp_path, user_dir=user_dir)
+
+        resp = test_client.post(
+            "/api/extensions/my-ext/enable",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "symlink" in resp.json()["detail"]
 
     def test_enable_rejects_symlinked_compose(
         self, test_client, monkeypatch, tmp_path,

@@ -44,6 +44,7 @@ const friendlyError = (detail) => {
 
 const STATUS_STYLES = {
   enabled:       'bg-green-500/20 text-green-400',
+  stopped:       'bg-red-500/20 text-red-400',
   disabled:      'bg-theme-border text-theme-text-muted',
   not_installed: 'border border-theme-border text-theme-text-muted',
   incompatible:  'bg-orange-500/20 text-orange-400',
@@ -156,8 +157,8 @@ export default function Extensions() {
       .filter(Boolean)
   )]
 
-  const STATUS_FILTERS = ['all', 'enabled', 'disabled', 'not_installed', 'incompatible']
-  const STATUS_LABELS = { all: 'All', enabled: 'Enabled', disabled: 'Disabled', not_installed: 'Not Installed', incompatible: 'Incompatible' }
+  const STATUS_FILTERS = ['all', 'enabled', 'stopped', 'disabled', 'not_installed', 'incompatible']
+  const STATUS_LABELS = { all: 'All', enabled: 'Enabled', stopped: 'Stopped', disabled: 'Disabled', not_installed: 'Not Installed', incompatible: 'Incompatible' }
 
   // Filter extensions
   const query = search.toLowerCase()
@@ -209,6 +210,7 @@ export default function Extensions() {
         <div className="flex items-center gap-6 text-sm">
           <SummaryItem label="Total" value={summary.total || extensions.length} color="bg-theme-text-muted" />
           <SummaryItem label="Installed" value={summary.installed ?? 0} color="bg-green-500" />
+          <SummaryItem label="Stopped" value={summary.stopped ?? 0} color="bg-red-500" />
           <SummaryItem label="Available" value={summary.not_installed ?? 0} color="bg-theme-accent" />
           <SummaryItem label="Incompatible" value={summary.incompatible ?? 0} color="bg-orange-500" />
         </div>
@@ -363,6 +365,7 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
 
   const isCore = ext.source === 'core'
   const isUserExt = ext.source === 'user'
+  const isStopped = status === 'stopped'
   const isToggleable = isUserExt && (status === 'enabled' || status === 'disabled')
   const showRemove = isUserExt && status === 'disabled'
   const showInstall = status === 'not_installed' && ext.installable
@@ -377,11 +380,13 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
           <div className="flex items-center gap-2.5">
             <div className={`p-1.5 rounded-lg ${
               status === 'enabled' ? 'bg-green-500/10' :
+              status === 'stopped' ? 'bg-red-500/10' :
               status === 'incompatible' ? 'bg-orange-500/10' :
               'bg-theme-card'
             }`}>
               <Icon size={16} className={
                 status === 'enabled' ? 'text-green-400' :
+                status === 'stopped' ? 'text-red-400' :
                 status === 'incompatible' ? 'text-orange-400' :
                 'text-theme-text-muted'
               } />
@@ -403,8 +408,8 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
               </span>
             ) : (
               <span
-                className={`text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider ${statusStyle} ${status === 'incompatible' ? 'cursor-help' : ''}`}
-                title={status === 'incompatible' ? `Requires ${ext.gpu_backends?.join(' or ') || 'specific GPU'} — your system: ${gpuBackend || 'unknown'}` : undefined}
+                className={`text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider ${statusStyle} ${(status === 'incompatible' || status === 'stopped') ? 'cursor-help' : ''}`}
+                title={status === 'incompatible' ? `Requires ${ext.gpu_backends?.join(' or ') || 'specific GPU'} — your system: ${gpuBackend || 'unknown'}` : status === 'stopped' ? 'Enabled but container not running' : undefined}
               >
                 {status.replace('_', ' ')}
               </span>
@@ -443,6 +448,16 @@ function ExtensionCard({ ext, gpuBackend, agentAvailable, onDetails, onConsole, 
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-theme-accent text-white hover:bg-theme-accent-hover transition-colors disabled:opacity-50 shadow-sm shadow-theme-accent/20"
             >
               {isMutating ? <Loader2 size={12} className="animate-spin" /> : <><Download size={12} /> Install</>}
+            </button>
+          )}
+          {isUserExt && isStopped && (
+            <button
+              disabled={actionDisabled}
+              title={disabledTitle}
+              onClick={() => onAction(ext, 'enable')}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-green-500/20 text-green-300 hover:bg-green-500/30 transition-colors disabled:opacity-50"
+            >
+              {isMutating ? <Loader2 size={12} className="animate-spin" /> : 'Start'}
             </button>
           )}
           {showRemove && (
