@@ -176,16 +176,25 @@ else
 fi
 
 # ── Phase 2: Verify integrity (if SHA256 provided) ──
-if [[ -n "$FULL_GGUF_SHA256" ]] && command -v sha256sum &>/dev/null; then
+if [[ -n "$FULL_GGUF_SHA256" ]]; then
     write_status "verifying" 100 "$TOTAL_BYTES" "$TOTAL_BYTES" 0 ""
     log "Verifying SHA256..."
-    ACTUAL_HASH=$(sha256sum "$MODELS_DIR/$FULL_GGUF_FILE" 2>/dev/null | awk '{print $1}')
-    if [[ "$ACTUAL_HASH" != "$FULL_GGUF_SHA256" ]]; then
-        rm -f "$MODELS_DIR/$FULL_GGUF_FILE"
-        write_status "failed"
-        fail "SHA256 mismatch (expected: $FULL_GGUF_SHA256, got: $ACTUAL_HASH). Deleted corrupt file."
+    if command -v sha256sum &>/dev/null; then
+        ACTUAL_HASH=$(sha256sum "$MODELS_DIR/$FULL_GGUF_FILE" 2>/dev/null | awk '{print $1}')
+    elif command -v shasum &>/dev/null; then
+        ACTUAL_HASH=$(shasum -a 256 "$MODELS_DIR/$FULL_GGUF_FILE" 2>/dev/null | awk '{print $1}')
+    else
+        log "WARNING: No checksum tool available — skipping SHA256 verification"
+        ACTUAL_HASH=""
     fi
-    log "SHA256 verified"
+    if [[ -n "$ACTUAL_HASH" ]]; then
+        if [[ "$ACTUAL_HASH" != "$FULL_GGUF_SHA256" ]]; then
+            rm -f "$MODELS_DIR/$FULL_GGUF_FILE"
+            write_status "failed"
+            fail "SHA256 mismatch (expected: $FULL_GGUF_SHA256, got: $ACTUAL_HASH). Deleted corrupt file."
+        fi
+        log "SHA256 verified"
+    fi
     write_status "complete"
 fi
 
