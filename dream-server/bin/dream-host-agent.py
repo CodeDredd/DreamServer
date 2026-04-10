@@ -728,7 +728,13 @@ class AgentHandler(BaseHTTPRequestHandler):
             json_response(self, 200, {"status": "idle"})
 
     def _handle_model_download(self):
-        """Start async model download. Only one download at a time."""
+        """Start async model download. Only one download at a time.
+
+        Supports both single-file and split-file (gguf_parts) models.
+        For split models, the caller sends gguf_parts as an array of
+        {"file": ..., "url": ...} dicts.  The first part's filename is
+        used as gguf_file for status tracking.
+        """
         global _model_download_thread
         if not check_auth(self):
             return
@@ -739,10 +745,20 @@ class AgentHandler(BaseHTTPRequestHandler):
         gguf_file = body.get("gguf_file", "")
         gguf_url = body.get("gguf_url", "")
         gguf_sha256 = body.get("gguf_sha256", "")
+        gguf_parts = body.get("gguf_parts", [])
 
-        if not gguf_file or not gguf_url:
-            json_response(self, 400, {"error": "gguf_file and gguf_url are required"})
+        if not gguf_file or (not gguf_url and not gguf_parts):
+            json_response(self, 400, {"error": "gguf_file and gguf_url (or gguf_parts) are required"})
             return
+
+        # Build the download plan: list of (filename, url) tuples
+        if gguf_parts:
+            download_plan = [(p["file"], p["url"]) for p in gguf_parts if p.get("file") and p.get("url")]
+            if not download_plan:
+                json_response(self, 400, {"error": "gguf_parts entries must have file and url"})
+                return
+        else:
+            download_plan = [(gguf_file, gguf_url)]
 
         # Validate against library (prevent arbitrary URL downloads)
         library_path = INSTALL_DIR / "config" / "model-library.json"
@@ -751,9 +767,10 @@ class AgentHandler(BaseHTTPRequestHandler):
             try:
                 lib = json.loads(library_path.read_text(encoding="utf-8"))
                 for m in lib.get("models", []):
-                    if m.get("gguf_file") == gguf_file and m.get("gguf_url") == gguf_url:
-                        allowed = True
-                        break
+                    if m.get("gguf_file") == gguf_file:
+                        if m.get("gguf_url") == gguf_url or m.get("gguf_parts"):
+                            allowed = True
+                            break
             except (json.JSONDecodeError, OSError):
                 pass
         if not allowed:
@@ -761,7 +778,8 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
 
         models_dir = INSTALL_DIR / "data" / "models"
-        target = models_dir / gguf_file
+        # For split models, check if the first part exists
+        target = models_dir / download_plan[0][0]
         if target.exists():
             json_response(self, 200, {"status": "already_downloaded"})
             return
@@ -773,66 +791,95 @@ class AgentHandler(BaseHTTPRequestHandler):
                 return
 
             def _download():
+                import time as _time
                 status_path = INSTALL_DIR / "data" / "model-download-status.json"
-                part_file = models_dir / f"{gguf_file}.part"
                 try:
                     models_dir.mkdir(parents=True, exist_ok=True)
-                    # Write initial status
-                    _write_model_status(status_path, "downloading", gguf_file, 0, 0)
+                    label = gguf_file if len(download_plan) == 1 else f"{gguf_file} ({len(download_plan)} parts)"
+                    _write_model_status(status_path, "downloading", label, 0, 0)
 
-                    # Get total size
-                    total_bytes = 0
-                    try:
-                        head_result = subprocess.run(
-                            ["curl", "-sI", "-L", "--connect-timeout", "10", gguf_url],
-                            capture_output=True, text=True, timeout=30,
-                        )
-                        for line in head_result.stdout.splitlines():
-                            if line.lower().startswith("content-length:"):
-                                total_bytes = int(line.split(":", 1)[1].strip())
+                    for part_idx, (part_file_name, part_url) in enumerate(download_plan, 1):
+                        part_target = models_dir / part_file_name
+                        part_tmp = models_dir / f"{part_file_name}.part"
+                        part_label = part_file_name if len(download_plan) == 1 else f"{part_file_name} (part {part_idx}/{len(download_plan)})"
+
+                        # Get real file size by following redirects and reading final Content-Length
+                        part_total = 0
+                        try:
+                            head_result = subprocess.run(
+                                ["curl", "-sI", "-L", "--connect-timeout", "10", part_url],
+                                capture_output=True, text=True, timeout=30,
+                            )
+                            # Take the LAST content-length header (after all redirects)
+                            for line in head_result.stdout.splitlines():
+                                if line.lower().startswith("content-length:"):
+                                    val = int(line.split(":", 1)[1].strip())
+                                    if val > 10000:  # Ignore redirect page sizes
+                                        part_total = val
+                        except (subprocess.TimeoutExpired, ValueError):
+                            pass
+
+                        _write_model_status(status_path, "downloading", part_label, 0, part_total)
+
+                        # Progress polling: update status by checking .part file size
+                        _stop_progress = threading.Event()
+
+                        def _poll_progress():
+                            while not _stop_progress.is_set():
+                                try:
+                                    if part_tmp.exists():
+                                        current = part_tmp.stat().st_size
+                                        _write_model_status(status_path, "downloading", part_label, current, part_total)
+                                except OSError:
+                                    pass
+                                _stop_progress.wait(2)  # Poll every 2 seconds
+
+                        progress_thread = threading.Thread(target=_poll_progress, daemon=True)
+                        progress_thread.start()
+
+                        # Download with retry
+                        success = False
+                        for attempt in range(1, 4):
+                            if attempt > 1:
+                                logger.info("Model download retry %d/3 for %s", attempt, part_file_name)
+                                _time.sleep(5)
+                            result = subprocess.run(
+                                ["curl", "-fSL", "-C", "-", "--connect-timeout", "30",
+                                 "-o", str(part_tmp), part_url],
+                                capture_output=True, text=True, timeout=14400,
+                            )
+                            if result.returncode == 0:
+                                _stop_progress.set()
+                                part_tmp.rename(part_target)
+                                success = True
                                 break
-                    except (subprocess.TimeoutExpired, ValueError):
-                        pass
+                            _write_model_status(status_path, "downloading", part_label, 0, part_total, f"Retry {attempt}/3")
 
-                    # Download with retry
-                    success = False
-                    for attempt in range(1, 4):
-                        if attempt > 1:
-                            logger.info("Model download retry %d/3", attempt)
-                            import time
-                            time.sleep(5)
-                        result = subprocess.run(
-                            ["curl", "-fSL", "-C", "-", "--connect-timeout", "30",
-                             "-o", str(part_file), gguf_url],
-                            capture_output=True, text=True, timeout=7200,
-                        )
-                        if result.returncode == 0:
-                            part_file.rename(target)
-                            success = True
-                            break
-                        _write_model_status(status_path, "downloading", gguf_file, 0, total_bytes, f"Retry {attempt}/3")
+                        _stop_progress.set()
 
-                    if not success:
-                        part_file.unlink(missing_ok=True)
-                        _write_model_status(status_path, "failed", gguf_file, 0, total_bytes, "Download failed after 3 attempts")
-                        return
+                        if not success:
+                            part_tmp.unlink(missing_ok=True)
+                            _write_model_status(status_path, "failed", part_label, 0, part_total, f"Download failed after 3 attempts")
+                            return
 
-                    # Verify SHA256 if provided
-                    if gguf_sha256:
-                        _write_model_status(status_path, "verifying", gguf_file, total_bytes, total_bytes)
+                    # Verify SHA256 if provided (single-file only)
+                    if gguf_sha256 and len(download_plan) == 1:
+                        final_target = models_dir / download_plan[0][0]
+                        final_size = final_target.stat().st_size
+                        _write_model_status(status_path, "verifying", gguf_file, final_size, final_size)
                         import hashlib
                         sha = hashlib.sha256()
-                        with open(target, "rb") as f:
-                            for chunk in iter(lambda: f.read(1048576), b""):  # 1MB chunks
+                        with open(final_target, "rb") as f:
+                            for chunk in iter(lambda: f.read(1048576), b""):
                                 sha.update(chunk)
                         actual = sha.hexdigest()
                         if actual != gguf_sha256:
-                            target.unlink(missing_ok=True)
+                            final_target.unlink(missing_ok=True)
                             _write_model_status(status_path, "failed", gguf_file, 0, 0, f"SHA256 mismatch: expected {gguf_sha256[:12]}..., got {actual[:12]}...")
                             return
 
-                    _write_model_status(status_path, "complete", gguf_file, total_bytes, total_bytes)
-                    logger.info("Model download complete: %s", gguf_file)
+                    _write_model_status(status_path, "complete", gguf_file, 0, 0)
+                    logger.info("Model download complete: %s (%d parts)", gguf_file, len(download_plan))
                 except Exception as exc:
                     logger.error("Model download failed: %s", exc)
                     _write_model_status(status_path, "failed", gguf_file, 0, 0, str(exc))

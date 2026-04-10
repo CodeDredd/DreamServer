@@ -108,11 +108,14 @@ def list_models(api_key: str = Depends(verify_api_key)):
         gguf_file = model.get("gguf_file", "")
         model_id = model.get("id", "")
 
-        # Determine status
+        # Determine status — for split models, check the first part file
+        parts = model.get("gguf_parts", [])
+        first_part = parts[0]["file"] if parts else gguf_file
+
         if gguf_file and gguf_file == active_gguf:
             status = "loaded"
             current_model = model_id
-        elif gguf_file and gguf_file in downloaded:
+        elif first_part and first_part in downloaded:
             status = "downloaded"
         else:
             status = "available"
@@ -194,11 +197,16 @@ def download_model(model_id: str, api_key: str = Depends(verify_api_key)):
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found in library")
 
-    result = _call_agent_model("/v1/model/download", {
+    payload = {
         "gguf_file": model["gguf_file"],
-        "gguf_url": model["gguf_url"],
+        "gguf_url": model.get("gguf_url", ""),
         "gguf_sha256": model.get("gguf_sha256", ""),
-    })
+    }
+    # Split-file models provide gguf_parts array
+    if model.get("gguf_parts"):
+        payload["gguf_parts"] = model["gguf_parts"]
+
+    result = _call_agent_model("/v1/model/download", payload)
     return result
 
 

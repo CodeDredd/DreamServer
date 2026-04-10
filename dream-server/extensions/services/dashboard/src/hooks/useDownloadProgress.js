@@ -15,13 +15,18 @@ export function useDownloadProgress(pollIntervalMs = 1000) {
       
       const data = await response.json()
       
-      if (data.status === 'downloading') {
+      if (data.status === 'downloading' || data.status === 'verifying') {
+        const downloaded = data.bytesDownloaded || 0
+        const total = data.bytesTotal || 0
+        const percent = total > 0 ? (downloaded / total) * 100 : 0
+
         setIsDownloading(true)
         setProgress({
           model: data.model,
-          percent: data.percent || 0,
-          bytesDownloaded: data.bytesDownloaded || 0,
-          bytesTotal: data.bytesTotal || 0,
+          status: data.status,
+          percent,
+          bytesDownloaded: downloaded,
+          bytesTotal: total,
           speedMbps: data.speedBytesPerSec ? data.speedBytesPerSec / (1024 * 1024) : 0,
           eta: data.eta,
           startedAt: data.startedAt
@@ -29,10 +34,10 @@ export function useDownloadProgress(pollIntervalMs = 1000) {
       } else if (data.status === 'complete' || data.status === 'idle') {
         setIsDownloading(false)
         setProgress(null)
-      } else if (data.status === 'error') {
+      } else if (data.status === 'failed' || data.status === 'error') {
         setIsDownloading(false)
         setProgress({
-          error: data.message || 'Download failed',
+          error: data.error || data.message || 'Download failed',
           model: data.model
         })
       }
