@@ -4,12 +4,14 @@ import {
   Settings,
   Puzzle,
   Activity,
+  Box,
 } from 'lucide-react'
 
 const Dashboard = lazy(() => import('../pages/Dashboard'))
 const SettingsPage = lazy(() => import('../pages/Settings'))
 const Extensions = lazy(() => import('../pages/Extensions'))
 const GPUMonitor = lazy(() => import('../pages/GPUMonitor'))
+const Models = lazy(() => import('../pages/Models'))
 
 export const coreRoutes = [
   {
@@ -41,6 +43,16 @@ export const coreRoutes = [
     component: Extensions,
     getProps: () => ({}),
     sidebar: true,
+  },
+  {
+    id: 'models',
+    path: '/models',
+    label: 'Models',
+    icon: Box,
+    component: Models,
+    getProps: () => ({}),
+    sidebar: true,
+    order: 3,
   },
   {
     id: 'settings',
