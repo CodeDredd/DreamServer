@@ -6,7 +6,7 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      - OPENCLAW_CONFIG=/config/openclaw-strix-halo.json
+      - OPENCLAW_CONFIG=/config/openclaw.json
       - OPENCLAW_DATA=/data
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_TOKEN:?Set OPENCLAW_TOKEN in .env}
       - LLM_MODEL=${LLM_MODEL:-qwen3:30b-a3b}

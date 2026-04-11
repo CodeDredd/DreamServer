@@ -213,7 +213,7 @@ try {
     // Fix provider baseUrl to match the actual LLM endpoint (OLLAMA_URL env)
     const ollamaUrl = process.env.OLLAMA_URL || '';
     if (ollamaUrl) {
-      const provs = primary.providers || {};
+      const provs = primary.models?.providers || primary.providers || {};
       for (const [name, prov] of Object.entries(provs)) {
         if (prov.baseUrl) {
           const oldUrl = prov.baseUrl;

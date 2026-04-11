@@ -361,10 +361,25 @@ if command -v docker &>/dev/null && docker ps --filter name=dream-llama-server -
 
     if $_healthy; then
         log "SUCCESS: llama-server is running with $FULL_LLM_MODEL"
-        # Restart LiteLLM so it picks up the new model context.
-        # The lemonade.yaml wildcard config passes any model name through,
-        # but LiteLLM caches routing state and may hold stale model references.
+        # Regenerate lemonade.yaml with the new model ID and restart LiteLLM.
+        # Lemonade exposes models as "extra.<GGUF_FILE>" — the config must
+        # reference the exact ID, not a wildcard passthrough.
         if docker ps --filter name=dream-litellm --format '{{.Names}}' 2>/dev/null | grep -q dream-litellm; then
+            log "Updating LiteLLM config for new model: extra.${FULL_GGUF_FILE}"
+            cat > "$INSTALL_DIR/config/litellm/lemonade.yaml" << LITELLM_UPGRADE_EOF
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: openai/extra.${FULL_GGUF_FILE}
+      api_base: http://llama-server:8080/api/v1
+      api_key: sk-lemonade
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  request_timeout: 120
+  stream_timeout: 60
+LITELLM_UPGRADE_EOF
             log "Restarting LiteLLM to pick up model change..."
             docker restart dream-litellm 2>&1 || log "WARNING: LiteLLM restart failed (non-fatal)"
         fi

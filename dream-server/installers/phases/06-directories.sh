@@ -39,7 +39,7 @@ else
     # Create directories
     dream_progress 38 "directories" "Creating directory structure"
     mkdir -p "$INSTALL_DIR"/{config,data,models}
-    mkdir -p "$INSTALL_DIR"/data/{open-webui,whisper,tts,n8n,qdrant,models,privacy-shield}
+    mkdir -p "$INSTALL_DIR"/data/{open-webui,whisper,tts,n8n,qdrant,models,privacy-shield,dreamforge,ape}
     mkdir -p "$INSTALL_DIR"/data/langfuse/{postgres,clickhouse,redis,minio}
     mkdir -p "$INSTALL_DIR"/config/{n8n,litellm,openclaw,searxng}
 
@@ -365,18 +365,28 @@ ENV_EOF
     ai_ok "Created $INSTALL_DIR"
     ai_ok "Generated secure secrets in .env (permissions: 600)"
 
-    # Generate LiteLLM config for Lemonade — wildcard-only.
-    # Lemonade auto-discovers models from --extra-models-dir and resolves
-    # model names internally. No hardcoded model aliases needed — the wildcard
-    # passes any model name through to Lemonade's OpenAI-compatible API.
-    # This avoids stale model references after bootstrap-upgrade swaps models.
+    # Generate LiteLLM config for Lemonade.
+    # Lemonade exposes models as "extra.<GGUF_FILENAME>" — the wildcard
+    # passthrough (openai/*) does NOT work because it forwards the friendly
+    # model name verbatim and lemonade returns 404.  Instead, map all
+    # requests to the concrete model ID that lemonade actually serves.
+    # bootstrap-upgrade.sh regenerates this config when the model swaps.
     if [[ "$GPU_BACKEND" == "amd" ]]; then
         mkdir -p "$INSTALL_DIR/config/litellm"
+        # Source bootstrap-model.sh for BOOTSTRAP_GGUF_FILE and bootstrap_needed().
+        # Pure library (zero side effects), all deps available by phase 06.
+        # Phase 11 re-sources it harmlessly (idempotent).
+        [[ -f "$SCRIPT_DIR/installers/lib/bootstrap-model.sh" ]] && . "$SCRIPT_DIR/installers/lib/bootstrap-model.sh"
+        if type bootstrap_needed &>/dev/null && bootstrap_needed; then
+            _active_gguf="$BOOTSTRAP_GGUF_FILE"
+        else
+            _active_gguf="$GGUF_FILE"
+        fi
         cat > "$INSTALL_DIR/config/litellm/lemonade.yaml" << LITELLM_EOF
 model_list:
   - model_name: "*"
     litellm_params:
-      model: openai/*
+      model: openai/extra.${_active_gguf}
       api_base: http://llama-server:8080/api/v1
       api_key: sk-lemonade
 
@@ -386,7 +396,7 @@ litellm_settings:
   request_timeout: 120
   stream_timeout: 60
 LITELLM_EOF
-        ai_ok "Generated LiteLLM config for Lemonade (wildcard routing)"
+        ai_ok "Generated LiteLLM config for Lemonade (model: extra.${_active_gguf})"
     fi
 
     # Validate generated .env against schema (fails fast on missing/unknown keys).
