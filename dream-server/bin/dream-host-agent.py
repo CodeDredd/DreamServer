@@ -1310,6 +1310,33 @@ class AgentHandler(BaseHTTPRequestHandler):
                 encoding="utf-8",
             )
 
+            # Regenerate LiteLLM lemonade config so it routes to the new model.
+            # Only written on AMD installs where lemonade.yaml exists.
+            litellm_cfg = install_dir / "config" / "litellm" / "lemonade.yaml"
+            if litellm_cfg.exists():
+                litellm_cfg.write_text(
+                    f"model_list:\n"
+                    f"  - model_name: default\n"
+                    f"    litellm_params:\n"
+                    f"      model: openai/extra.{gguf_file}\n"
+                    f"      api_base: http://llama-server:8080/api/v1\n"
+                    f"      api_key: sk-lemonade\n"
+                    f"\n"
+                    f"  - model_name: \"*\"\n"
+                    f"    litellm_params:\n"
+                    f"      model: openai/extra.{gguf_file}\n"
+                    f"      api_base: http://llama-server:8080/api/v1\n"
+                    f"      api_key: sk-lemonade\n"
+                    f"\n"
+                    f"litellm_settings:\n"
+                    f"  drop_params: true\n"
+                    f"  set_verbose: false\n"
+                    f"  request_timeout: 120\n"
+                    f"  stream_timeout: 60\n",
+                    encoding="utf-8",
+                )
+                logger.info("Regenerated lemonade.yaml for model: extra.%s", gguf_file)
+
             # Restart llama-server with the new model.
             # Two strategies depending on where the agent runs:
             # - Host-native (Linux/macOS): docker compose stop+up, same as

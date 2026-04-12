@@ -368,6 +368,12 @@ if command -v docker &>/dev/null && docker ps --filter name=dream-llama-server -
             log "Updating LiteLLM config for new model: extra.${FULL_GGUF_FILE}"
             cat > "$INSTALL_DIR/config/litellm/lemonade.yaml" << LITELLM_UPGRADE_EOF
 model_list:
+  - model_name: default
+    litellm_params:
+      model: openai/extra.${FULL_GGUF_FILE}
+      api_base: http://llama-server:8080/api/v1
+      api_key: sk-lemonade
+
   - model_name: "*"
     litellm_params:
       model: openai/extra.${FULL_GGUF_FILE}
@@ -382,6 +388,11 @@ litellm_settings:
 LITELLM_UPGRADE_EOF
             log "Restarting LiteLLM to pick up model change..."
             docker restart dream-litellm 2>&1 || log "WARNING: LiteLLM restart failed (non-fatal)"
+        fi
+        # Restart DreamForge so it auto-detects the new model from llama-server
+        if docker ps --filter name=dream-dreamforge --format '{{.Names}}' 2>/dev/null | grep -q dream-dreamforge; then
+            log "Restarting DreamForge to pick up model change..."
+            docker restart dream-dreamforge 2>&1 || log "WARNING: DreamForge restart failed (non-fatal)"
         fi
     else
         log "WARNING: llama-server health check timed out. The model may still be loading."

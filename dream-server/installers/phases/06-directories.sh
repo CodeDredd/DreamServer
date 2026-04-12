@@ -384,6 +384,12 @@ ENV_EOF
         fi
         cat > "$INSTALL_DIR/config/litellm/lemonade.yaml" << LITELLM_EOF
 model_list:
+  - model_name: default
+    litellm_params:
+      model: openai/extra.${_active_gguf}
+      api_base: http://llama-server:8080/api/v1
+      api_key: sk-lemonade
+
   - model_name: "*"
     litellm_params:
       model: openai/extra.${_active_gguf}
