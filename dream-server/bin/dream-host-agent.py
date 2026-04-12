@@ -589,6 +589,10 @@ class AgentHandler(BaseHTTPRequestHandler):
             self._handle_setup_hook()
         elif self.path == "/v1/extension/hooks":
             self._handle_hook()
+        elif self.path == "/v1/extension/activate":
+            self._handle_extension_compose_toggle(activate=True)
+        elif self.path == "/v1/extension/deactivate":
+            self._handle_extension_compose_toggle(activate=False)
         elif self.path == "/v1/service/logs":
             self._handle_service_logs()
         elif self.path == "/v1/model/download":
@@ -797,6 +801,60 @@ class AgentHandler(BaseHTTPRequestHandler):
         else:
             json_response(self, 503 if "timed out" in err else 500, {"error": err})
 
+    def _handle_extension_compose_toggle(self, activate: bool):
+        """Rename compose.yaml.disabled <-> compose.yaml for an extension.
+
+        Used by dashboard-api when the extensions mount is read-only (:ro).
+        The host agent runs on the host filesystem where the files are writable.
+        """
+        if not check_auth(self):
+            return
+        body = read_json_body(self)
+        if body is None:
+            return
+
+        # Validate service_id format and existence
+        sid = body.get("service_id", "")
+        if not isinstance(sid, str) or not SERVICE_ID_RE.match(sid):
+            json_response(self, 400, {"error": "Invalid service_id"})
+            return
+
+        ext_dir = _find_ext_dir(sid)
+        if ext_dir is None:
+            json_response(self, 404, {"error": f"Extension not found: {sid}"})
+            return
+
+        if sid in ALWAYS_ON_SERVICES:
+            json_response(self, 403, {"error": f"Cannot modify always-on service: {sid}"})
+            return
+
+        action = "activate" if activate else "deactivate"
+        if activate:
+            src = ext_dir / "compose.yaml.disabled"
+            dst = ext_dir / "compose.yaml"
+        else:
+            src = ext_dir / "compose.yaml"
+            dst = ext_dir / "compose.yaml.disabled"
+
+        lock = _service_locks[sid]
+        if not lock.acquire(blocking=False):
+            json_response(self, 409, {"error": f"Operation already in progress for {sid}"})
+            return
+        try:
+            # Check existence inside the lock to prevent TOCTOU races
+            if not src.exists():
+                state = "enabled" if activate else "disabled"
+                json_response(self, 409, {"error": f"Extension already {state}: {sid}"})
+                return
+            os.rename(str(src), str(dst))
+        except OSError as exc:
+            json_response(self, 500, {"error": f"Failed to {action} extension: {exc}"})
+            return
+        finally:
+            lock.release()
+
+        logger.info("%sd extension compose: %s", action, sid)
+        json_response(self, 200, {"status": "ok", "service_id": sid, "action": action})
 
     def _handle_logs(self):
         if not check_auth(self):
