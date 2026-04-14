@@ -1,29 +1,34 @@
 # Token Spy
 
-Transparent LLM API proxy that captures per-turn token usage, cost, latency, and session health. Sits between your application and upstream providers (Anthropic, OpenAI, Moonshot, local models), logging everything while forwarding requests and responses untouched -- including SSE streams.
+Authenticated LLM API proxy that captures per-turn token usage, cost, latency, and session health. It sits between your client and upstream providers (Anthropic, OpenAI, Moonshot, or self-hosted OpenAI-compatible servers), logs the request lifecycle, and relays provider responses back to the caller.
 
 ## How It Works
 
 ```
-Your agent -> Token Spy proxy -> Upstream API (Anthropic, OpenAI, etc.)
-                  |
-                  v
-              SQLite DB <- Dashboard (charts, tables, settings)
-                  ^
-                  |
-           Session Manager (polls every N minutes, enforces limits)
+Your client --Bearer TOKEN_SPY_API_KEY--> Token Spy proxy --> Upstream API
+                                              |
+                                              v
+                                          Metrics DB <- Dashboard
+                                              ^
+                                              |
+                                       Session Manager
 ```
 
-Point your agent's API base URL at Token Spy instead of the upstream provider. Token Spy forwards everything transparently -- your agent won't know it's there.
+Point your client's base URL at Token Spy instead of the provider directly.
+
+- Clients authenticate to Token Spy with `TOKEN_SPY_API_KEY`
+- Token Spy authenticates to hosted upstream providers with `UPSTREAM_API_KEY`
+- Token Spy never forwards the proxy bearer token to the upstream provider
+- Local/self-hosted upstreams can run without `UPSTREAM_API_KEY` when they do not require provider auth
 
 ## Features
 
 - **Real-time dashboard** -- session health cards, cost charts, token breakdown, cumulative cost, recent turns table
-- **Session health monitoring** -- detects context bloat, recommends resets, can auto-kill sessions exceeding configurable character limits
-- **Multi-provider** -- Anthropic Messages API (`/v1/messages`) and OpenAI Chat Completions (`/v1/chat/completions`)
-- **Dual database backends** -- SQLite (zero-config default) and PostgreSQL/TimescaleDB for production
+- **Session health monitoring** -- detects context bloat, recommends resets, and can auto-kill sessions exceeding configured character limits
+- **Multi-provider proxying** -- Anthropic Messages API (`/v1/messages`) and OpenAI-compatible Chat Completions (`/v1/chat/completions`)
+- **Persistent metrics storage** -- SQLite by default, with optional PostgreSQL-backed runtime support
 - **Per-agent settings** -- configurable session limits and poll intervals, editable via dashboard or REST API
-- **Local model support** -- track self-hosted models (vLLM, Ollama) with $0 cost badges
+- **Local model support** -- track self-hosted models (vLLM, Ollama, llama-server) with $0 cost badges
 
 ## Standalone Usage
 
@@ -31,15 +36,23 @@ Point your agent's API base URL at Token Spy instead of the upstream provider. T
 cd token-spy
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env -- at minimum set AGENT_NAME
+
+# Required for proxy clients
+export TOKEN_SPY_API_KEY=replace-me
+
+# Required for hosted upstream providers
+export UPSTREAM_API_KEY=provider-key
+
 AGENT_NAME=my-agent python -m uvicorn main:app --host 0.0.0.0 --port 9110
 ```
+
+For local/self-hosted upstreams that do not require provider authentication, `UPSTREAM_API_KEY` can be left unset.
 
 Open `http://localhost:9110/dashboard` to see the monitoring UI.
 
 ## Configuration
 
-See [TOKEN-SPY-GUIDE.md](TOKEN-SPY-GUIDE.md) for all available settings.
+See [TOKEN-SPY-GUIDE.md](TOKEN-SPY-GUIDE.md) for all available settings and auth examples.
 
 ## API Endpoints
 
@@ -53,8 +66,8 @@ See [TOKEN-SPY-GUIDE.md](TOKEN-SPY-GUIDE.md) for all available settings.
 | `/api/session-status` | GET | Current session health |
 | `/api/reset-session` | POST | Kill active session |
 | `/token_events` | GET | SSE stream of token events |
-| `/v1/messages` | POST | Anthropic proxy |
-| `/v1/chat/completions` | POST | OpenAI-compatible proxy |
+| `/v1/messages` | POST | Authenticated Anthropic proxy |
+| `/v1/chat/completions` | POST | Authenticated OpenAI-compatible proxy |
 
 See [TOKEN-SPY-GUIDE.md](TOKEN-SPY-GUIDE.md) for full API documentation.
 

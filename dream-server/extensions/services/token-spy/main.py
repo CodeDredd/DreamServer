@@ -1,8 +1,9 @@
 """
-Token Spy — API Monitor — Transparent LLM API Proxy.
+Token Spy — API Monitor — Authenticated LLM API Proxy.
 
-Captures per-turn token usage and system prompt breakdown, streams SSE through
-without buffering. Single or multi-instance deployment, sharing SQLite database.
+Captures per-turn token usage and system prompt breakdown while relaying
+provider responses without buffering. Single or multi-instance deployment,
+sharing a SQLite or PostgreSQL-backed metrics store.
 
 Supports Anthropic, Moonshot, OpenAI, and generic OpenAI-compatible APIs.
 """
@@ -17,6 +18,7 @@ import shlex
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, Security
@@ -267,6 +269,43 @@ async def verify_api_key(
     if not secrets.compare_digest(credentials.credentials, TOKEN_SPY_API_KEY):
         raise HTTPException(status_code=403, detail="Invalid API key.")
     return credentials.credentials
+
+
+def _uses_local_upstream(base_url: str) -> bool:
+    """Return True when the configured upstream is obviously local/self-hosted."""
+    if API_PROVIDER == "local":
+        return True
+
+    try:
+        hostname = (urlparse(base_url).hostname or "").lower()
+    except ValueError:
+        hostname = ""
+
+    return hostname in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+
+
+def _get_upstream_auth_headers(protocol: str, base_url: str) -> dict[str, str]:
+    """Build server-side auth headers for the configured upstream.
+
+    Proxy clients authenticate to Token Spy with TOKEN_SPY_API_KEY. Hosted
+    upstream providers must be authenticated server-side via UPSTREAM_API_KEY.
+    Local/self-hosted upstreams are allowed to run without upstream auth.
+    """
+    if not UPSTREAM_API_KEY:
+        if _uses_local_upstream(base_url):
+            return {}
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Token Spy is missing UPSTREAM_API_KEY for upstream {base_url}. "
+                "Configure UPSTREAM_API_KEY or point Token Spy at a local upstream "
+                "that does not require provider authentication."
+            ),
+        )
+
+    if protocol == "anthropic":
+        return {"x-api-key": UPSTREAM_API_KEY}
+    return {"authorization": f"Bearer {UPSTREAM_API_KEY}"}
 
 
 # ── App ──────────────────────────────────────────────────────────────────────
@@ -547,7 +586,7 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int,
 
 @app.post("/v1/messages", dependencies=[Depends(verify_api_key)])
 async def proxy_messages(request: Request):
-    """Transparent proxy for Anthropic /v1/messages with metrics capture."""
+    """Authenticated Anthropic proxy for /v1/messages with metrics capture."""
     start = time.time()
 
     # Read and parse request body
@@ -576,21 +615,16 @@ async def proxy_messages(request: Request):
         f"body={len(raw_body)}B"
     )
 
-    # Build upstream headers — forward everything relevant
+    # Forward provider-relevant headers, but never forward Token Spy auth upstream.
     forward_headers = {}
     for key in ("x-api-key", "anthropic-version", "content-type", "anthropic-beta",
                 "anthropic-dangerous-direct-browser-access", "user-agent", "x-app",
-                "accept", "authorization"):
+                "accept"):
         val = request.headers.get(key)
         if val:
             forward_headers[key] = val
 
-    # Inject environment API key if not provided in request (for external deployments)
-    if UPSTREAM_API_KEY and "x-api-key" not in forward_headers and "authorization" not in forward_headers:
-        if API_PROVIDER == "anthropic":
-            forward_headers["x-api-key"] = UPSTREAM_API_KEY
-        else:
-            forward_headers["authorization"] = f"Bearer {UPSTREAM_API_KEY}"
+    forward_headers.update(_get_upstream_auth_headers("anthropic", ANTHROPIC_UPSTREAM))
 
     client = get_http_client()
 
@@ -629,7 +663,7 @@ async def _handle_streaming(client, raw_body, headers, model, sys_analysis,
                 headers=headers,
             ) as upstream:
                 async for line in upstream.aiter_lines():
-                    # Yield line immediately for transparent passthrough
+                    # Yield each SSE line immediately to preserve stream behavior.
                     yield line + "\n"
 
                     # Parse SSE events
@@ -769,7 +803,7 @@ def _analyze_openai_messages(messages: list) -> dict:
 
 @app.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 async def proxy_chat_completions(request: Request):
-    """Transparent proxy for OpenAI-compatible /v1/chat/completions (Moonshot/Kimi)."""
+    """Authenticated proxy for OpenAI-compatible /v1/chat/completions."""
     start = time.time()
 
     raw_body = await request.body()
@@ -819,14 +853,12 @@ async def proxy_chat_completions(request: Request):
     )
 
     forward_headers = {}
-    for key in ("authorization", "content-type", "accept", "user-agent"):
+    for key in ("content-type", "accept", "user-agent"):
         val = request.headers.get(key)
         if val:
             forward_headers[key] = val
 
-    # Inject environment API key if not provided in request (for external deployments)
-    if UPSTREAM_API_KEY and "authorization" not in forward_headers:
-        forward_headers["authorization"] = f"Bearer {UPSTREAM_API_KEY}"
+    forward_headers.update(_get_upstream_auth_headers("openai", OPENAI_UPSTREAM))
 
     client = get_moonshot_client()
 
@@ -2370,26 +2402,29 @@ async def token_events(request: Request):
 # ── Catch-all for other endpoints ────────────────────────────────────────────
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_other(request: Request, path: str):
-    """Forward any other requests to upstream transparently."""
+async def proxy_other(
+    request: Request,
+    path: str,
+    _api_key: str = Depends(verify_api_key),
+):
+    """Forward other provider routes through the authenticated proxy."""
     # Use the correct upstream client based on provider
-    if API_PROVIDER in ("openai", "moonshot"):
+    if API_PROVIDER in ("openai", "moonshot", "local"):
         client = get_moonshot_client()
+        protocol = "openai"
+        upstream_base = OPENAI_UPSTREAM
     else:
         client = get_http_client()
+        protocol = "anthropic"
+        upstream_base = ANTHROPIC_UPSTREAM
     headers = {}
     for key in ("x-api-key", "anthropic-version", "content-type", "anthropic-beta",
-                "authorization", "accept", "user-agent"):
+                "accept", "user-agent"):
         val = request.headers.get(key)
         if val:
             headers[key] = val
 
-    # Inject environment API key if not provided in request
-    if UPSTREAM_API_KEY and "x-api-key" not in headers and "authorization" not in headers:
-        if API_PROVIDER == "anthropic":
-            headers["x-api-key"] = UPSTREAM_API_KEY
-        else:
-            headers["authorization"] = f"Bearer {UPSTREAM_API_KEY}"
+    headers.update(_get_upstream_auth_headers(protocol, upstream_base))
 
     body = await request.body()
     try:
