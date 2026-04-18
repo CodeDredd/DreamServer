@@ -96,10 +96,16 @@ ENABLE_RAG=true
 ENABLE_OPENCLAW=true
 ENABLE_COMFYUI=true
 ENABLE_DREAMFORGE=true
+# Langfuse (LLM observability) defaults OFF on all tiers because its
+# clickhouse + postgres + minio stack adds ~500MB baseline memory that is
+# nontrivial even on Tier 3+ systems. Users opt in via --langfuse, --all,
+# the Custom menu, or post-install `dream enable langfuse`.
+ENABLE_LANGFUSE=false
 INTERACTIVE=true
 DREAM_MODE="${DREAM_MODE:-local}"
 OFFLINE_MODE=false   # M1 integration: fully air-gapped operation
 NO_BOOTSTRAP=false  # Skip bootstrap fast-start, download full model in foreground
+BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
 SUMMARY_JSON_FILE="${SUMMARY_JSON_FILE:-}"
 
 usage() {
@@ -122,9 +128,12 @@ Options:
     --no-comfyui      Disable ComfyUI image generation (saves ~34GB)
     --dreamforge      Enable DreamForge agent system (default)
     --no-dreamforge   Disable DreamForge
-    --all             Enable all optional services
+    --langfuse        Enable Langfuse LLM observability (off by default)
+    --no-langfuse     Explicitly disable Langfuse (for --all overrides)
+    --all             Enable all optional services (including Langfuse)
     --non-interactive Run without prompts (use defaults or flags)
     --offline         M1 mode: Configure for fully offline/air-gapped operation
+    --lan             Bind services to 0.0.0.0 for LAN access (headless servers)
     --no-bootstrap    Skip bootstrap fast-start (download full model in foreground)
     --summary-json P  Write machine-readable install summary JSON to path P
     -h, --help        Show this help
@@ -166,9 +175,14 @@ while [[ $# -gt 0 ]]; do
         --no-comfyui) ENABLE_COMFYUI=false; shift ;;
         --dreamforge) ENABLE_DREAMFORGE=true; shift ;;
         --no-dreamforge) ENABLE_DREAMFORGE=false; shift ;;
-        --all) ENABLE_VOICE=true; ENABLE_WORKFLOWS=true; ENABLE_RAG=true; ENABLE_OPENCLAW=true; ENABLE_COMFYUI=true; ENABLE_DREAMFORGE=true; shift ;;
+        --langfuse) ENABLE_LANGFUSE=true; shift ;;
+        # NOTE: with --all, --no-langfuse must appear AFTER --all on the command
+        # line (flag processing is case-loop ordered, matching comfyui/dreamforge).
+        --no-langfuse) ENABLE_LANGFUSE=false; shift ;;
+        --all) ENABLE_VOICE=true; ENABLE_WORKFLOWS=true; ENABLE_RAG=true; ENABLE_OPENCLAW=true; ENABLE_COMFYUI=true; ENABLE_DREAMFORGE=true; ENABLE_LANGFUSE=true; shift ;;
         --non-interactive) INTERACTIVE=false; shift ;;
         --offline) OFFLINE_MODE=true; shift ;;
+        --lan) BIND_ADDRESS="0.0.0.0"; shift ;;
         --no-bootstrap) NO_BOOTSTRAP=true; shift ;;
         --summary-json) SUMMARY_JSON_FILE="$2"; shift 2 ;;
         -h|--help) usage ;;

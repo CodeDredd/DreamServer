@@ -65,6 +65,12 @@ ENABLE_VOICE=false
 ENABLE_WORKFLOWS=false
 ENABLE_RAG=false
 ENABLE_OPENCLAW=false
+# Langfuse defaults OFF because its clickhouse + postgres + minio stack adds
+# ~500MB baseline memory. Enable via --langfuse, --all, or post-install
+# `dream enable langfuse`. --no-langfuse honored as explicit override so a
+# --all run can still suppress Langfuse.
+ENABLE_LANGFUSE=false
+NO_LANGFUSE_EXPLICIT=false
 ALL_FEATURES=false
 CLOUD_MODE=false
 
@@ -78,6 +84,8 @@ while [[ $# -gt 0 ]]; do
         --workflows)     ENABLE_WORKFLOWS=true; shift ;;
         --rag)           ENABLE_RAG=true; shift ;;
         --openclaw)      ENABLE_OPENCLAW=true; shift ;;
+        --langfuse)      ENABLE_LANGFUSE=true; shift ;;
+        --no-langfuse)   ENABLE_LANGFUSE=false; NO_LANGFUSE_EXPLICIT=true; shift ;;
         --all)           ALL_FEATURES=true; shift ;;
         --cloud)         CLOUD_MODE=true; shift ;;
         *)               echo "Unknown option: $1"; exit 1 ;;
@@ -89,6 +97,8 @@ if $ALL_FEATURES; then
     ENABLE_WORKFLOWS=true
     ENABLE_RAG=true
     ENABLE_OPENCLAW=true
+    # --all enables Langfuse unless the user explicitly passed --no-langfuse.
+    $NO_LANGFUSE_EXPLICIT || ENABLE_LANGFUSE=true
 fi
 
 # ── Locate script directory and source tree root ──
@@ -102,6 +112,36 @@ source "${LIB_DIR}/ui.sh"
 source "${LIB_DIR}/tier-map.sh"
 source "${LIB_DIR}/detection.sh"
 source "${LIB_DIR}/env-generator.sh"
+
+# ── File-local helpers ──
+# Build a launchd-friendly PATH that includes Docker and Homebrew prefixes.
+# launchd does NOT inherit the user's login shell PATH, so any path containing
+# `docker` or `brew`-installed tools must be baked into the plist explicitly.
+# Pass an optional leading directory (e.g. ~/.opencode/bin) as $1.
+_compute_launchd_path() {
+    local extra="${1:-}"
+    local docker_bin="" docker_dir="" brew_prefix=""
+    if command -v docker >/dev/null 2>&1; then
+        docker_bin="$(command -v docker)"
+        docker_dir="$(cd "$(dirname "$docker_bin")" && pwd)"
+    fi
+    if command -v brew >/dev/null 2>&1; then
+        brew_prefix="$(brew --prefix)"
+    fi
+    local entries=()
+    [[ -n "$extra" ]]                && entries+=("$extra")
+    [[ -n "$docker_dir" ]]           && entries+=("$docker_dir")
+    [[ -n "$brew_prefix" ]]          && entries+=("${brew_prefix}/bin")
+    entries+=("/opt/homebrew/bin" "/usr/local/bin" "/usr/bin" "/bin")
+    local seen=":" path_out="" d
+    for d in "${entries[@]}"; do
+        case "$seen" in
+            *":${d}:"*) ;;
+            *) seen="${seen}${d}:"; path_out="${path_out:+${path_out}:}${d}" ;;
+        esac
+    done
+    printf '%s' "$path_out"
+}
 
 # ── Resolve install directory ──
 INSTALL_DIR="${DS_INSTALL_DIR}"
@@ -293,10 +333,12 @@ if ! $NON_INTERACTIVE && ! $ALL_FEATURES && ! $DRY_RUN; then
         1)
             ENABLE_VOICE=true; ENABLE_WORKFLOWS=true
             ENABLE_RAG=true; ENABLE_OPENCLAW=true
+            ENABLE_LANGFUSE=true
             ;;
         2)
             ENABLE_VOICE=false; ENABLE_WORKFLOWS=false
             ENABLE_RAG=false; ENABLE_OPENCLAW=false
+            ENABLE_LANGFUSE=false
             ;;
         3)
             read -r -p "  Enable Voice (Whisper + Kokoro)? [y/N] " yn < /dev/tty
@@ -307,10 +349,13 @@ if ! $NON_INTERACTIVE && ! $ALL_FEATURES && ! $DRY_RUN; then
             [[ "$yn" =~ ^[yY] ]] && ENABLE_RAG=true
             read -r -p "  Enable OpenClaw (AI agents)?      [y/N] " yn < /dev/tty
             [[ "$yn" =~ ^[yY] ]] && ENABLE_OPENCLAW=true
+            read -r -p "  Enable Langfuse (LLM observability, ~500MB)? [y/N] " yn < /dev/tty
+            [[ "$yn" =~ ^[yY] ]] && ENABLE_LANGFUSE=true
             ;;
         *)
             ENABLE_VOICE=true; ENABLE_WORKFLOWS=true
             ENABLE_RAG=true; ENABLE_OPENCLAW=true
+            ENABLE_LANGFUSE=true
             ;;
     esac
 fi
@@ -320,6 +365,7 @@ info_box "  Voice:" "$(if $ENABLE_VOICE; then echo enabled; else echo disabled; 
 info_box "  Workflows:" "$(if $ENABLE_WORKFLOWS; then echo enabled; else echo disabled; fi)"
 info_box "  RAG:" "$(if $ENABLE_RAG; then echo enabled; else echo disabled; fi)"
 info_box "  OpenClaw:" "$(if $ENABLE_OPENCLAW; then echo enabled; else echo disabled; fi)"
+info_box "  Langfuse:" "$(if $ENABLE_LANGFUSE; then echo enabled; else echo disabled; fi)"
 
 # ============================================================================
 # PHASE 4 -- SETUP (directories, copy source, generate .env)
@@ -332,6 +378,7 @@ if $DRY_RUN; then
     ai "[DRY RUN] Would generate .env with secrets"
     ai "[DRY RUN] Would generate SearXNG config"
     $ENABLE_OPENCLAW && ai "[DRY RUN] Would configure OpenClaw"
+    $ENABLE_LANGFUSE && ai "[DRY RUN] Would enable Langfuse (LLM observability)"
 else
     # Create directory structure
     mkdir -p "${INSTALL_DIR}/config/searxng"
@@ -376,12 +423,16 @@ else
         ai "Running in-place, skipping file copy"
     fi
 
-    # Copy extensions library to data dir for dashboard portal
-    _ext_lib_src="${SOURCE_ROOT}/resources/dev/extensions-library/services"
+    # Copy extensions library to data dir for dashboard portal.
+    # SOURCE_ROOT resolves to dream-server/, so we climb one more level
+    # ($SOURCE_ROOT/..) to reach the repo root where resources/ lives.
+    _ext_lib_src="${SOURCE_ROOT}/../resources/dev/extensions-library/services"
     if [[ -d "$_ext_lib_src" ]]; then
         mkdir -p "${INSTALL_DIR}/data/extensions-library"
         cp -r "$_ext_lib_src/." "${INSTALL_DIR}/data/extensions-library/"
         ai_ok "Extensions library copied to data/extensions-library/"
+    else
+        ai_warn "Extensions library not found at ${_ext_lib_src}; dashboard Extensions page will return 503 until populated"
     fi
 
     # Copy CLI tool to install root
@@ -668,6 +719,28 @@ else
     CURRENT_BACKEND="apple"
     $CLOUD_MODE && CURRENT_BACKEND="none"
 
+    # Sync Langfuse compose state with ENABLE_LANGFUSE before manifest discovery.
+    # Langfuse ships as compose.yaml.disabled; enable it here when the user opted
+    # in so the manifest loop below picks it up on the first pass. Disable
+    # (rename back) when the user did not opt in so a re-install correctly drops it.
+    _langfuse_svc_dir="${EXT_DIR}/langfuse"
+    if [[ -d "$_langfuse_svc_dir" ]]; then
+        _langfuse_compose="${_langfuse_svc_dir}/compose.yaml"
+        if $ENABLE_LANGFUSE; then
+            if [[ ! -f "$_langfuse_compose" && -f "${_langfuse_compose}.disabled" ]]; then
+                mv "${_langfuse_compose}.disabled" "$_langfuse_compose"
+                ai_ok "Langfuse compose re-enabled"
+            fi
+        else
+            if [[ -f "$_langfuse_compose" ]]; then
+                mv "$_langfuse_compose" "${_langfuse_compose}.disabled"
+                log "Langfuse compose disabled (LLM observability not enabled)"
+            fi
+        fi
+        unset _langfuse_compose
+    fi
+    unset _langfuse_svc_dir
+
     if [[ -d "$EXT_DIR" ]]; then
         for SVC_DIR in "$EXT_DIR"/*/; do
             [[ ! -d "$SVC_DIR" ]] && continue
@@ -711,6 +784,7 @@ else
                 n8n)           $ENABLE_WORKFLOWS || SKIP=true ;;
                 qdrant|embeddings) $ENABLE_RAG || SKIP=true ;;
                 openclaw)      $ENABLE_OPENCLAW || SKIP=true ;;
+                langfuse)      $ENABLE_LANGFUSE || SKIP=true ;;
             esac
             $SKIP && continue
 
@@ -741,6 +815,14 @@ else
             fi
         fi
     done
+
+    # ── Unload stale LaunchAgents before compose (crash-safe) ──
+    # If a previous install registered these agents and this run fails at
+    # compose-up, the old agents would keep running with stale paths
+    # (DREAM_HOME pointing at the deleted install dir).  Clearing them
+    # here guarantees a clean slate regardless of what happens below.
+    launchctl bootout "gui/$(id -u)/${DREAM_AGENT_PLIST_LABEL}" 2>/dev/null || true
+    launchctl bootout "gui/$(id -u)/${OPENCODE_PLIST_LABEL}" 2>/dev/null || true
 
     # ── Start Docker services ──
     chapter "STARTING SERVICES"
@@ -829,8 +911,13 @@ OPENCODE_EOF
             ai_ok "OpenCode config already exists"
         fi
 
-        # Install as macOS LaunchAgent (auto-start on login)
-        mkdir -p "$HOME/Library/LaunchAgents"
+        # Install as macOS LaunchAgent (auto-start on login).
+        # Log path is intentionally decoupled from INSTALL_DIR: xpcproxy denies
+        # file-write-create on non-$HOME volumes, which causes the launchd spawn
+        # to exit 78 before the target process ever runs. $HOME/Library/Logs is
+        # always inside xpcproxy's sandbox writable set, so use that instead.
+        mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/DreamServer"
+        OPENCODE_LAUNCHD_PATH="$(_compute_launchd_path "${HOME}/.opencode/bin")"
         cat > "$OPENCODE_PLIST" <<PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -854,7 +941,7 @@ OPENCODE_EOF
         <key>HOME</key>
         <string>${HOME}</string>
         <key>PATH</key>
-        <string>${HOME}/.opencode/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>${OPENCODE_LAUNCHD_PATH}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -864,19 +951,23 @@ OPENCODE_EOF
         <false/>
     </dict>
     <key>StandardOutPath</key>
-    <string>${INSTALL_DIR}/data/opencode-web.log</string>
+    <string>${HOME}/Library/Logs/DreamServer/opencode-web.log</string>
     <key>StandardErrorPath</key>
-    <string>${INSTALL_DIR}/data/opencode-web.log</string>
+    <string>${HOME}/Library/Logs/DreamServer/opencode-web.log</string>
 </dict>
 </plist>
 PLIST_EOF
 
-        # Unload existing (if any) and load new plist
-        launchctl bootout "gui/$(id -u)/${OPENCODE_PLIST_LABEL}" 2>/dev/null || true
-        if launchctl bootstrap "gui/$(id -u)" "$OPENCODE_PLIST" 2>/dev/null; then
+        # Unload existing (if any) and load new plist. bootout legitimately
+        # errors when no service is loaded, so we keep that suppressed; the
+        # bootstrap call surfaces real failures (e.g. launchd throttle EIO).
+        launchctl bootout "gui/$(id -u)/${OPENCODE_PLIST_LABEL}" >/dev/null 2>&1 || true
+        _opencode_bootstrap_err="$(launchctl bootstrap "gui/$(id -u)" "$OPENCODE_PLIST" 2>&1)" && _opencode_bootstrap_rc=0 || _opencode_bootstrap_rc=$?
+        if [[ $_opencode_bootstrap_rc -eq 0 ]]; then
             ai_ok "OpenCode Web UI service installed (LaunchAgent, port 3003)"
         else
-            ai_warn "OpenCode LaunchAgent failed — start manually: opencode web --port 3003"
+            ai_warn "OpenCode LaunchAgent failed (rc=${_opencode_bootstrap_rc}): ${_opencode_bootstrap_err}"
+            ai_warn "Start manually: opencode web --port 3003"
         fi
     fi
 fi
@@ -884,7 +975,13 @@ fi
 # ── Dream Host Agent (extension lifecycle management) ──
 AGENT_PYTHON="$(command -v python3)"
 if [[ -f "${INSTALL_DIR}/bin/dream-host-agent.py" ]] && [[ -n "$AGENT_PYTHON" ]]; then
-    mkdir -p "$HOME/Library/LaunchAgents"
+    # See opencode-web block above for the xpcproxy sandbox rationale behind
+    # the $HOME-rooted log path.
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/DreamServer"
+    DREAM_AGENT_PATH="$(_compute_launchd_path "")"
+    if ! command -v docker >/dev/null 2>&1; then
+        ai_warn "docker not found on PATH at install time — host agent will fail to start until Docker Desktop is launched and 'docker' resolves on your shell PATH"
+    fi
     cat > "$DREAM_AGENT_PLIST" <<AGENT_PLIST_EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -907,7 +1004,7 @@ if [[ -f "${INSTALL_DIR}/bin/dream-host-agent.py" ]] && [[ -n "$AGENT_PYTHON" ]]
         <key>HOME</key>
         <string>${HOME}</string>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>${DREAM_AGENT_PATH}</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -917,18 +1014,24 @@ if [[ -f "${INSTALL_DIR}/bin/dream-host-agent.py" ]] && [[ -n "$AGENT_PYTHON" ]]
         <false/>
     </dict>
     <key>StandardOutPath</key>
-    <string>${INSTALL_DIR}/data/dream-host-agent.log</string>
+    <string>${HOME}/Library/Logs/DreamServer/dream-host-agent.log</string>
     <key>StandardErrorPath</key>
-    <string>${INSTALL_DIR}/data/dream-host-agent.log</string>
+    <string>${HOME}/Library/Logs/DreamServer/dream-host-agent.log</string>
 </dict>
 </plist>
 AGENT_PLIST_EOF
 
-    launchctl bootout "gui/$(id -u)/${DREAM_AGENT_PLIST_LABEL}" 2>/dev/null || true
-    if launchctl bootstrap "gui/$(id -u)" "$DREAM_AGENT_PLIST" 2>/dev/null; then
+    launchctl bootout "gui/$(id -u)/${DREAM_AGENT_PLIST_LABEL}" >/dev/null 2>&1 || true
+    _agent_bootstrap_err="$(launchctl bootstrap "gui/$(id -u)" "$DREAM_AGENT_PLIST" 2>&1)" && _agent_bootstrap_rc=0 || _agent_bootstrap_rc=$?
+    if [[ $_agent_bootstrap_rc -eq 0 ]]; then
         ai_ok "Dream host agent installed (LaunchAgent, port ${DREAM_AGENT_PORT})"
     else
-        ai_warn "Dream host agent LaunchAgent failed — start manually: dream agent start"
+        ai_warn "Dream host agent LaunchAgent failed (rc=${_agent_bootstrap_rc}): ${_agent_bootstrap_err}"
+        if [[ "${_agent_bootstrap_err}" == *"Input/output error"* ]]; then
+            ai_warn "launchd is throttled. Recover with: launchctl bootout gui/\$(id -u)/${DREAM_AGENT_PLIST_LABEL}; sleep 10; then re-run this installer"
+        else
+            ai_warn "Start manually: dream agent start"
+        fi
     fi
 else
     [[ ! -f "${INSTALL_DIR}/bin/dream-host-agent.py" ]] && ai_warn "Host agent script not found, skipping"
