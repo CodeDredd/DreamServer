@@ -1411,10 +1411,11 @@ def purge_extension_data(
         if not body.confirm:
             raise HTTPException(status_code=400, detail="Confirmation required: set confirm=true")
 
-        from helpers import dir_size_gb  # noqa: PLC0415
+        from helpers import dir_size_gb, invalidate_dir_size_cache  # noqa: PLC0415
         size_gb = dir_size_gb(data_path)
 
         shutil.rmtree(data_path, ignore_errors=True)
+        invalidate_dir_size_cache(data_path)
 
         if data_path.exists():
             raise HTTPException(status_code=500, detail=f"Could not fully remove data/{service_id}. Some files may be owned by root.")

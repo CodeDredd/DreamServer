@@ -17,6 +17,31 @@ import httpx
 from config import SERVICES, INSTALL_DIR, DATA_DIR, LLM_BACKEND
 from models import ServiceStatus, DiskUsage, ModelInfo, BootstrapStatus
 
+
+class _DirSizeCache:
+    """Per-path TTL cache for dir_size_gb to avoid repeated rglob walks."""
+
+    def __init__(self, ttl: float = 60.0):
+        self._ttl = ttl
+        self._store: dict[str, tuple[float, float]] = {}
+
+    def get(self, path: Path) -> float | None:
+        key = str(path.resolve())
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.monotonic() > expires_at:
+            del self._store[key]
+            return None
+        return value
+
+    def set(self, path: Path, value: float):
+        self._store[str(path.resolve())] = (time.monotonic() + self._ttl, value)
+
+
+_dir_size_cache = _DirSizeCache()
+
 # Lemonade serves at /api/v1 instead of llama.cpp's /v1
 _LLM_API_PREFIX = "/api/v1" if LLM_BACKEND == "lemonade" else "/v1"
 
@@ -282,8 +307,13 @@ def dir_size_gb(path: Path) -> float:
     """Calculate total size of a directory in GB. Returns 0.0 if path doesn't exist.
 
     Skips symlinks to avoid following links outside DATA_DIR and double-counting.
+    Results are cached for 60 seconds to avoid repeated expensive rglob walks.
     """
+    cached = _dir_size_cache.get(path)
+    if cached is not None:
+        return cached
     if not path.exists():
+        _dir_size_cache.set(path, 0.0)
         return 0.0
     total = 0
     try:
@@ -295,7 +325,19 @@ def dir_size_gb(path: Path) -> float:
                 pass
     except (PermissionError, OSError):
         pass
-    return round(total / (1024**3), 2)
+    result = round(total / (1024**3), 2)
+    _dir_size_cache.set(path, result)
+    return result
+
+
+def invalidate_dir_size_cache(path: Path):
+    """Remove cached size for a specific path after it has been modified."""
+    _dir_size_cache._store.pop(str(path.resolve()), None)
+
+
+def clear_dir_size_cache():
+    """Clear the entire dir_size_gb cache (e.g. after bulk operations)."""
+    _dir_size_cache._store.clear()
 
 
 def get_disk_usage() -> DiskUsage:
