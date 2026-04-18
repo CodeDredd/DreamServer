@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
@@ -13,7 +14,7 @@ from helpers import (
     get_uptime, get_cpu_metrics, get_ram_metrics,
     check_service_health, get_all_services,
     get_llama_metrics, get_loaded_model, get_llama_context_size,
-    get_disk_usage, dir_size_gb,
+    get_disk_usage, dir_size_gb, invalidate_dir_size_cache, clear_dir_size_cache,
     _get_aio_session, set_services_cache, get_cached_services,
     _get_lifetime_tokens,
 )
@@ -821,14 +822,17 @@ class TestBootstrapStatusEtaEdge:
 class TestDirSizeGb:
 
     def test_nonexistent_path_returns_zero(self, tmp_path):
+        clear_dir_size_cache()
         assert dir_size_gb(tmp_path / "does-not-exist") == 0.0
 
     def test_empty_directory_returns_zero(self, tmp_path):
+        clear_dir_size_cache()
         empty = tmp_path / "empty"
         empty.mkdir()
         assert dir_size_gb(empty) == 0.0
 
     def test_directory_with_files(self, tmp_path):
+        clear_dir_size_cache()
         d = tmp_path / "data"
         d.mkdir()
         # Write 100 MiB (avoids allocating 1 GiB in CI)
@@ -837,6 +841,7 @@ class TestDirSizeGb:
         assert dir_size_gb(d) == 0.1
 
     def test_symlinks_are_skipped(self, tmp_path):
+        clear_dir_size_cache()
         d = tmp_path / "withlinks"
         d.mkdir()
         real = d / "real.bin"
@@ -846,3 +851,40 @@ class TestDirSizeGb:
         # Only real.bin should be counted (1024 B ≈ 0.0 GB when rounded to 2dp)
         result = dir_size_gb(d)
         assert result == 0.0  # 1024 bytes rounds to 0.0 GB
+
+    def test_uses_cached_value_until_invalidated(self, tmp_path, monkeypatch):
+        clear_dir_size_cache()
+        d = tmp_path / "cached"
+        d.mkdir()
+        (d / "data.bin").write_bytes(b"\x00" * 1024)
+
+        assert dir_size_gb(d) == 0.0
+
+        def _unexpected_rglob(self, pattern):
+            raise AssertionError("dir_size_gb unexpectedly walked the filesystem")
+
+        monkeypatch.setattr(Path, "rglob", _unexpected_rglob)
+        assert dir_size_gb(d) == 0.0
+
+    def test_invalidate_dir_size_cache_forces_refresh(self, tmp_path, monkeypatch):
+        clear_dir_size_cache()
+        d = tmp_path / "refresh"
+        d.mkdir()
+        (d / "data.bin").write_bytes(b"\x00" * 1024)
+
+        assert dir_size_gb(d) == 0.0
+
+        original_rglob = Path.rglob
+        calls = {"count": 0}
+
+        def _tracking_rglob(self, pattern):
+            calls["count"] += 1
+            return original_rglob(self, pattern)
+
+        monkeypatch.setattr(Path, "rglob", _tracking_rglob)
+        assert dir_size_gb(d) == 0.0
+        assert calls["count"] == 0
+
+        invalidate_dir_size_cache(d)
+        assert dir_size_gb(d) == 0.0
+        assert calls["count"] == 1
