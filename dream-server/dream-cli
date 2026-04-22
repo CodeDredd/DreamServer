@@ -1079,12 +1079,37 @@ cmd_shell() {
     check_install
     cd "$INSTALL_DIR"
 
-    local service="${1:-$(sr_resolve llm)}"
+    # Resolve aliases (e.g. "llm" -> "llama-server"); sr_resolve calls sr_load.
+    local service
+    service=$(sr_resolve "${1:-llm}")
+
+    # Validate against registry before doing anything.
+    local _found=false
+    for _sid in "${SERVICE_IDS[@]}"; do
+        if [[ "$_sid" == "$service" ]]; then
+            _found=true
+            break
+        fi
+    done
+    if ! $_found; then
+        error "Unknown service: $service"
+    fi
+
     local container
     container=$(sr_container "$service")
 
+    # Confirm the container is running before trying to exec.
+    if ! docker ps --format '{{.Names}}' | grep -qx "$container"; then
+        error "Container $container is not running. Start it with: dream start $service"
+    fi
+
     log "Opening shell in $container..."
-    docker exec -it "$container" /bin/bash || docker exec -it "$container" /bin/sh
+    # Distinguish "no bash binary" from "exec failed" by probing first.
+    if docker exec "$container" test -x /bin/bash >/dev/null 2>&1; then
+        docker exec -it "$container" /bin/bash
+    else
+        docker exec -it "$container" /bin/sh
+    fi
 }
 
 cmd_config() {
