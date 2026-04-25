@@ -249,6 +249,53 @@ def _resolve_extension_dir(service_id: str) -> Path:
     raise HTTPException(
         status_code=404, detail=f"Extension not found: {service_id}",
     )
+
+
+# Compose port-binding host part may be a literal IP or a Compose variable
+# expansion. To stay default-secure while supporting the LAN toggle (PR #964),
+# we accept exactly two forms:
+#   1. literal "127.0.0.1"
+#   2. "${VAR:-127.0.0.1}" — variable with a literal-127.0.0.1 default
+# Everything else (bare "${VAR}" with no default, "${VAR:-0.0.0.0}", literal
+# "0.0.0.0", hostnames, etc.) is rejected.
+_LOOPBACK_VAR_DEFAULT_RE = re.compile(
+    r"^\$\{[A-Za-z_][A-Za-z0-9_]*:-127\.0\.0\.1\}$",
+)
+
+
+def _host_part_is_loopback(host: str) -> bool:
+    if host == "127.0.0.1":
+        return True
+    return bool(_LOOPBACK_VAR_DEFAULT_RE.match(host))
+
+
+def _split_port_host(port_str: str) -> tuple[Optional[str], str]:
+    """Split a list-form port string into (host_part, rest).
+
+    Naive ``str.split(":")`` is wrong for the sanctioned ``${VAR:-127.0.0.1}``
+    pattern because the ``:-`` default operator contains a colon. We detect
+    the variable-expansion prefix and consume up to its closing brace before
+    splitting the remainder on the next colon.
+
+    Returns ``(None, port_str)`` when there is no explicit host part
+    (e.g. ``"8080:80"`` or bare ``"8080"`` — both bind 0.0.0.0 and are
+    rejected by the caller).
+    """
+    if port_str.startswith("${"):
+        end = port_str.find("}")
+        if end == -1 or end + 1 >= len(port_str) or port_str[end + 1] != ":":
+            # Malformed expansion or no host:port separator after it.
+            return port_str, ""
+        return port_str[: end + 1], port_str[end + 2:]
+    if ":" not in port_str:
+        return None, port_str
+    host, _, rest = port_str.partition(":")
+    if host.isdigit():
+        # 2-part "host_port:container_port" — implicit 0.0.0.0, no host_ip.
+        return None, port_str
+    return host, rest
+
+
 def _scan_compose_content(
     compose_path: Path,
     *,
@@ -386,31 +433,45 @@ def _scan_compose_content(
             if isinstance(port, dict):
                 # Dict-form: {target: 80, published: 8080, host_ip: ...}
                 host_ip = port.get("host_ip", "")
-                if port.get("published") and host_ip != "127.0.0.1":
+                if port.get("published") and not _host_part_is_loopback(host_ip):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Extension rejected: dict port binding in {svc_name} must use host_ip: 127.0.0.1",
+                        detail=(
+                            f"Extension rejected: dict port binding in {svc_name} "
+                            f"must use host_ip: 127.0.0.1 (or '${{VAR:-127.0.0.1}}')"
+                        ),
                     )
             else:
                 port_str = str(port)
-                if ":" in port_str:
-                    parts = port_str.split(":")
-                    if len(parts) >= 3:
-                        if parts[0] != "127.0.0.1":
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Extension rejected: port binding '{port_str}' in {svc_name} must use 127.0.0.1",
-                            )
-                    elif len(parts) == 2:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Extension rejected: port binding '{port_str}' in {svc_name} must specify 127.0.0.1 prefix",
-                        )
-                else:
-                    # Bare port (e.g. "8080") — Docker binds 0.0.0.0
+                host_part, rest = _split_port_host(port_str)
+                if host_part is None:
+                    # No host_ip — Docker binds 0.0.0.0.
+                    label = "bare port" if ":" not in port_str else "port binding"
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Extension rejected: bare port '{port_str}' in {svc_name} must use 127.0.0.1:host:container format",
+                        detail=(
+                            f"Extension rejected: {label} '{port_str}' in {svc_name} "
+                            f"must use 127.0.0.1:host:container format"
+                        ),
+                    )
+                if not _host_part_is_loopback(host_part):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Extension rejected: port binding '{port_str}' "
+                            f"in {svc_name} must bind 127.0.0.1 "
+                            f"(literal or '${{VAR:-127.0.0.1}}')"
+                        ),
+                    )
+                # Strip optional "/proto" suffix before checking host_port:container_port.
+                core = rest.split("/", 1)[0]
+                if ":" not in core:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Extension rejected: port binding '{port_str}' "
+                            f"in {svc_name} must specify host:host_port:container_port"
+                        ),
                     )
 
     # Scan top-level named volumes for bind-mount backdoors via driver_opts

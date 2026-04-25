@@ -1099,6 +1099,95 @@ class TestComposeScanEdgeCases:
         assert resp.status_code == 400
         assert "127.0.0.1" in resp.json()["detail"]
 
+    def test_scan_allows_bind_address_var_with_loopback_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """${BIND_ADDRESS:-127.0.0.1} is the sanctioned LAN-toggle pattern (PR #964)."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - '${BIND_ADDRESS:-127.0.0.1}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "bind-ok", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bind-ok/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_scan_allows_arbitrary_var_name_with_loopback_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Any ${VAR:-127.0.0.1} form is accepted, not just BIND_ADDRESS."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - '${MY_HOST:-127.0.0.1}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "bind-var", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bind-var/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_scan_rejects_var_with_non_loopback_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """A variable defaulting to 0.0.0.0 must NOT be accepted."""
+        compose = (
+            "services:\n  svc:\n    image: test\n"
+            "    ports:\n      - '${BIND_ADDRESS:-0.0.0.0}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "bad-default", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/bad-default/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "127.0.0.1" in resp.json()["detail"]
+
+    def test_scan_rejects_var_without_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """A bare ${VAR} (no default) is unsafe — it binds 0.0.0.0 when unset."""
+        compose = (
+            "services:\n  svc:\n    image: test\n"
+            "    ports:\n      - '${BIND_ADDRESS}:8080:80'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "no-default", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/no-default/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "127.0.0.1" in resp.json()["detail"]
+
+    def test_scan_allows_dict_port_with_bind_address_default(
+        self, test_client, monkeypatch, tmp_path,
+    ):
+        """Dict-form port with host_ip: ${VAR:-127.0.0.1} is also accepted."""
+        compose = (
+            "services:\n  svc:\n    image: test:latest\n"
+            "    ports:\n      - target: 80\n"
+            "        published: 8080\n"
+            "        host_ip: '${BIND_ADDRESS:-127.0.0.1}'\n"
+        )
+        lib_dir = _setup_library_ext(tmp_path, "dict-ok", compose_content=compose)
+        _patch_mutation_config(monkeypatch, tmp_path, lib_dir=lib_dir)
+
+        resp = test_client.post(
+            "/api/extensions/dict-ok/install",
+            headers=test_client.auth_headers,
+        )
+        assert resp.status_code == 200
+
     def test_scan_rejects_core_service_name(
         self, test_client, monkeypatch, tmp_path,
     ):
