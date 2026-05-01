@@ -31,6 +31,8 @@ DST="${DST%/}/"
 
 DRY_RUN=()
 PRUNE=()
+PULL=0
+VERBOSE=0
 RESTART_SERVICES=()
 
 while [[ $# -gt 0 ]]; do
@@ -43,6 +45,14 @@ while [[ $# -gt 0 ]]; do
       PRUNE=(--delete)
       shift
       ;;
+    --pull)
+      PULL=1
+      shift
+      ;;
+    --verbose|-v)
+      VERBOSE=1
+      shift
+      ;;
     --restart)
       shift
       while [[ $# -gt 0 && "$1" != --* ]]; do
@@ -52,7 +62,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<EOF
-Usage: $(basename "$0") [--dry-run] [--prune] [--restart svc1 svc2 ...]
+Usage: $(basename "$0") [--dry-run] [--prune] [--pull] [--verbose] [--restart svc1 svc2 ...]
 
 Sync the repo working copy into the installed runtime directory.
 Default mode is ADDITIVE (no deletes) to preserve local state.
@@ -60,8 +70,9 @@ Default mode is ADDITIVE (no deletes) to preserve local state.
 Options:
   --dry-run, -n         Preview changes without writing
   --prune, --delete     Mirror mode: delete files in DST that are not in SRC
-                        (DANGEROUS — may delete user-enabled services and
-                        installer backups; combine with --dry-run first!)
+                        (DANGEROUS — combine with --dry-run first!)
+  --pull                Run 'git pull --ff-only' in the repo first
+  --verbose, -v         Show every file rsync visits (not just changes)
   --restart svc...      Restart given services after sync via dream-cli
 
 Environment overrides:
@@ -73,14 +84,13 @@ Always preserved (excluded from sync, even with --prune):
   Runtime data:   data/  logs/  models/  workspace/  images/
   Backups:        *.bak  *.bak.*  *.bak2  *.broken
   Logs:           *.log  *-import.log
-  Installer:     .compose-flags  .install-state*
+  Installer:      .compose-flags  .install-state*
   Enabled state:  *.disabled  (so --prune does not delete enabled compose.yaml)
   Build/VCS:      .git/  node_modules/  __pycache__/  *.pyc
 
 Examples:
   $(basename "$0") --dry-run
-  $(basename "$0")
-  $(basename "$0") --restart n8n dashboard
+  $(basename "$0") --pull --restart n8n
   $(basename "$0") --prune --dry-run        # preview mirror-mode deletions
 EOF
       exit 0
@@ -106,6 +116,20 @@ command -v rsync >/dev/null 2>&1 || {
   exit 1
 }
 
+# Optional git pull in the repo before sync
+if [[ "$PULL" -eq 1 ]]; then
+  if [[ -d "${SRC}.git" ]]; then
+    echo "→ git pull --ff-only in $SRC"
+    git -C "${SRC%/}" pull --ff-only || {
+      echo "ERROR: git pull failed" >&2
+      exit 1
+    }
+    echo
+  else
+    echo "WARN: --pull requested but $SRC is not a git repo (no .git/) — skipping" >&2
+  fi
+fi
+
 echo "→ Syncing"
 echo "  from:  $SRC"
 echo "  to:    $DST"
@@ -120,50 +144,58 @@ echo
 # Excludes apply to BOTH the source-side traversal AND deletion logic,
 # so excluded files in DST are never touched.
 EXCLUDES=(
-  # Local environment
   --exclude='.env'
   --exclude='.env.local'
   --exclude='.env.bak.*'
-
-  # Runtime data dirs
   --exclude='data/'
   --exclude='logs/'
   --exclude='models/'
   --exclude='workspace/'
   --exclude='images/'
-
-  # Installer / runtime state
   --exclude='.compose-flags'
   --exclude='.install-state'
   --exclude='.install-state.*'
   --exclude='*-import.log'
   --exclude='*.log'
-
-  # Backup files (created by installer/migrations/dream-cli)
   --exclude='*.bak'
   --exclude='*.bak.*'
   --exclude='*.bak2'
   --exclude='*.broken'
-
-  # Enabled-state markers — if a user enabled a service, repo has
-  # compose.yaml.disabled but install has compose.yaml. Excluding
-  # *.disabled prevents pushing the marker over and pruning the active file.
   --exclude='*.disabled'
-
-  # VCS / build artifacts
   --exclude='.git/'
   --exclude='node_modules/'
   --exclude='__pycache__/'
   --exclude='*.pyc'
 )
 
-rsync -av "${DRY_RUN[@]}" "${PRUNE[@]}" \
+# Output mode:
+#   default → -i (itemize): only changed files, with status codes
+#   --verbose → -av (full file list, like before)
+RSYNC_FLAGS=(-a --human-readable --itemize-changes)
+[[ "$VERBOSE" -eq 1 ]] && RSYNC_FLAGS+=(-v)
+
+# Capture itemize output to compute summary
+OUTPUT=$(rsync "${RSYNC_FLAGS[@]}" "${DRY_RUN[@]}" "${PRUNE[@]}" \
   "${EXCLUDES[@]}" \
-  "$SRC" "$DST"
+  "$SRC" "$DST")
+
+# Print itemize lines (skip rsync's stats footer; we'll add our own)
+echo "$OUTPUT" | sed '/^$/,$d'
+
+# Itemize codes legend (only on dry-run or when changes exist)
+created=0
+updated=0
+deleted=0
+while IFS= read -r line; do
+  case "$line" in
+    \>f+++++++++*|cd+++++++++*) created=$((created+1)) ;;
+    \>f*) updated=$((updated+1)) ;;
+    \*deleting*)  deleted=$((deleted+1)) ;;
+  esac
+done <<< "$OUTPUT"
 
 echo
-echo "✓ Sync complete."
-
+echo "✓ Summary:  created=$created  updated=$updated  deleted=$deleted"
 if [[ ${#DRY_RUN[@]} -gt 0 ]]; then
   echo "  (dry-run only — re-run without --dry-run to apply)"
   exit 0

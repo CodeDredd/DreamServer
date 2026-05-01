@@ -3543,11 +3543,17 @@ cmd_sync() {
 
     # Parse flags
     local dry_run="false"
+    local prune="false"
+    local pull="false"
+    local verbose="false"
     local restart_args=()
     local positional=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run|-n) dry_run="true"; shift ;;
+            --prune|--delete) prune="true"; shift ;;
+            --pull) pull="true"; shift ;;
+            --verbose|-v) verbose="true"; shift ;;
             --restart)
                 shift
                 while [[ $# -gt 0 && "$1" != --* ]]; do
@@ -3562,13 +3568,18 @@ cmd_sync() {
                 ;;
             -h|--help)
                 cat <<EOF
-Usage: dream sync-from-repo [--dry-run] [--repo <path>] [--restart svc1 svc2 ...]
+Usage: dream sync-from-repo [--dry-run] [--prune] [--pull] [--verbose]
+                            [--repo <path>] [--restart svc1 svc2 ...]
 
 Syncs the repo working copy into the installed runtime ($INSTALL_DIR),
-preserving local state (.env, data/, logs/, models/, workspace/, images/).
+preserving local state (.env, data/, logs/, models/, workspace/, images/,
+backups, *.disabled markers, user-added config dirs).
 
 Options:
   --dry-run, -n         Preview changes without writing
+  --prune, --delete     Mirror mode (deletes extra files in dest — careful!)
+  --pull                Run 'git pull --ff-only' in the repo first
+  --verbose, -v         Show every file rsync visits (not just changes)
   --repo <path>         Override repo location (default: auto-detect or \$DREAM_REPO_DIR)
   --restart svc...      Restart given services after sync via dream-cli
 
@@ -3585,20 +3596,25 @@ EOF
     if [[ -z "$repo_dir" || ! -d "$repo_dir" ]]; then
         error "Repo directory not found. Set DREAM_REPO_DIR or pass --repo <path>."
     fi
+    if [[ ! -f "$sync_script" ]]; then
+        error "Sync script not found at: $sync_script"
+    fi
     if [[ ! -x "$sync_script" ]]; then
-        # Fall back to running with bash if not executable
-        if [[ ! -f "$sync_script" ]]; then
-            error "Sync script not found at: $sync_script"
-        fi
-        warn "sync script not executable, invoking via bash"
-        sync_script_cmd=(bash "$sync_script")
-    else
+        # Try to fix it silently; fall back to invoking via bash if not writable.
+        chmod +x "$sync_script" 2>/dev/null || true
+    fi
+    if [[ -x "$sync_script" ]]; then
         sync_script_cmd=("$sync_script")
+    else
+        sync_script_cmd=(bash "$sync_script")
     fi
 
     # Build args for the sync script
     local args=()
     [[ "$dry_run" == "true" ]] && args+=(--dry-run)
+    [[ "$prune" == "true" ]]   && args+=(--prune)
+    [[ "$pull" == "true" ]]    && args+=(--pull)
+    [[ "$verbose" == "true" ]] && args+=(--verbose)
     if [[ ${#restart_args[@]} -gt 0 ]]; then
         args+=(--restart "${restart_args[@]}")
     fi
