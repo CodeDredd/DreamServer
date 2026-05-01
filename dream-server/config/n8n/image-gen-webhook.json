@@ -1,33 +1,182 @@
 {
-  "name": "Image Generation on Webhook",
+  "name": "ComfyUI Image Generation (Webhook)",
   "nodes": [
     {
-      "parameters": {},
-      "id": "start",
-      "name": "Start",
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [240, 300]
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-image",
+        "responseMode": "responseNode",
+        "options": { "rawBody": false }
+      },
+      "id": "webhook",
+      "name": "Webhook /generate-image",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "generate-image"
     },
     {
       "parameters": {
-        "content": "## Image Generation on Webhook\n\nThis is a template workflow for accepting a prompt via webhook, optionally enhancing with LLM, submitting to ComfyUI, and returning an image URL.\n\nCustomize the nodes below to match your setup.",
-        "height": 200,
-        "width": 400
+        "jsCode": "// Build a SDXL Lightning ComfyUI workflow JSON from the request.\n// Input (JSON body): { prompt, negative?, width?, height?, steps?, seed?, model?, batch_size? }\n// Mirrors docker-compose.base.yml COMFYUI_WORKFLOW so Open WebUI and Agents share the same model.\nconst body = $input.first().json.body || $input.first().json;\nconst prompt = (body.prompt || '').toString();\nif (!prompt) { throw new Error('Missing required field: prompt'); }\n\nconst negative   = (body.negative || '').toString();\nconst width      = parseInt(body.width      ?? 1024, 10);\nconst height     = parseInt(body.height     ?? 1024, 10);\nconst steps      = parseInt(body.steps      ?? 4,    10);\nconst seed       = parseInt(body.seed       ?? Math.floor(Math.random() * 2 ** 31), 10);\nconst batch_size = parseInt(body.batch_size ?? 1,    10);\nconst model      = (body.model || 'sdxl_lightning_4step.safetensors').toString();\n\nconst workflow = {\n  \"3\": { \"inputs\": { seed, steps, cfg: 1.5, sampler_name: \"euler\", scheduler: \"sgm_uniform\", denoise: 1.0, model: [\"4\", 0], positive: [\"6\", 0], negative: [\"7\", 0], latent_image: [\"5\", 0] }, \"class_type\": \"KSampler\" },\n  \"4\": { \"inputs\": { ckpt_name: model }, \"class_type\": \"CheckpointLoaderSimple\" },\n  \"5\": { \"inputs\": { width, height, batch_size }, \"class_type\": \"EmptyLatentImage\" },\n  \"6\": { \"inputs\": { text: prompt,   clip: [\"4\", 1] }, \"class_type\": \"CLIPTextEncode\" },\n  \"7\": { \"inputs\": { text: negative, clip: [\"4\", 1] }, \"class_type\": \"CLIPTextEncode\" },\n  \"8\": { \"inputs\": { samples: [\"3\", 0], vae: [\"4\", 2] }, \"class_type\": \"VAEDecode\" },\n  \"9\": { \"inputs\": { filename_prefix: \"n8n-agent\", images: [\"8\", 0] }, \"class_type\": \"SaveImage\" }\n};\n\nreturn [{ json: { client_id: `n8n-${Date.now()}`, prompt: workflow, _params: { prompt, negative, width, height, steps, seed, model, batch_size } } }];"
       },
-      "id": "note",
-      "name": "Setup Instructions",
+      "id": "build-workflow",
+      "name": "Build ComfyUI Workflow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://comfyui:8188/prompt",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ client_id: $json.client_id, prompt: $json.prompt }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "submit",
+      "name": "POST /prompt → ComfyUI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": { "amount": 2, "unit": "seconds" },
+      "id": "initial-wait",
+      "name": "Initial Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [900, 300],
+      "webhookId": "image-gen-initial-wait"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://comfyui:8188/history/{{ $('POST /prompt → ComfyUI').first().json.prompt_id }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "poll-history",
+      "name": "GET /history/:id",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "ready",
+              "leftValue": "={{ Object.keys($json).length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "is-ready",
+      "name": "History has entry?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": { "amount": 2, "unit": "seconds" },
+      "id": "retry-wait",
+      "name": "Retry Wait 2s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1120, 500],
+      "webhookId": "image-gen-retry-wait"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract the first generated image from ComfyUI history response.\n// History format: { \"<prompt_id>\": { outputs: { \"9\": { images: [{ filename, subfolder, type }] } }, ... } }\nconst history = $input.first().json;\nconst entry   = Object.values(history)[0];\nif (!entry || !entry.outputs) { throw new Error('ComfyUI returned no outputs'); }\nconst outputs = entry.outputs;\nconst saveNode = Object.values(outputs).find(o => Array.isArray(o.images) && o.images.length);\nif (!saveNode) { throw new Error('No SaveImage output in ComfyUI history'); }\nconst img = saveNode.images[0];\nconst params = new URLSearchParams({ filename: img.filename, subfolder: img.subfolder || '', type: img.type || 'output' });\nconst url = `http://comfyui:8188/view?${params.toString()}`;\nreturn [{ json: { image_url: url, filename: img.filename, subfolder: img.subfolder, type: img.type } }];"
+      },
+      "id": "extract-image",
+      "name": "Extract Image URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.image_url }}",
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "id": "fetch-image",
+      "name": "Fetch Image Bytes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build OpenAI-Images-like response: { created, data: [{ b64_json, url }] }\nconst meta = $('Extract Image URL').first().json;\nconst bin  = $input.first().binary?.data;\nconst b64  = bin?.data ?? '';\nreturn [{ json: { created: Math.floor(Date.now() / 1000), data: [{ b64_json: b64, url: meta.image_url, filename: meta.filename }] } }];"
+      },
+      "id": "format-response",
+      "name": "Format OpenAI-like Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 200]
+    },
+    {
+      "parameters": {
+        "content": "## ComfyUI Image Generation\n\n**Endpoint:** `POST http://n8n:5678/webhook/generate-image`\n\n**Request body (JSON):**\n```json\n{\n  \"prompt\": \"a cat astronaut, cinematic\",\n  \"negative\": \"blurry, low quality\",\n  \"width\": 1024,\n  \"height\": 1024,\n  \"steps\": 4,\n  \"seed\": 42,\n  \"model\": \"sdxl_lightning_4step.safetensors\"\n}\n```\n\n**Response:** OpenAI-compatible `images.generations` shape:\n```json\n{ \"created\": 1730000000, \"data\": [{ \"b64_json\": \"...\", \"url\": \"http://comfyui:8188/view?...\" }] }\n```\n\nUses the same SDXL Lightning workflow as Open WebUI (docker-compose.base.yml).\nLatency: ~3-5s on Strix Halo (4 steps).",
+        "height": 380,
+        "width": 480
+      },
+      "id": "doc",
+      "name": "Documentation",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
-      "position": [440, 140]
+      "position": [240, 540]
     }
   ],
-  "connections": {},
+  "connections": {
+    "Webhook /generate-image": { "main": [[{ "node": "Build ComfyUI Workflow", "type": "main", "index": 0 }]] },
+    "Build ComfyUI Workflow":  { "main": [[{ "node": "POST /prompt → ComfyUI", "type": "main", "index": 0 }]] },
+    "POST /prompt → ComfyUI":  { "main": [[{ "node": "Initial Wait 2s",        "type": "main", "index": 0 }]] },
+    "Initial Wait 2s":         { "main": [[{ "node": "GET /history/:id",       "type": "main", "index": 0 }]] },
+    "GET /history/:id":        { "main": [[{ "node": "History has entry?",     "type": "main", "index": 0 }]] },
+    "History has entry?": {
+      "main": [
+        [{ "node": "Extract Image URL", "type": "main", "index": 0 }],
+        [{ "node": "Retry Wait 2s",     "type": "main", "index": 0 }]
+      ]
+    },
+    "Retry Wait 2s":           { "main": [[{ "node": "GET /history/:id",       "type": "main", "index": 0 }]] },
+    "Extract Image URL":       { "main": [[{ "node": "Fetch Image Bytes",      "type": "main", "index": 0 }]] },
+    "Fetch Image Bytes":       { "main": [[{ "node": "Format OpenAI-like Response", "type": "main", "index": 0 }]] },
+    "Format OpenAI-like Response": { "main": [[{ "node": "Respond OK",         "type": "main", "index": 0 }]] }
+  },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveExecutionProgress": false,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "executionTimeout": 120
   },
   "meta": {
-    "templateId": "image-gen-webhook"
+    "templateId": "image-gen-webhook",
+    "description": "Wraps ComfyUI's /prompt API as an OpenAI-Images-compatible webhook for OpenClaw agents and external tools."
   },
-  "tags": []
+  "tags": [{ "name": "image-generation" }, { "name": "comfyui" }, { "name": "agent-tool" }]
 }
+
+
