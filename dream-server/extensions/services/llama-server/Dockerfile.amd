@@ -20,7 +20,11 @@
 
 # ── Stage 1: Build llama.cpp with ROCm + rocWMMA + patches ──────────────────
 
+# Global ARGs MUST be declared before the first FROM to be usable in any
+# FROM line (see https://docs.docker.com/engine/reference/builder/#scope).
+# LEMONADE_REF is consumed by stage 2; ROCM_VERSION by stage 1.
 ARG ROCM_VERSION=7.2
+ARG LEMONADE_REF=v10.2.0
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete AS builder
 
 ARG AMDGPU_TARGET=gfx1151
@@ -82,7 +86,6 @@ RUN mkdir -p /opt/llama-dist && \
 
 # ── Stage 2: Lemonade runtime with custom binary ────────────────────────────
 
-ARG LEMONADE_REF=v10.2.0
 FROM ghcr.io/lemonade-sdk/lemonade-server:${LEMONADE_REF}
 
 # ROCm llama-server binary requires libatomic1 which is missing from the

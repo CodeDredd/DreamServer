@@ -226,47 +226,78 @@ update_lemonade() {
 }
 
 # ----------------------------- 0b1. Dockerfile parametrisieren ---------------
-# Älteres Dockerfile.amd hat die Lemonade-Version hartkodiert
-#   FROM ghcr.io/lemonade-sdk/lemonade-server:v10.2.0
-# → Build-Arg --build-arg LEMONADE_REF=... wirkt dann NICHT, weil kein ARG
-# definiert ist. Wir patchen die Datei einmalig auf:
-#   ARG LEMONADE_REF=v10.2.0
-#   FROM ghcr.io/lemonade-sdk/lemonade-server:${LEMONADE_REF}
-# Idempotent: wenn schon parametrisiert, NO-OP.
+# Wir wollen das Lemonade-Base-Image über --build-arg LEMONADE_REF=... steuern.
+# WICHTIG: In BuildKit muss ein ARG, der in einer FROM-Zeile referenziert wird,
+# VOR DER ALLERERSTEN FROM-Zeile stehen — sonst wird er beim FROM-Resolve nicht
+# expandiert (Resultat: `lemonade-server:` ohne Tag, "invalid reference format").
+# Ein vorheriger Patch hat den ARG fälschlich direkt vor das ZWEITE FROM
+# gesetzt → Build-Fehler. Diese Funktion macht beides:
+#   1. Falsch platzierten ARG (vor Stage-2-FROM) entfernen
+#   2. Globalen ARG vor das ERSTE FROM injecten
+#   3. Stage-2-FROM auf ${LEMONADE_REF} umstellen, falls noch hartkodiert
+# Idempotent: wenn schon korrekt, NO-OP.
 patch_dockerfile_lemonade_ref() {
   local df="$DREAM_DIR/extensions/services/llama-server/Dockerfile.amd"
   if [[ ! -f "$df" ]]; then
     warn "  Dockerfile nicht gefunden: $df – überspringe Patch"
     return 0
   fi
-  if grep -q 'FROM ghcr.io/lemonade-sdk/lemonade-server:\${LEMONADE_REF}' "$df"; then
-    log "  → Dockerfile.amd bereits parametrisch (LEMONADE_REF) – kein Patch nötig"
+
+  # Schon korrekt? (globaler ARG vor erstem FROM + parametrisches Stage-2-FROM)
+  if python3 - "$df" << 'PYCHECK'
+import re, sys, pathlib
+src = pathlib.Path(sys.argv[1]).read_text()
+froms = [m.start() for m in re.finditer(r'^FROM ', src, re.MULTILINE)]
+if len(froms) < 2:
+    sys.exit(1)
+header = src[:froms[0]]
+stage2 = src[froms[1]:froms[1]+200]
+ok_arg   = re.search(r'^ARG LEMONADE_REF=', header, re.MULTILINE) is not None
+ok_from2 = 'FROM ghcr.io/lemonade-sdk/lemonade-server:${LEMONADE_REF}' in stage2
+sys.exit(0 if (ok_arg and ok_from2) else 1)
+PYCHECK
+  then
+    log "  → Dockerfile.amd bereits korrekt parametrisiert (globaler ARG + Stage-2-FROM)"
     return 0
   fi
-  if ! grep -qE '^FROM ghcr\.io/lemonade-sdk/lemonade-server:v?[0-9]' "$df"; then
-    warn "  Dockerfile.amd hat unerwartete FROM-Zeile – Patch übersprungen."
-    warn "  LEMONADE_REF=$LEMONADE_REF wird IGNORIERT bis Patch manuell eingebaut ist."
-    return 0
-  fi
+
   backup "$df"
-  # ARG vor das FROM injecten + FROM-Tag durch Variable ersetzen.
-  # sed in-place, BSD/GNU-kompatibel via temp-Datei.
   python3 - "$df" << 'PYEOF'
 import re, sys, pathlib
 p = pathlib.Path(sys.argv[1])
 src = p.read_text()
-m = re.search(r'^FROM ghcr\.io/lemonade-sdk/lemonade-server:(\S+)\s*$',
-              src, re.MULTILINE)
-if not m:
-    sys.exit(0)
-old_tag = m.group(1)
-new_block = (
-    f'ARG LEMONADE_REF={old_tag}\n'
-    'FROM ghcr.io/lemonade-sdk/lemonade-server:${LEMONADE_REF}'
-)
-src = src[:m.start()] + new_block + src[m.end():]
-p.write_text(src)
-print(f'  ✓ Dockerfile.amd parametrisiert: LEMONADE_REF default = {old_tag}')
+
+# 1. Falsch platzierten ARG (irgendwo nach dem ersten FROM) entfernen.
+#    Wir entfernen alle 'ARG LEMONADE_REF=...'-Zeilen — gleich danach wird der
+#    EINE korrekte ARG vor dem ersten FROM eingefügt.
+src_new = re.sub(r'^ARG LEMONADE_REF=\S+\s*\n', '', src, flags=re.MULTILINE)
+
+# 2. Default-Tag aus alter FROM-Zeile extrahieren (falls noch hartkodiert),
+#    sonst v10.2.0 als sinnvoller Fallback. Dieser Default wird nur wirksam,
+#    wenn KEIN --build-arg LEMONADE_REF=... übergeben wird.
+m_old = re.search(
+    r'^FROM ghcr\.io/lemonade-sdk/lemonade-server:([^\s${}]+)\s*$',
+    src_new, re.MULTILINE)
+default_tag = m_old.group(1) if m_old else 'v10.2.0'
+
+# 3. Stage-2-FROM auf ${LEMONADE_REF} umstellen (falls noch hartkodiert).
+src_new = re.sub(
+    r'^FROM ghcr\.io/lemonade-sdk/lemonade-server:[^\s${}]+\s*$',
+    'FROM ghcr.io/lemonade-sdk/lemonade-server:${LEMONADE_REF}',
+    src_new, flags=re.MULTILINE)
+
+# 4. Globalen ARG vor dem ERSTEN FROM einfügen (BuildKit-Voraussetzung).
+m_first_from = re.search(r'^FROM ', src_new, re.MULTILINE)
+if not m_first_from:
+    sys.exit('Dockerfile hat keine FROM-Zeile - Patch abgebrochen.')
+
+insert_at = m_first_from.start()
+arg_block = f'ARG LEMONADE_REF={default_tag}\n'
+src_new = src_new[:insert_at] + arg_block + src_new[insert_at:]
+
+p.write_text(src_new)
+print(f'  ✓ Dockerfile.amd parametrisiert: globaler ARG LEMONADE_REF={default_tag} '
+      f'vor erstem FROM, Stage-2-FROM nutzt ${{LEMONADE_REF}}')
 PYEOF
 }
 
