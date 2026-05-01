@@ -25,7 +25,15 @@ services:
       - --llamacpp
       - rocm
       - --llamacpp-args
-      - "--metrics --host 0.0.0.0 -fa on -b 2048 -ub 256"
+      # --no-warmup: skip llama.cpp's empty-run warmup pass.
+      # On the custom ROCm build (fused Gated Delta Net + flash attention +
+      # quantized KV cache q8_0 that Lemonade injects by default) the warmup
+      # forward pass segfaults right after `common_init_from_params`,
+      # killing the server with exit code -1 before serving the first request.
+      # The first real request performs the equivalent allocation safely with
+      # actual tensor shapes. Do NOT remove unless the upstream warmup path
+      # for fused-GDN + q8_0 KV on ROCm is fixed.
+      - "--metrics --host 0.0.0.0 -fa on -b 2048 -ub 256 --no-warmup"
       - --extra-models-dir
       - /models
     expose:
