@@ -136,13 +136,20 @@ preflight() {
   # das diagnostische `rocminfo`-Tool (das liegt im rocm/dev:*-complete-Image).
   # Wir probieren daher mehrere Tools und werten aus, was tatsächlich da ist.
   if docker image inspect dream-lemonade-server:latest >/dev/null 2>&1; then
-    # Probe-Skript: erst Device-Visibility im Container, dann ROCm-Tools
-    # in Reihenfolge der Wahrscheinlichkeit. Exit 0 wenn GPU sichtbar UND
-    # mindestens ein ROCm-Pfad existiert.
+    # `--group-add render` schlägt fehl wenn die Host-Gruppe 'render' nicht
+    # existiert (z.B. bei manchen Distros oder WSL2). Wir bauen die Args
+    # dynamisch und lassen render weg, falls die Gruppe fehlt.
+    local -a docker_groups=()
+    getent group video  >/dev/null && docker_groups+=(--group-add video)
+    getent group render >/dev/null && docker_groups+=(--group-add render)
+    if [[ ${#docker_groups[@]} -eq 0 ]]; then
+      warn "  Weder 'video' noch 'render' Gruppe auf Host vorhanden – ROCm-Probe ohne Group-Add."
+    fi
+
     local probe_out
     probe_out="$(docker run --rm \
          --device=/dev/kfd --device=/dev/dri \
-         --group-add video --group-add render \
+         "${docker_groups[@]}" \
          --entrypoint /bin/bash \
          dream-lemonade-server:latest -c '
            set +e
@@ -808,7 +815,7 @@ with open(path, 'w') as fh:
     yaml.dump(c, fh, default_flow_style=False, sort_keys=False)
 print('  ✓ Compose gepatcht: ub=512, KV-Q8, FA, ngl=999, mlock, parallel=1,')
 print('    GGML_HIP_UMA=1, HSA_NO_SCRATCH_RECLAIM=1, gfx1151 nativ,')
-print('    Healthcheck validiert model_loaded != null')
+print('    Healthcheck: nur HTTP 200 (Modell-Load via Warmup in Phase 6B)')
 PYEOF
 }
 
@@ -1004,16 +1011,25 @@ restart_services() {
   "${compose_cmd[@]}" up -d --force-recreate --no-deps llama-server
 
   # Auf HTTP-200 vom Health-Endpoint warten (max 12 min).
+  # Wir prüfen IM CONTAINER (über docker exec), nicht über den Host-Port —
+  # so funktioniert der Check unabhängig vom Host-Port-Mapping (Lemonade
+  # mappt z.B. auf :11434, der Container selbst lauscht aber auf :8080).
   local i=0
   local healthy=0
   while (( i < 144 )); do
-    if curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null 2>&1; then
-      log "  ✓ llama-server antwortet auf /api/v1/health (nach ${i}*5s)"
+    if docker exec dream-llama-server \
+         curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null 2>&1; then
+      log "  ✓ llama-server antwortet auf /api/v1/health (nach $((i*5))s)"
       healthy=1
       break
     fi
-    sleep 5; ((i++))
-    (( i % 12 == 0 )) && log "    … warte (${i}/144 = $((i*5))s)"
+    sleep 5
+    # ACHTUNG: NICHT ((i++)) verwenden! Bei i=0 returned das 0 = exit 1
+    # → set -e killt das Skript silent. Stattdessen i=$((i+1)) oder ((++i)).
+    i=$((i+1))
+    if (( i % 12 == 0 )); then
+      log "    … warte ($((i*5))s vergangen, max 720s)"
+    fi
   done
   if [[ "$healthy" != "1" ]]; then
     warn "llama-server ist nach 12 min nicht erreichbar – Logs prüfen:"
@@ -1052,38 +1068,42 @@ warm_up_models() {
   # werden als `extra.<dirname>` exponiert (qwen3-4b liegt in einem Subdir).
   local default_model="${WARMUP_MODEL:-extra.qwen3-4b}"
 
-  # Verfügbare Modelle prüfen – falls unsere ID nicht gelistet ist, abbrechen
-  # mit Diagnose-Hilfe statt blind ins Leere zu feuern.
+  # Verfügbare Modelle prüfen IM CONTAINER (port-mapping-unabhängig).
   local models_json
-  models_json="$(curl -sf --max-time 10 http://127.0.0.1:8080/api/v1/models 2>/dev/null || true)"
+  models_json="$(docker exec dream-llama-server \
+                  curl -sf --max-time 10 http://127.0.0.1:8080/api/v1/models \
+                  2>/dev/null || true)"
   if [[ -z "$models_json" ]]; then
     warn "    /api/v1/models antwortet nicht – Warmup übersprungen."
     return 0
   fi
   if ! grep -q "$default_model" <<<"$models_json"; then
     warn "    Modell '$default_model' nicht in /v1/models gelistet."
-    warn "    Verfügbare Modelle (gekürzt):"
+    warn "    Verfügbare extra.*-Modelle:"
     echo "$models_json" | python3 -c '
 import sys, json
 try:
     d = json.load(sys.stdin)
-    for m in d.get("data", [])[:10]:
-        print(f"      - {m.get(\"id\")}")
+    for m in d.get("data", []):
+        mid = m.get("id", "")
+        if mid.startswith("extra."):
+            print(f"      - {mid}")
 except Exception as e:
     print(f"      (parse error: {e})")
 ' >&2
-    warn "    Setze WARMUP_MODEL=<id> im Skript falls die ID anders heißt."
+    warn "    Setze WARMUP_MODEL=<id> beim nächsten Lauf."
     return 0
   fi
 
   log "    feuere Mini-Inferenz an $default_model (kann 10–90 s dauern)…"
   local rc=0
-  curl -sf --max-time 180 -X POST http://127.0.0.1:8080/api/v1/chat/completions \
+  docker exec dream-llama-server \
+    curl -sf --max-time 180 -X POST http://127.0.0.1:8080/api/v1/chat/completions \
        -H 'Content-Type: application/json' \
        -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"hi"}],"max_tokens":4}' "$default_model")" \
        -o /tmp/dream-warmup.json || rc=$?
   if [[ "$rc" == "0" ]]; then
-    log "  ✓ Warmup OK – Antwort gespeichert in /tmp/dream-warmup.json"
+    log "  ✓ Warmup OK (Antwort im Container unter /tmp/dream-warmup.json)"
   else
     warn "  Warmup-Request fehlgeschlagen (rc=$rc) – Stack startet trotzdem,"
     warn "  erste echte Anfrage wird das Modell laden."
