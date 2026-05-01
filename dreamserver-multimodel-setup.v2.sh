@@ -824,17 +824,24 @@ write_litellm() {
   # LiteLLM-Routing-Namen (links) sind frei wählbar, aber die `model:`-Werte
   # MÜSSEN exakt auf die Lemonade-IDs zeigen, sonst → 404.
   cat > "$f" << 'EOF'
+# Lemonade exponiert mit `--extra-models-dir /models` JEDE GGUF unter /models
+# als `extra.<id>`. Aber: für UNTERVERZEICHNISSE nimmt es den Verzeichnisnamen
+# (z.B. /models/qwen3-4b/*.gguf → ID `extra.qwen3-4b`), für direkte Dateien
+# den Dateinamen (z.B. /models/foo.gguf → `extra.foo.gguf`).
+# → Subdir-IDs (qwen3-4b, qwen3-vl-30b, qwen3-embedding, qwen3-reranker)
+#   und File-IDs (Qwen3.6-35B-A3B-Q4_K_XL.gguf, qwen3-coder-next-Q4_K_M.gguf,
+#   Qwen3.5-122B-A10B-Q4_K_M-00001-of-00003.gguf) entsprechend mischen.
 model_list:
-  # ---------- Schnell / Tool-Routing ----------
+  # ---------- Schnell / Tool-Routing (Subdir-ID) ----------
   - model_name: fast
     litellm_params:
-      model: openai/extra.Qwen3-4B-Instruct-2507-Q6_K.gguf
+      model: openai/extra.qwen3-4b
       api_base: http://llama-server:8080/api/v1
       api_key: sk-lemonade
       max_tokens: 4096
     model_info: { tags: [fast] }
 
-  # ---------- Default Allrounder (Qwen3.6-35B-A3B) ----------
+  # ---------- Default Allrounder (File-ID, direkt unter /models) ----------
   - model_name: default
     litellm_params:
       model: openai/extra.Qwen3.6-35B-A3B-Q4_K_XL.gguf
@@ -843,16 +850,16 @@ model_list:
       max_tokens: 8192
     model_info: { tags: [default, chat, agent] }
 
-  # ---------- Vision (Multipart erste Datei → Lemonade lädt mmproj via models.ini) ----------
+  # ---------- Vision (Subdir-ID, mmproj wird automatisch aus dem Subdir geladen) ----------
   - model_name: vision
     litellm_params:
-      model: openai/extra.Qwen3VL-30B-A3B-Instruct-Q5_K_M.gguf
+      model: openai/extra.qwen3-vl-30b
       api_base: http://llama-server:8080/api/v1
       api_key: sk-lemonade
       max_tokens: 8192
     model_info: { tags: [vision], supports_vision: true }
 
-  # ---------- Code (Qwen3-Coder-Next) ----------
+  # ---------- Code (File-ID, direkt unter /models) ----------
   - model_name: code
     litellm_params:
       model: openai/extra.qwen3-coder-next-Q4_K_M.gguf
@@ -861,8 +868,8 @@ model_list:
       max_tokens: 8192
     model_info: { tags: [code] }
 
-  # ---------- Heavy Reasoning / OpenCLAW (Qwen3.5-122B-A10B, 3-part split) ----------
-  # Bei Multipart-GGUF nur die erste Datei referenzieren – llama.cpp findet die Splits.
+  # ---------- Heavy Reasoning / OpenCLAW (File-ID, 3-part split) ----------
+  # Bei Multipart-GGUF zeigen wir auf Part 1 — llama.cpp findet die anderen.
   - model_name: reasoning
     litellm_params:
       model: openai/extra.Qwen3.5-122B-A10B-Q4_K_M-00001-of-00003.gguf
@@ -871,18 +878,18 @@ model_list:
       max_tokens: 8192
     model_info: { tags: [reasoning, agent, openclaw] }
 
-  # ---------- Embedding ----------
+  # ---------- Embedding (Subdir-ID) ----------
   - model_name: embedding
     litellm_params:
-      model: openai/extra.Qwen3-Embedding-0.6B-Q8_0.gguf
+      model: openai/extra.qwen3-embedding
       api_base: http://llama-server:8080/api/v1
       api_key: sk-lemonade
     model_info: { mode: embedding }
 
-  # ---------- Reranker ----------
+  # ---------- Reranker (Subdir-ID) ----------
   - model_name: reranker
     litellm_params:
-      model: openai/extra.Qwen3-Reranker-0.6B-Q8_0.gguf
+      model: openai/extra.qwen3-reranker
       api_base: http://llama-server:8080/api/v1
       api_key: sk-lemonade
     model_info: { mode: rerank }
@@ -1041,8 +1048,9 @@ restart_services() {
 warm_up_models() {
   log "  → Phase B: Modell warm-laden (qwen3-4b)…"
 
-  # Modell-ID exakt wie Lemonade sie ausgibt (extra.<filename>).
-  local default_model="extra.Qwen3-4B-Instruct-2507-Q6_K.gguf"
+  # Modell-ID exakt wie Lemonade sie ausgibt. Verzeichnisse unter /models
+  # werden als `extra.<dirname>` exponiert (qwen3-4b liegt in einem Subdir).
+  local default_model="${WARMUP_MODEL:-extra.qwen3-4b}"
 
   # Verfügbare Modelle prüfen – falls unsere ID nicht gelistet ist, abbrechen
   # mit Diagnose-Hilfe statt blind ins Leere zu feuern.
