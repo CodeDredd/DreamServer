@@ -136,14 +136,17 @@ preflight() {
   # das diagnostische `rocminfo`-Tool (das liegt im rocm/dev:*-complete-Image).
   # Wir probieren daher mehrere Tools und werten aus, was tatsächlich da ist.
   if docker image inspect dream-lemonade-server:latest >/dev/null 2>&1; then
-    # `--group-add render` schlägt fehl wenn die Host-Gruppe 'render' nicht
-    # existiert (z.B. bei manchen Distros oder WSL2). Wir bauen die Args
-    # dynamisch und lassen render weg, falls die Gruppe fehlt.
+    # `--group-add render` schlägt fehl, wenn die Gruppe IM CONTAINER-IMAGE
+    # nicht existiert (Lemonade-Image hat sie nicht). Workaround: numerische
+    # GID vom HOST übergeben — Docker akzeptiert das ohne Image-Lookup.
     local -a docker_groups=()
-    getent group video  >/dev/null && docker_groups+=(--group-add video)
-    getent group render >/dev/null && docker_groups+=(--group-add render)
+    local gid_video gid_render
+    gid_video="$(getent group video  | cut -d: -f3 || true)"
+    gid_render="$(getent group render | cut -d: -f3 || true)"
+    [[ -n "$gid_video"  ]] && docker_groups+=(--group-add "$gid_video")
+    [[ -n "$gid_render" ]] && docker_groups+=(--group-add "$gid_render")
     if [[ ${#docker_groups[@]} -eq 0 ]]; then
-      warn "  Weder 'video' noch 'render' Gruppe auf Host vorhanden – ROCm-Probe ohne Group-Add."
+      warn "  Weder video- noch render-Gruppe auf Host vorhanden – ROCm-Probe ohne Group-Add."
     fi
 
     local probe_out
@@ -731,19 +734,26 @@ with open(path) as fh:
 svc = c.setdefault('services', {}).setdefault('llama-server', {})
 
 # --- 1. command: nur die --llamacpp-args ersetzen, Rest behalten -----------
-# Optimierte Args für Strix Halo (gfx1151, 128 GB UMA, 16 Cores):
+# Optimierte Args für Strix Halo (gfx1151, 128 GB UMA, 16 Cores).
+# WICHTIG: Lemonade 10.3+ hat eine RESERVED-ARGS-Liste und reicht VERBOTENE
+# Args nicht durch (Modell-Load schlägt mit HTTP 500 / "managed by Lemonade"
+# fehl). Folgendes NICHT mehr setzen — Lemonade managed sie selber:
+#   -ngl / --gpu-layers / --n-gpu-layers   (auto: alle Layer auf AMD-GPU)
+#   -c / --ctx-size                        (kommt aus models.ini bzw. Defaults)
+#   --mmproj / --mmproj-auto / --port      (Lemonade-Routing)
+#   --model / -m / --embedding / --rerank  (Lemonade-Routing)
+#
+# Erlaubt + sinnvoll für gfx1151:
 #   --metrics --host 0.0.0.0    Pflicht (Prometheus + Bind)
 #   -fa on                      FlashAttention-2 (rocWMMA gebaut)
 #   -b 2048 -ub 512             Batch/UBatch Sweet-Spot für RDNA3.5
 #   -ctk q8_0 -ctv q8_0         KV-Cache 8-bit → halbiert KV-RAM
-#   -ngl 999                    Alle Layer auf GPU
 #   --threads 16 --threads-batch 16   Matcht LLAMA_CPU_LIMIT=16
 #   --mlock                     Pinnt Modellgewichte (UMA: kein Pageout)
 #   --parallel 1 --cont-batching   Single-Slot: KV-Budget bleibt für 65k+ Ctx
-#                               (parallel=2 würde den 122B mit Multi-Slot OOM-en)
 NEW_LLAMACPP_ARGS = (
     '--metrics --host 0.0.0.0 -fa on -b 2048 -ub 512 '
-    '-ctk q8_0 -ctv q8_0 -ngl 999 --threads 16 --threads-batch 16 '
+    '-ctk q8_0 -ctv q8_0 --threads 16 --threads-batch 16 '
     '--mlock --parallel 1 --cont-batching'
 )
 cmd = svc.get('command') or []
@@ -1096,17 +1106,24 @@ except Exception as e:
   fi
 
   log "    feuere Mini-Inferenz an $default_model (kann 10–90 s dauern)…"
-  local rc=0
-  docker exec dream-llama-server \
-    curl -sf --max-time 180 -X POST http://127.0.0.1:8080/api/v1/chat/completions \
+  # HTTP-Status separat erfassen, damit wir bei rc!=0 wissen ob 4xx/5xx oder
+  # Connection-Error. -w '%{http_code}' schreibt den Status in die Body-Datei
+  # ans Ende — wir trennen das via tail.
+  local http_code rc=0
+  http_code="$(docker exec dream-llama-server \
+    curl -s --max-time 180 -X POST http://127.0.0.1:8080/api/v1/chat/completions \
        -H 'Content-Type: application/json' \
        -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"hi"}],"max_tokens":4}' "$default_model")" \
-       -o /tmp/dream-warmup.json || rc=$?
-  if [[ "$rc" == "0" ]]; then
-    log "  ✓ Warmup OK (Antwort im Container unter /tmp/dream-warmup.json)"
+       -o /tmp/dream-warmup.json -w '%{http_code}')" || rc=$?
+  if [[ "$rc" == "0" && "$http_code" == "200" ]]; then
+    log "  ✓ Warmup OK (HTTP 200)"
   else
-    warn "  Warmup-Request fehlgeschlagen (rc=$rc) – Stack startet trotzdem,"
-    warn "  erste echte Anfrage wird das Modell laden."
+    warn "  Warmup HTTP $http_code (curl rc=$rc) – Antwort/Fehler:"
+    docker exec dream-llama-server cat /tmp/dream-warmup.json 2>/dev/null \
+      | head -c 500 | sed 's/^/    /' >&2 || true
+    echo >&2
+    warn "  Stack startet trotzdem; erste echte Anfrage versucht erneut zu laden."
+    warn "  Diagnose: docker logs --tail 50 dream-llama-server"
   fi
 }
 
@@ -1120,13 +1137,17 @@ summary() {
 ==============================================================
 
 🧠 Modelle (Lemonade /api/v1, gerouted via LiteLLM auf :4000):
-   qwen3-4b              ~3.5 GB   load-on-startup  Tool-Routing
-   qwen3.6-35b-a3b       ~22 GB    load-on-startup  Default/Allrounder
+   qwen3-4b              ~3.5 GB   warm-loaded      Tool-Routing
+   Qwen3.6-35B-A3B       ~22 GB    on-demand        Default/Allrounder
    qwen3-vl-30b          ~22 GB    on-demand        Vision (mmproj)
    qwen3-coder-next      ~48 GB    on-demand        Code
-   qwen3.5-122b-a10b     ~77 GB    on-demand        Heavy / OpenCLAW
-   qwen3-embedding-0.6b  ~0.6 GB   load-on-startup  RAG-Embeddings
-   qwen3-reranker-0.6b   ~0.6 GB   on-demand        RAG-Rerank
+   Qwen3.5-122B-A10B     ~77 GB    on-demand        Heavy / OpenCLAW
+   qwen3-embedding       ~0.6 GB   on-demand        RAG-Embeddings
+   qwen3-reranker        ~0.6 GB   on-demand        RAG-Rerank
+
+   ⚠ Lemonade 10.3+ ignoriert "load-on-startup" in models.ini — Modelle laden
+     LAZY beim ersten API-Call (~10–90 s je nach Größe). Phase 6B wärmt nur
+     das 4B vor; alle anderen warten auf den ersten Request.
 
 🎙️ Multimodal-Routes (alle über LiteLLM :4000):
    stt   → Whisper  POST /v1/audio/transcriptions
@@ -1171,14 +1192,18 @@ summary() {
    • FlashAttention-2 (-fa on, rocWMMA-Build aus Dockerfile.amd)
    • KV-Cache Q8_0  (halbiert KV-RAM bei langem Kontext)
    • ubatch=512     (Strix-Halo Throughput-Sweetspot)
-   • -ngl 999       (alle Layer auf GPU – Lemonade default ist 0)
+   • -ngl WIRD NICHT GESETZT  (Lemonade 10.3+ managed das selber, manuell
+     setzen → HTTP 500 "managed by Lemonade and cannot be overridden")
    • --mlock        (verhindert Pageout der Modellgewichte auf 128 GB UMA)
    • --threads 16   (matcht LLAMA_CPU_LIMIT, dedup mit DEPLOY-Limit)
    • --parallel 1   (Single-Slot – verhindert OOM beim 122B mit 65k Ctx)
    • HSA_OVERRIDE_GFX_VERSION entfernt (gfx1151 nativ ab ROCm 7.x)
    • GGML_HIP_UMA=1 + HSA_NO_SCRATCH_RECLAIM=1 + GGML_CUDA_FORCE_MMQ=1
-   • Healthcheck validiert "model_loaded" != null (statt nur 200 OK)
-   • LiteLLM nutzt korrekte `extra.<filename>`-IDs für Lemonade
+   • Healthcheck: HTTP 200 von /api/v1/health (model_loaded != null wäre
+     mit Lemonade 10.3 unmöglich, weil Modelle lazy laden)
+   • LiteLLM-IDs angepasst: extra.<dirname> für Subdirs (qwen3-4b,
+     qwen3-vl-30b, qwen3-embedding, qwen3-reranker), extra.<filename>
+     für direkte Dateien (Qwen3.6-35B-..., Qwen3.5-122B-..., qwen3-coder-...)
    • DREAM_MODE=lemonade (Installer-konform; lemonade.yaml wird gemountet)
    • LLM_API_URL=http://litellm:4000 (Routing über LiteLLM, nicht direkt)
    • Latency-Routing + Fallback-Kette in LiteLLM
