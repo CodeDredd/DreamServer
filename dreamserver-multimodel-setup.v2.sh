@@ -317,11 +317,16 @@ PYEOF
 #   • qwen3-vl-30b/Qwen3VL-30B-A3B-Instruct-*.gguf        (~22 GB) Vision
 declare -a TIER1_MODELS=(
   # Default / Fast (~3.5 GB) – winzig, sehr schnell
-  "qwen3-4b/Qwen3-4B-Instruct-2507-Q6_K.gguf|https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q6_K.gguf"
-  # Embedding (~600 MB)
+  # ACHTUNG: Qwen/Qwen3-4B-Instruct-2507-GGUF ist GATED (HTTP 401 anonym).
+  # Wir nutzen unsloth-Mirror (öffentlich, identische Gewichte).
+  "qwen3-4b/Qwen3-4B-Instruct-2507-Q6_K.gguf|https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q6_K.gguf"
+  # Embedding (~600 MB) – Qwen-Repo öffentlich
   "qwen3-embedding/Qwen3-Embedding-0.6B-Q8_0.gguf|https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
   # Reranker (~600 MB)
-  "qwen3-reranker/Qwen3-Reranker-0.6B-Q8_0.gguf|https://huggingface.co/Qwen/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B-Q8_0.gguf"
+  # ACHTUNG: Qwen/Qwen3-Reranker-0.6B-GGUF ist GATED. Mungert-Mirror nutzen.
+  # WICHTIG: Mungert nutzt lowercase 'q8_0' im Source-Dateinamen — lokaler
+  # Ziel-Pfad bleibt aber Q8_0 (Lemonade ist Filename-case-sensitive).
+  "qwen3-reranker/Qwen3-Reranker-0.6B-Q8_0.gguf|https://huggingface.co/Mungert/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B-q8_0.gguf"
   # Vision Hauptmodell (~22 GB) – Q5_K_M von unsloth
   # Falls die URL 404 liefert: HuggingFace-Repo geändert. Alternativen prüfen:
   #   https://huggingface.co/unsloth/Qwen3-VL-30B-A3B-Instruct-GGUF
