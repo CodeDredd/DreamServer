@@ -3430,6 +3430,7 @@ ${CYAN}Commands:${NC}
   template [action]   Apply pre-built service templates (list|preview|apply)
   audit [extensions]  Audit extension manifests and compose contracts
   agent [action]      Manage dream host agent (status|start|stop|restart|logs)
+  sync-from-repo      Sync repo working copy into install dir (alias: sync)
   help                Show this help
 
 ${CYAN}Preset Commands:${NC}
@@ -3511,11 +3512,100 @@ ${CYAN}Examples:${NC}
   dream audit --json whisper      # Audit one service as JSON
   dream agent status              # Check host agent health
   dream agent restart             # Restart host agent
+  dream sync-from-repo --dry-run  # Preview repo→install sync
+  dream sync --restart n8n        # Sync repo and restart n8n
 
 ${CYAN}Environment:${NC}
   DREAM_HOME          Installation directory (default: ~/dream-server)
+  DREAM_REPO_DIR      Repo working copy for 'sync-from-repo' (auto-detected)
 
 EOF
+}
+
+#=============================================================================
+# Sync working copy of the repo into the install dir
+#=============================================================================
+cmd_sync() {
+    # Resolve repo dir:
+    #   1) explicit env DREAM_REPO_DIR
+    #   2) common locations
+    local repo_dir="${DREAM_REPO_DIR:-}"
+    if [[ -z "$repo_dir" ]]; then
+        for cand in \
+            "$HOME/DreamServer/dream-server" \
+            "$HOME/projects/DreamServer/dream-server" \
+            "$HOME/dev/DreamServer/dream-server"; do
+            [[ -d "$cand" ]] && { repo_dir="$cand"; break; }
+        done
+    fi
+
+    local sync_script="$repo_dir/scripts/sync-from-repo.sh"
+
+    # Parse flags
+    local dry_run="false"
+    local restart_args=()
+    local positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run|-n) dry_run="true"; shift ;;
+            --restart)
+                shift
+                while [[ $# -gt 0 && "$1" != --* ]]; do
+                    restart_args+=("$1"); shift
+                done
+                ;;
+            --repo)
+                shift
+                repo_dir="${1:?--repo requires a path}"
+                sync_script="$repo_dir/scripts/sync-from-repo.sh"
+                shift
+                ;;
+            -h|--help)
+                cat <<EOF
+Usage: dream sync-from-repo [--dry-run] [--repo <path>] [--restart svc1 svc2 ...]
+
+Syncs the repo working copy into the installed runtime ($INSTALL_DIR),
+preserving local state (.env, data/, logs/, models/, workspace/, images/).
+
+Options:
+  --dry-run, -n         Preview changes without writing
+  --repo <path>         Override repo location (default: auto-detect or \$DREAM_REPO_DIR)
+  --restart svc...      Restart given services after sync via dream-cli
+
+Environment:
+  DREAM_REPO_DIR        Repo working copy path (overrides auto-detect)
+  DREAM_HOME            Install dir (currently: $INSTALL_DIR)
+EOF
+                return 0
+                ;;
+            *) positional+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ -z "$repo_dir" || ! -d "$repo_dir" ]]; then
+        error "Repo directory not found. Set DREAM_REPO_DIR or pass --repo <path>."
+    fi
+    if [[ ! -x "$sync_script" ]]; then
+        # Fall back to running with bash if not executable
+        if [[ ! -f "$sync_script" ]]; then
+            error "Sync script not found at: $sync_script"
+        fi
+        warn "sync script not executable, invoking via bash"
+        sync_script_cmd=(bash "$sync_script")
+    else
+        sync_script_cmd=("$sync_script")
+    fi
+
+    # Build args for the sync script
+    local args=()
+    [[ "$dry_run" == "true" ]] && args+=(--dry-run)
+    if [[ ${#restart_args[@]} -gt 0 ]]; then
+        args+=(--restart "${restart_args[@]}")
+    fi
+
+    DREAM_REPO_DIR="$repo_dir" \
+    DREAM_INSTALL_DIR="$INSTALL_DIR" \
+        "${sync_script_cmd[@]}" "${args[@]}"
 }
 
 #=============================================================================
@@ -3550,6 +3640,7 @@ case "${1:-help}" in
     audit)        shift; cmd_audit "$@" ;;
     template|tmpl) shift; cmd_template "$@" ;;
     agent)        shift; cmd_agent "$@" ;;
+    sync-from-repo|sync) shift; cmd_sync "$@" ;;
     help|h|--help|-h) cmd_help ;;
     version|v|--version|-v) echo "dream-cli v${VERSION}" ;;
     *)           error "Unknown command: $1. Run 'dream help' for usage." ;;
