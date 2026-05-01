@@ -787,19 +787,19 @@ elif isinstance(env, dict):
         env.setdefault(k, v)
     svc['environment'] = env
 
-# --- 3. healthcheck: korrekte URL + model_loaded-Validierung ---------------
-# Lemonade liefert /api/v1/health auch dann mit 200 zurück, wenn KEIN Modell
-# geladen ist ("model_loaded": null). Ohne grep wäre der Container "healthy"
-# trotz nutzlosem Backend (siehe scripts/bootstrap-upgrade.sh:425).
+# --- 3. healthcheck: nur HTTP 200 verlangen ---------------------------------
+# Lemonade 10.3+ lädt Modelle LAZY beim ersten API-Call (models.ini mit
+# load-on-startup wird nicht zuverlässig geehrt). Ein Healthcheck der
+# "model_loaded != null" verlangt würde den Container ewig unhealthy halten,
+# obwohl der Server völlig OK ist. Wir prüfen daher nur HTTP 200.
+# Das tatsächliche Modell-Loaden triggert die warm_up_models()-Funktion
+# nach dem Compose-up.
 svc.setdefault('healthcheck', {}).update({
     'test': ['CMD-SHELL',
-             'curl -sf http://127.0.0.1:8080/api/v1/health '
-             "| grep -q '\"model_loaded\"' "
-             "&& ! curl -sf http://127.0.0.1:8080/api/v1/health "
-             "| grep -q '\"model_loaded\": *null'"],
+             'curl -sf http://127.0.0.1:8080/api/v1/health > /dev/null'],
     'interval':     '20s',
     'timeout':      '10s',
-    'retries':      15,
+    'retries':      6,
     # Erstbau des llama-server-Binaries kann bis zu 10 min dauern.
     'start_period': '600s',
 })
@@ -976,20 +976,49 @@ import_n8n_image_workflow() {
 }
 
 # ----------------------------- 6. Restart ------------------------------------
+# Zwei-Phasen-Start, damit LiteLLM (depends_on llama-server: condition: healthy)
+# nicht failt während llama-server noch hochfährt:
+#   Phase A: nur llama-server starten + auf HTTP 200 warten
+#   Phase B: ein Modell per API warm-loaden (Lemonade lädt sonst lazy → erster
+#            echter Request kostet 10-90 s)
+#   Phase C: alle anderen Services starten
 restart_services() {
   log "[6/7] Services neu starten…"
   cd "$DREAM_DIR"
 
-  # Compose-Aufruf für diese Maschine ermitteln (resolve-compose-stack
-  # falls vorhanden, sonst klassisch base+amd) – siehe build_compose_cmd.
   local -a compose_cmd
   build_compose_cmd compose_cmd
 
-  # Nur die Services starten, die im aufgelösten Compose tatsächlich existieren.
-  # Sonst würde "up whisper" failen, falls die Extension nicht aktiviert ist.
   local available
   available="$("${compose_cmd[@]}" config --services 2>/dev/null || true)"
-  local -a wanted=(llama-server litellm whisper tts comfyui n8n)
+
+  # ---- Phase A: nur llama-server hochziehen ---------------------------
+  log "  → Phase A: llama-server starten und auf Health warten…"
+  "${compose_cmd[@]}" up -d --force-recreate --no-deps llama-server
+
+  # Auf HTTP-200 vom Health-Endpoint warten (max 12 min).
+  local i=0
+  local healthy=0
+  while (( i < 144 )); do
+    if curl -sf http://127.0.0.1:8080/api/v1/health >/dev/null 2>&1; then
+      log "  ✓ llama-server antwortet auf /api/v1/health (nach ${i}*5s)"
+      healthy=1
+      break
+    fi
+    sleep 5; ((i++))
+    (( i % 12 == 0 )) && log "    … warte (${i}/144 = $((i*5))s)"
+  done
+  if [[ "$healthy" != "1" ]]; then
+    warn "llama-server ist nach 12 min nicht erreichbar – Logs prüfen:"
+    warn "  docker logs --tail 80 dream-llama-server"
+    die  "Abbruch"
+  fi
+
+  # ---- Phase B: Default-Modell warm-laden ---------------------------------
+  warm_up_models
+
+  # ---- Phase C: restliche Services starten ---------------------------------
+  local -a wanted=(litellm whisper tts comfyui n8n)
   local -a to_start=()
   for s in "${wanted[@]}"; do
     if grep -qx "$s" <<<"$available"; then
@@ -998,20 +1027,59 @@ restart_services() {
       warn "  Service '$s' nicht im Compose-Stack – übersprungen"
     fi
   done
-  log "  → up -d --force-recreate ${to_start[*]}"
+  log "  → Phase C: up -d --force-recreate ${to_start[*]}"
   "${compose_cmd[@]}" up -d --force-recreate "${to_start[@]}"
 
-  log "  ⏳ warte auf Healthcheck (max 10 min – Erstbau braucht Zeit)…"
-  local i=0
-  while (( i < 120 )); do
-    if docker compose ps --format json 2>/dev/null \
-       | grep -q '"Health":"healthy"'; then
-      log "  ✓ llama-server healthy"
-      break
-    fi
-    sleep 5; ((i++))
-  done
-  docker compose ps
+  log "  Status:"
+  "${compose_cmd[@]}" ps
+}
+
+# ----------------------------- 6a. Modell-Warmup -----------------------------
+# Lemonade 10.3+ lädt Modelle LAZY (models.ini load-on-startup wird ignoriert).
+# Wir feuern hier eine Mini-Inferenz an das schnellste Modell ab → der
+# Modell-Pfad ist dann gewarmt für den ersten echten Request.
+warm_up_models() {
+  log "  → Phase B: Modell warm-laden (qwen3-4b)…"
+
+  # Modell-ID exakt wie Lemonade sie ausgibt (extra.<filename>).
+  local default_model="extra.Qwen3-4B-Instruct-2507-Q6_K.gguf"
+
+  # Verfügbare Modelle prüfen – falls unsere ID nicht gelistet ist, abbrechen
+  # mit Diagnose-Hilfe statt blind ins Leere zu feuern.
+  local models_json
+  models_json="$(curl -sf --max-time 10 http://127.0.0.1:8080/api/v1/models 2>/dev/null || true)"
+  if [[ -z "$models_json" ]]; then
+    warn "    /api/v1/models antwortet nicht – Warmup übersprungen."
+    return 0
+  fi
+  if ! grep -q "$default_model" <<<"$models_json"; then
+    warn "    Modell '$default_model' nicht in /v1/models gelistet."
+    warn "    Verfügbare Modelle (gekürzt):"
+    echo "$models_json" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    for m in d.get("data", [])[:10]:
+        print(f"      - {m.get(\"id\")}")
+except Exception as e:
+    print(f"      (parse error: {e})")
+' >&2
+    warn "    Setze WARMUP_MODEL=<id> im Skript falls die ID anders heißt."
+    return 0
+  fi
+
+  log "    feuere Mini-Inferenz an $default_model (kann 10–90 s dauern)…"
+  local rc=0
+  curl -sf --max-time 180 -X POST http://127.0.0.1:8080/api/v1/chat/completions \
+       -H 'Content-Type: application/json' \
+       -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"hi"}],"max_tokens":4}' "$default_model")" \
+       -o /tmp/dream-warmup.json || rc=$?
+  if [[ "$rc" == "0" ]]; then
+    log "  ✓ Warmup OK – Antwort gespeichert in /tmp/dream-warmup.json"
+  else
+    warn "  Warmup-Request fehlgeschlagen (rc=$rc) – Stack startet trotzdem,"
+    warn "  erste echte Anfrage wird das Modell laden."
+  fi
 }
 
 # ----------------------------- 7. Summary ------------------------------------
