@@ -192,7 +192,10 @@ OUTPUT_BODY=$(echo "$OUTPUT" | sed '/^$/,$d')
 #   *deleting    file removed (only with --prune)
 #
 # Filter: hide pure-mtime noise unless --verbose was passed.
-NOISE_REGEX='^[>.][fd]\.\.t\.\.\.\.\.\.$'
+# rsync itemize lines look like:  ">f..t......  path/to/file"
+# (11-char code, then whitespace, then filename). Don't anchor with $ — match
+# the code followed by whitespace.
+NOISE_REGEX='^[>.][fd]\.\.t\.\.\.\.\.\.[[:space:]]'
 
 if [[ "$VERBOSE" -eq 1 ]]; then
     DISPLAY="$OUTPUT_BODY"
