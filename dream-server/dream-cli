@@ -3546,6 +3546,7 @@ cmd_sync() {
     local prune="false"
     local pull="false"
     local verbose="false"
+    local auto_restart="false"
     local restart_args=()
     local positional=()
     while [[ $# -gt 0 ]]; do
@@ -3554,6 +3555,7 @@ cmd_sync() {
             --prune|--delete) prune="true"; shift ;;
             --pull) pull="true"; shift ;;
             --verbose|-v) verbose="true"; shift ;;
+            --auto-restart) auto_restart="true"; shift ;;
             --restart)
                 shift
                 while [[ $# -gt 0 && "$1" != --* ]]; do
@@ -3569,7 +3571,8 @@ cmd_sync() {
             -h|--help)
                 cat <<EOF
 Usage: dream sync-from-repo [--dry-run] [--prune] [--pull] [--verbose]
-                            [--repo <path>] [--restart svc1 svc2 ...]
+                            [--auto-restart] [--repo <path>]
+                            [--restart svc1 svc2 ...]
 
 Syncs the repo working copy into the installed runtime ($INSTALL_DIR),
 preserving local state (.env, data/, logs/, models/, workspace/, images/,
@@ -3580,8 +3583,9 @@ Options:
   --prune, --delete     Mirror mode (deletes extra files in dest — careful!)
   --pull                Run 'git pull --ff-only' in the repo first
   --verbose, -v         Show every file rsync visits (not just changes)
+  --auto-restart        Auto-detect changed services and restart them
   --repo <path>         Override repo location (default: auto-detect or \$DREAM_REPO_DIR)
-  --restart svc...      Restart given services after sync via dream-cli
+  --restart svc...      Restart given services after sync (combinable with --auto-restart)
 
 Environment:
   DREAM_REPO_DIR        Repo working copy path (overrides auto-detect)
@@ -3611,10 +3615,11 @@ EOF
 
     # Build args for the sync script
     local args=()
-    [[ "$dry_run" == "true" ]] && args+=(--dry-run)
-    [[ "$prune" == "true" ]]   && args+=(--prune)
-    [[ "$pull" == "true" ]]    && args+=(--pull)
-    [[ "$verbose" == "true" ]] && args+=(--verbose)
+    [[ "$dry_run" == "true" ]]      && args+=(--dry-run)
+    [[ "$prune" == "true" ]]        && args+=(--prune)
+    [[ "$pull" == "true" ]]         && args+=(--pull)
+    [[ "$verbose" == "true" ]]      && args+=(--verbose)
+    [[ "$auto_restart" == "true" ]] && args+=(--auto-restart)
     if [[ ${#restart_args[@]} -gt 0 ]]; then
         args+=(--restart "${restart_args[@]}")
     fi
