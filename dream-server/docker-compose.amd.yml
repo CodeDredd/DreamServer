@@ -13,6 +13,16 @@ services:
       args:
         AMDGPU_TARGET: ${AMDGPU_TARGET:-gfx1151}
         LLAMA_CPP_REF: ${LLAMA_CPP_REF:-b8763}
+        # ROCM_VERSION: ROCm SDK-Tag des builder-Stage. Default 7.2.1 fixt
+        # GDN-Linear-Crash auf gfx1151 (ROCm/rocm-systems#4817 in 7.2.2).
+        # Ohne dieses Forward greift der Dockerfile-Default und die .env
+        # wird ignoriert.
+        ROCM_VERSION: ${ROCM_VERSION:-7.2.1}
+        # LEMONADE_REF: Tag des ghcr.io/lemonade-sdk/lemonade-server Base-Image
+        # in Stage 2. Default v10.2.0 (gleichlautend mit Upstream
+        # Light-Heart-Labs/DreamServer). Lemonade 10.3 brachte eine MoE-
+        # Routing-Regression auf ROCm/gfx1151 (siehe Repo-Header).
+        LEMONADE_REF: ${LEMONADE_REF:-v10.2.0}
     image: dream-lemonade-server:latest
     entrypoint: ["/opt/lemonade/lemonade-server"]
     command:

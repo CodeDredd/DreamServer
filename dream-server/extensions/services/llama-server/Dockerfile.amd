@@ -7,7 +7,12 @@
 # Build args (override via .env or docker compose build --build-arg):
 #   AMDGPU_TARGET  — GPU architecture (default: gfx1151 for Strix Halo)
 #   LLAMA_CPP_REF  — llama.cpp git ref to build (default: b8763)
-#   ROCM_VERSION   — ROCm SDK version for builder (default: 7.2)
+#   ROCM_VERSION   — ROCm SDK version for builder (default: 7.2.1).
+#                    7.2.2 enthält eine hipMemcpyAsync-Regression auf
+#                    gfx1151 (ROCm/rocm-systems#4817), die GDN/Linear-
+#                    Attention-Modelle (Qwen3-Next-Style) silent killt.
+#                    Verifiziert auf sky-net 2026-05-02. NICHT auf 7.2.2
+#                    bumpen ohne Re-Test mit qwen3-coder-next.
 #   LEMONADE_REF   — Lemonade base image tag (default: v10.2.0). Use 'latest'
 #                    to always pull the newest published image. Combine with
 #                    `docker compose build --pull --no-cache` to actually
@@ -23,7 +28,7 @@
 # Global ARGs MUST be declared before the first FROM to be usable in any
 # FROM line (see https://docs.docker.com/engine/reference/builder/#scope).
 # LEMONADE_REF is consumed by stage 2; ROCM_VERSION by stage 1.
-ARG ROCM_VERSION=7.2
+ARG ROCM_VERSION=7.2.1
 ARG LEMONADE_REF=v10.2.0
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete AS builder
 
