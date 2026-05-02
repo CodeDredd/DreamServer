@@ -3548,7 +3548,6 @@ cmd_sync() {
     local verbose="false"
     local auto_restart="false"
     local restart_args=()
-    local positional=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --dry-run|-n) dry_run="true"; shift ;;
@@ -3593,7 +3592,9 @@ Environment:
 EOF
                 return 0
                 ;;
-            *) positional+=("$1"); shift ;;
+            *)
+                error "Unknown sync option: $1 (try: dream sync --help)"
+                ;;
         esac
     done
 

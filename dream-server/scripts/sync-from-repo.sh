@@ -126,17 +126,20 @@ command -v rsync >/dev/null 2>&1 || {
   exit 1
 }
 
-# Optional git pull in the repo before sync
+# Optional git pull in the repo before sync.
+# The .git/ may be in SRC itself (monorepo dir == repo root) or one level up
+# (e.g. SRC=~/DreamServer/dream-server, .git lives in ~/DreamServer).
 if [[ "$PULL" -eq 1 ]]; then
-  if [[ -d "${SRC}.git" ]]; then
-    echo "→ git pull --ff-only in $SRC"
-    git -C "${SRC%/}" pull --ff-only || {
+  git_top=$(git -C "${SRC%/}" rev-parse --show-toplevel 2>/dev/null || true)
+  if [[ -n "$git_top" ]]; then
+    echo "→ git pull --ff-only in $git_top"
+    git -C "$git_top" pull --ff-only || {
       echo "ERROR: git pull failed" >&2
       exit 1
     }
     echo
   else
-    echo "WARN: --pull requested but $SRC is not a git repo (no .git/) — skipping" >&2
+    echo "WARN: --pull requested but $SRC is not inside a git repo — skipping" >&2
   fi
 fi
 
