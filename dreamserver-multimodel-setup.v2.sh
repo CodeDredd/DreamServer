@@ -48,6 +48,25 @@ TIER="${TIER:-1}"             # 1 = nur essentielle Modelle, 2 = +reasoning/code
 # llama.cpp für ROCm + fused GDN, oder einen Vulkan-Build mit korrekt
 # verlinkter libssl (aktuell: undefined symbol httplib::SSLServer).
 #
+# Erschöpfend getestete tote Workaround-Pfade (sky-net 2026-05-02, NICHT erneut
+# probieren — alle endeten im selben silent-Zombie-Crash bei qwen3-coder-next):
+#   - LLAMA_CPP_REF=b8763 (vermeintlich vor fused GDN — enthält Code aber bereits)
+#   - LLAMA_CPP_REF=b8994 (aktueller Pin)
+#   - ROCM_VERSION=7.2.1 statt 7.2.2 (Bug ist in beiden)
+#   - HSA_ENABLE_SDMA=0 (per llama.cpp #19908)
+#   - AMD_SERIALIZE_KERNEL=3 + AMD_SERIALIZE_COPY=3
+#   - GGML_CUDA_DISABLE_GRAPHS=1
+#   - --cache-ram 0 (Prompt-Cache aus, per llama.cpp #20176)
+#   - --ctx-checkpoints 0 (Checkpoints aus, per llama.cpp #20176)
+#   - -fa off (Flash Attention aus)
+#   - Lemonade Vulkan-Backend (Binary fehlt komplett im Image,
+#     Self-Build hat undefined symbol httplib::SSLServer)
+# Crash-Ort: direkt nach "slot update_slots: prompt processing done" oder
+# "progress = 0.71". Inner llama-server wird zum <defunct>-Zombie ohne Stack.
+# Root-Cause: llama.cpp #20176 + ROCm/rocm-systems #4817
+# (hipMemcpyAsync MAF im fused-GDN-Pfad, von ROCm-Maintainer @IMbackK
+# als ROCm-Runtime-Bug bestätigt).
+#
 # ACHTUNG: Der MMQ-Register-Patch im Dockerfile (sed auf mmq.cu) ist ebenfalls
 # gegen b8763 validiert. Bei einem zukünftigen Bump können die sed-Targets fehlschlagen → Build läuft
 # trotzdem durch, druckt aber "WARNING: MMQ patch did not apply". Nach dem
