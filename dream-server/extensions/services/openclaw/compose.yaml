@@ -1,6 +1,6 @@
 services:
   openclaw:
-    image: ghcr.io/openclaw/openclaw:2026.3.8
+    image: ghcr.io/openclaw/openclaw:2026.4.29
     container_name: dream-openclaw
     restart: unless-stopped
     security_opt:
@@ -40,7 +40,7 @@ services:
       searxng:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "if [ \"$$OPENCLAW_HTTP_API\" = 'true' ]; then wget -qO- http://127.0.0.1:18790/v1/models || exit 1; else wget -qO- http://127.0.0.1:18789/ || exit 1; fi"]
+      test: ["CMD-SHELL", "if [ \"$$OPENCLAW_HTTP_API\" = 'true' ]; then curl -fsS http://127.0.0.1:18790/v1/models >/dev/null || exit 1; else curl -fsS http://127.0.0.1:18789/ >/dev/null || exit 1; fi"]
       interval: 30s
       timeout: 10s
       retries: 3
