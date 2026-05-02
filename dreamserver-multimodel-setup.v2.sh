@@ -48,11 +48,16 @@ TIER="${TIER:-1}"             # 1 = nur essentielle Modelle, 2 = +reasoning/code
 # llama.cpp für ROCm + fused GDN, oder einen Vulkan-Build mit korrekt
 # verlinkter libssl (aktuell: undefined symbol httplib::SSLServer).
 #
-# Erschöpfend getestete tote Workaround-Pfade (sky-net 2026-05-02, NICHT erneut
-# probieren — alle endeten im selben silent-Zombie-Crash bei qwen3-coder-next):
-#   - LLAMA_CPP_REF=b8763 (vermeintlich vor fused GDN — enthält Code aber bereits)
+# TEILFIX gefunden (sky-net 2026-05-02): ROCM_VERSION=7.2.1 statt 7.2.2
+# behebt den GDN-Linear-Crash bei qwen3-coder-next (dichte GDN/Linear-Attn,
+# 80B-A3B). Empirisch verifiziert: 52 tok/s sauberer Antwort statt Zombie.
+#   → Root-Cause des GDN-Falls: ROCm 7.2.2-Regression im hipMemcpyAsync-Pfad
+#     (siehe ROCm/rocm-systems#4817), NICHT in llama.cpp.
+#
+# Erschöpfend getestete tote Workaround-Pfade (sky-net 2026-05-02, NICHT
+# erneut probieren — alle endeten im silent-Zombie-Crash):
+#   - LLAMA_CPP_REF=b8763 (vermeintlich vor fused GDN — enthält Code bereits)
 #   - LLAMA_CPP_REF=b8994 (aktueller Pin)
-#   - ROCM_VERSION=7.2.1 statt 7.2.2 (Bug ist in beiden)
 #   - HSA_ENABLE_SDMA=0 (per llama.cpp #19908)
 #   - AMD_SERIALIZE_KERNEL=3 + AMD_SERIALIZE_COPY=3
 #   - GGML_CUDA_DISABLE_GRAPHS=1
@@ -61,11 +66,15 @@ TIER="${TIER:-1}"             # 1 = nur essentielle Modelle, 2 = +reasoning/code
 #   - -fa off (Flash Attention aus)
 #   - Lemonade Vulkan-Backend (Binary fehlt komplett im Image,
 #     Self-Build hat undefined symbol httplib::SSLServer)
-# Crash-Ort: direkt nach "slot update_slots: prompt processing done" oder
-# "progress = 0.71". Inner llama-server wird zum <defunct>-Zombie ohne Stack.
-# Root-Cause: llama.cpp #20176 + ROCm/rocm-systems #4817
-# (hipMemcpyAsync MAF im fused-GDN-Pfad, von ROCm-Maintainer @IMbackK
-# als ROCm-Runtime-Bug bestätigt).
+#
+# OFFEN: extra.Qwen3.6-35B-A3B (MoE) und extra.qwen3-vl-30b (MoE+VL)
+# crashen mit ROCm 7.2.1 + b8994 + Lemonade 10.3 weiterhin am gleichen
+# Spot ("prompt processing done"). Vermutlich separate Regression in
+# Lemonade 10.3 vs 10.2 (Upstream Light-Heart-Labs/DreamServer pinnt
+# noch v10.2.0). Nächster Test: LEMONADE_REF=v10.2.0 downgrade.
+# Crash-Ort: direkt nach "slot update_slots: prompt processing done".
+# Inner llama-server wird zum <defunct>-Zombie ohne Stack.
+# Root-Cause-Tracker: llama.cpp #20176 + ROCm/rocm-systems #4817
 #
 # ACHTUNG: Der MMQ-Register-Patch im Dockerfile (sed auf mmq.cu) ist ebenfalls
 # gegen b8763 validiert. Bei einem zukünftigen Bump können die sed-Targets fehlschlagen → Build läuft
@@ -85,10 +94,13 @@ LEMONADE_REF="${LEMONADE_REF:-latest}"
 
 # ROCm SDK-Version für den llama.cpp-Build-Stage
 # (FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION}-complete in Dockerfile.amd).
-# Default: 7.2.2 (aktuelles Patchlevel, getestet 14.04.2026).
+# Default: 7.2.1 — fixt GDN-Linear-Crash (qwen3-coder-next) auf gfx1151.
+#   ROCm 7.2.2 enthält eine Regression im hipMemcpyAsync-Pfad
+#   (ROCm/rocm-systems#4817), die Qwen3-Next/MoE/VL-Modelle silent killt.
+#   Bestätigt am 2026-05-02 auf sky-net (Strix Halo).
 # Verfügbare Tags: https://hub.docker.com/r/rocm/dev-ubuntu-24.04/tags
 # Auf Strix Halo (gfx1151) ist 7.0+ Pflicht; ältere Versionen ignorieren.
-ROCM_VERSION="${ROCM_VERSION:-7.2.2}"
+ROCM_VERSION="${ROCM_VERSION:-7.2.1}"
 
 # Optionaler HuggingFace-Token (für gated repos / höheres Rate-Limit).
 # Wird in curl- UND wget-Requests als 'Authorization: Bearer ...' gesendet.
