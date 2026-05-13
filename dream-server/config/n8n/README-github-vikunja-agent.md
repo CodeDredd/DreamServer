@@ -24,8 +24,15 @@ cd ~/dream-server
 # GitHub fine-grained PAT (Issues: Read+Write on the relevant repos)
 echo "GITHUB_TOKEN=ghp_…" >> .env
 
-# Optional: which Vikunja project should new GitHub issues land in by default?
+# Default Vikunja project id used when a repo has no explicit mapping.
+# (Can also be set later from the dashboard UI.)
 echo "VIKUNJA_DEFAULT_PROJECT_ID=1" >> .env
+
+# Required so n8n can read the dashboard-managed repo→project map at runtime.
+# Use the SAME value as DASHBOARD_API_KEY in the dashboard .env.
+echo "DASHBOARD_API_KEY=$(grep ^DASHBOARD_API_KEY .env | cut -d= -f2-)" >> .env
+# Optional override; defaults to http://dashboard-api:3002 inside the compose net.
+# echo "DASHBOARD_API_URL=http://dashboard-api:3002" >> .env
 ```
 
 ### 2. Restart n8n + Open Claw so they pick up the new env
@@ -87,11 +94,24 @@ override hooks. Common tweaks:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `VIKUNJA_DEFAULT_PROJECT_ID` | `1` | Project where unmapped GitHub issues land |
+| `VIKUNJA_DEFAULT_PROJECT_ID` | `1` | Project where unmapped GitHub issues land (used as initial value of the dashboard map; UI takes over after first save) |
+| `DASHBOARD_API_URL` | `http://dashboard-api:3002` | Where n8n looks up the repo→project map |
+| `DASHBOARD_API_KEY` | _(must match dashboard)_ | Bearer token n8n uses to call `/api/repo-map/lookup` |
 | `AGENT_TRIGGER_LABEL` | `agent` | Vikunja label name that triggers dispatch |
 | `AGENT_MODEL` | `openclaw` | Model name passed to `/v1/chat/completions` |
 | `AGENT_BASE_URL` | `http://openclaw:18790` | OpenAI-compat endpoint |
 | `AGENT_SYSTEM_PROMPT` | (built-in coding-assistant prompt) | Override system prompt |
+
+### Repo → Project map (UI)
+
+Go to **Dashboard → Sidebar → Repo → Project Map** to manage which Vikunja
+project each GitHub repository's issues land in. The data is stored at
+`${DREAM_DATA_DIR}/config/repo-project-map.json` and read by the
+`GitHub Issue → Vikunja Task` workflow on every webhook via
+`GET /api/repo-map/lookup?repo=<owner/name>`.
+
+You can still override per-hook by appending `?project=<id>` to the GitHub
+webhook URL.
 
 ## Troubleshooting
 

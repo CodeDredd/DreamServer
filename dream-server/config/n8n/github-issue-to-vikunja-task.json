@@ -17,13 +17,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// Map a GitHub Issue payload to a Vikunja task creation request.\n//\n// Configure the repo→project map below. Keys are GitHub `full_name`\n// (org/repo). Values are Vikunja project IDs.\n//\n// You can also pass `?project=<id>` as a query string on the webhook URL\n// to override the mapping per-hook.\nconst REPO_TO_PROJECT = {\n  // 'CodeDredd/DreamServer': 1,\n  // 'CodeDredd/openclaw': 2,\n};\nconst DEFAULT_PROJECT_ID = parseInt($env.VIKUNJA_DEFAULT_PROJECT_ID || '1', 10);\n\nconst body = $input.first().json.body || $input.first().json;\nconst query = $input.first().json.query || {};\nconst issue = body.issue;\nconst action = body.action;\nif (!issue) { throw new Error('Payload has no `issue` — is this a GitHub issue webhook?'); }\nif (action !== 'opened' && action !== 'reopened') {\n  // Skip — only react to new/reopened issues. Other workflows handle close.\n  return [{ json: { skipped: true, action } }];\n}\n\nconst repo = (body.repository && body.repository.full_name) || '';\nconst projectId = parseInt(query.project || REPO_TO_PROJECT[repo] || DEFAULT_PROJECT_ID, 10);\n\nconst labels = (issue.labels || []).map(l => l.name).filter(Boolean);\nconst description = [\n  `**GitHub Issue:** ${issue.html_url}`,\n  '',\n  `**Repo:** ${repo}`,\n  `**Author:** @${(issue.user && issue.user.login) || 'unknown'}`,\n  labels.length ? `**Labels:** ${labels.map(l => `\\`${l}\\``).join(', ')}` : '',\n  '',\n  '---',\n  '',\n  issue.body || '_(no description)_',\n].filter(Boolean).join('\\n');\n\nreturn [{\n  json: {\n    project_id: projectId,\n    task: {\n      title: `[${repo.split('/').pop() || 'issue'}] ${issue.title}`,\n      description,\n    },\n    _meta: { issue_url: issue.html_url, issue_number: issue.number, repo },\n  },\n}];"
+        "jsCode": "// Pre-process GitHub Issue webhook payload.\n//\n// Repo→project mapping is NO LONGER hard-coded here. The dashboard owns it\n// (UI: Sidebar → Repo → Project Map). The next node calls\n// /api/repo-map/lookup against dashboard-api.\n//\n// You can still pass `?project=<id>` on the webhook URL to override per-hook.\nconst body = $input.first().json.body || $input.first().json;\nconst query = $input.first().json.query || {};\nconst issue = body.issue;\nconst action = body.action;\nif (!issue) { throw new Error('Payload has no `issue` — is this a GitHub issue webhook?'); }\nif (action !== 'opened' && action !== 'reopened') {\n  return [{ json: { skipped: true, action } }];\n}\n\nconst repo = (body.repository && body.repository.full_name) || '';\nif (!repo) { throw new Error('Payload has no repository.full_name'); }\n\nconst overrideProjectId = query.project ? parseInt(query.project, 10) : null;\n\nreturn [{\n  json: {\n    skipped: false,\n    action,\n    repo,\n    overrideProjectId,\n    issue,\n    _meta: { issue_url: issue.html_url, issue_number: issue.number, repo },\n  },\n}];"
       },
-      "id": "build-task",
-      "name": "Build Vikunja Task",
+      "id": "parse-payload",
+      "name": "Parse GitHub payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [440, 300]
     },
     {
       "parameters": {
@@ -44,7 +44,41 @@
       "name": "Should create task?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [680, 300]
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.DASHBOARD_API_URL || 'http://dashboard-api:3002' }}/api/repo-map/lookup",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "repo", "value": "={{ $json.repo }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.DASHBOARD_API_KEY }}" }
+          ]
+        },
+        "options": { "timeout": 10000 }
+      },
+      "id": "lookup-project",
+      "name": "Lookup repo → project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 220]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Vikunja task using the dashboard-resolved project_id\n// (or the per-hook override if present).\nconst lookup = $input.first().json;\nconst parsed = $('Parse GitHub payload').first().json;\nconst issue = parsed.issue;\nconst repo = parsed.repo;\nconst projectId = parsed.overrideProjectId || lookup.project_id;\nif (!projectId) { throw new Error(`No project_id resolved for repo '${repo}'`); }\n\nconst labels = (issue.labels || []).map(l => l.name).filter(Boolean);\nconst description = [\n  `**GitHub Issue:** ${issue.html_url}`,\n  '',\n  `**Repo:** ${repo}`,\n  `**Author:** @${(issue.user && issue.user.login) || 'unknown'}`,\n  labels.length ? `**Labels:** ${labels.map(l => `\\`${l}\\``).join(', ')}` : '',\n  '',\n  '---',\n  '',\n  issue.body || '_(no description)_',\n].filter(Boolean).join('\\n');\n\nreturn [{\n  json: {\n    project_id: projectId,\n    task: {\n      title: `[${repo.split('/').pop() || 'issue'}] ${issue.title}`,\n      description,\n    },\n    _meta: parsed._meta,\n    _mapping_source: lookup.source,\n  },\n}];"
+      },
+      "id": "build-task",
+      "name": "Build Vikunja Task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 220]
     },
     {
       "parameters": {
@@ -66,7 +100,7 @@
       "name": "Vikunja: PUT /tasks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 220]
+      "position": [1300, 220]
     },
     {
       "parameters": {
@@ -78,7 +112,7 @@
       "name": "Respond OK",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [1120, 220]
+      "position": [1520, 220]
     },
     {
       "parameters": {
@@ -90,13 +124,13 @@
       "name": "Respond Skipped",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [900, 420]
+      "position": [860, 420]
     },
     {
       "parameters": {
-        "content": "## GitHub Issue → Vikunja Task\n\n**Webhook URL:** `http://<host>:5678/webhook/github-vikunja-issue`\n\n**GitHub setup:**\n1. Repo → Settings → Webhooks → Add webhook\n2. Payload URL: the webhook URL above (LAN-reachable from GitHub if public, or use a tunnel)\n3. Content type: `application/json`\n4. Events: `Issues` only\n\n**Repo → Project mapping:** edit the `REPO_TO_PROJECT` object in the Code node.\n\n**Override per-hook:** add `?project=42` to the webhook URL.\n\n**Required env (passed into n8n container):**\n- `VIKUNJA_API_TOKEN` — Vikunja Bearer token (write scope on tasks/projects)\n- `VIKUNJA_DEFAULT_PROJECT_ID` — fallback project id (default: 1)\n\nReacts only to `opened`/`reopened`. Closing issues is handled by the\n`GitHub Issue Closed → Vikunja Done` workflow.",
-        "height": 420,
-        "width": 480
+        "content": "## GitHub Issue → Vikunja Task\n\n**Webhook URL:** `http://<host>:5678/webhook/github-vikunja-issue`\n\n### GitHub setup\n1. Repo → Settings → Webhooks → Add webhook\n2. Payload URL: the webhook URL above (LAN-reachable, or use a tunnel)\n3. Content type: `application/json`\n4. Events: `Issues` only\n\n### Repo → Project mapping\nManaged in the Dashboard under **Sidebar → Repo → Project Map**. The workflow\ncalls `GET /api/repo-map/lookup?repo=<full_name>` on every hook and uses the\nreturned `project_id`. Falls back to `default_project_id` from the same map.\n\nOverride per-hook with `?project=42` on the webhook URL.\n\n### Required env (passed into the n8n container)\n- `VIKUNJA_API_TOKEN` — Vikunja Bearer token (write scope on tasks/projects)\n- `DASHBOARD_API_KEY`  — same key the dashboard uses (Bearer auth on lookup)\n- `DASHBOARD_API_URL`  — optional, default `http://dashboard-api:3002`\n\nReacts only to `opened`/`reopened`. Closing issues is handled by\n`GitHub Issue Closed → Vikunja Done`.",
+        "height": 480,
+        "width": 520
       },
       "id": "doc",
       "name": "Documentation",
@@ -106,15 +140,17 @@
     }
   ],
   "connections": {
-    "Webhook /github-vikunja-issue": { "main": [[{ "node": "Build Vikunja Task", "type": "main", "index": 0 }]] },
-    "Build Vikunja Task":            { "main": [[{ "node": "Should create task?", "type": "main", "index": 0 }]] },
+    "Webhook /github-vikunja-issue": { "main": [[{ "node": "Parse GitHub payload", "type": "main", "index": 0 }]] },
+    "Parse GitHub payload":          { "main": [[{ "node": "Should create task?", "type": "main", "index": 0 }]] },
     "Should create task?": {
       "main": [
-        [{ "node": "Vikunja: PUT /tasks", "type": "main", "index": 0 }],
-        [{ "node": "Respond Skipped",     "type": "main", "index": 0 }]
+        [{ "node": "Lookup repo → project", "type": "main", "index": 0 }],
+        [{ "node": "Respond Skipped",       "type": "main", "index": 0 }]
       ]
     },
-    "Vikunja: PUT /tasks": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+    "Lookup repo → project": { "main": [[{ "node": "Build Vikunja Task", "type": "main", "index": 0 }]] },
+    "Build Vikunja Task":    { "main": [[{ "node": "Vikunja: PUT /tasks", "type": "main", "index": 0 }]] },
+    "Vikunja: PUT /tasks":   { "main": [[{ "node": "Respond OK",          "type": "main", "index": 0 }]] }
   },
   "settings": {
     "executionOrder": "v1",
@@ -123,8 +159,7 @@
   },
   "meta": {
     "templateId": "github-issue-to-vikunja-task",
-    "description": "Receives GitHub Issue webhooks and creates corresponding tasks in Vikunja. Repo→Project mapping is configurable inside the Code node."
+    "description": "Receives GitHub Issue webhooks and creates Vikunja tasks. Repo→Project mapping is owned by the dashboard (Sidebar → Repo → Project Map) and looked up via dashboard-api at runtime."
   },
   "tags": [{ "name": "github" }, { "name": "vikunja" }, { "name": "sync" }]
 }
-

@@ -911,6 +911,7 @@ app.include_router(voice.router)
 app.include_router(models_router.router)
 app.include_router(templates.router)
 app.include_router(projects.router)
+app.include_router(repo_map.router)
 
 
 # ================================================================

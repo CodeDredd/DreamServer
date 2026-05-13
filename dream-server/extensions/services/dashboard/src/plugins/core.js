@@ -72,6 +72,23 @@ export const coreRoutes = [
     order: 4,
   },
   {
+    id: 'repo-map',
+    path: '/repo-map',
+    label: 'Repo → Project Map',
+    icon: GitBranch,
+    component: RepoProjectMap,
+    getProps: () => ({}),
+    // Only show in sidebar when both Vikunja and n8n are present —
+    // the map is useless without both.
+    sidebar: ({ status }) => {
+      const services = status?.services || []
+      const has = (needle) =>
+        services.some((s) => (s.name || '').toLowerCase().includes(needle))
+      return has('vikunja') && has('n8n')
+    },
+    order: 5,
+  },
+  {
     id: 'settings',
     path: '/settings',
     label: 'Settings',
