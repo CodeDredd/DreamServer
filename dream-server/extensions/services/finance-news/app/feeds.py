@@ -39,14 +39,16 @@ USER_AGENT = "DreamServer-FinanceNews/0.1 (+local)"
 DEFAULT_FEEDS: list[tuple[str, str]] = [
     # (channel, url)
     ("yahoo-finance",   "https://finance.yahoo.com/news/rssindex"),
-    # Reuters Agency moved to a paywalled feed in 2025; the open
-    # business news feed lives on the consumer site instead.
-    ("reuters-business", "https://www.reuters.com/world/business/rss"),
+    # Reuters: removed in 2026-05. Both reutersagency.com (404) and
+    # the consumer reuters.com/world/business/rss (401) are now gated.
+    # Add your own paid Reuters key via FINANCE_NEWS_FEEDS env if you
+    # need it.
     ("handelsblatt",    "https://www.handelsblatt.com/contentexport/feed/finanzen"),
     ("cnbc-top",        "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
     ("marketwatch-top", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
     ("seekingalpha",    "https://seekingalpha.com/market_currents.xml"),
     ("coindesk",        "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("ft-companies",    "https://www.ft.com/companies?format=rss"),
 ]
 
 

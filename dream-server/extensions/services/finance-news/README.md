@@ -83,12 +83,17 @@ failures are logged and tolerated):
 | Channel            | URL                                                                              |
 |--------------------|----------------------------------------------------------------------------------|
 | `yahoo-finance`    | `https://finance.yahoo.com/news/rssindex`                                        |
-| `reuters-business` | `https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best`|
 | `handelsblatt`     | `https://www.handelsblatt.com/contentexport/feed/finanzen`                       |
 | `cnbc-top`         | `https://www.cnbc.com/id/100003114/device/rss/rss.html`                          |
 | `marketwatch-top`  | `https://feeds.content.dowjones.io/public/rss/mw_topstories`                     |
 | `seekingalpha`     | `https://seekingalpha.com/market_currents.xml`                                   |
 | `coindesk`         | `https://www.coindesk.com/arc/outboundfeeds/rss/`                                |
+| `ft-companies`     | `https://www.ft.com/companies?format=rss`                                        |
+
+> **Note on Reuters:** removed from the defaults in 2026-05. Both
+> `reutersagency.com/feed/...` (404) and `reuters.com/world/business/rss`
+> (401) are now gated. If you have a Reuters paid feed URL, add it via
+> `FINANCE_NEWS_FEEDS=...,https://your-reuters-feed.xml`.
 
 To replace, set
 `FINANCE_NEWS_FEEDS="https://example.com/a.xml,https://example.com/b.rss"`.
