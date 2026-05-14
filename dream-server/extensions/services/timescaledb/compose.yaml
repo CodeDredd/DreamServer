@@ -1,0 +1,65 @@
+services:
+  timescaledb:
+    # ------------------------------------------------------------------
+    # TimescaleDB — time-series store for finance prices, news/social
+    # event timelines, and (later) trade/PnL ledgers for the
+    # finance-guru-api strategy engine.
+    #
+    # How to bump the pin
+    # -------------------
+    # 1. Check upstream:
+    #    https://hub.docker.com/r/timescale/timescaledb/tags
+    #    Stick to the LTS Postgres line (currently pg16). Releases that
+    #    cross a major Postgres line require pg_upgrade — coordinate.
+    # 2. Update BOTH:
+    #      extensions/services/timescaledb/compose.yaml  (image: line)
+    #      installers/phases/08-images.sh                (PULL_LIST entry)
+    # 3. Snapshot the data dir before bumping minor versions:
+    #      tar czf ~/timescaledb-$(date +%F).tgz -C ~/dream-server data/timescaledb
+    # 4. `dream sync --pull --auto-restart` rolls it out.
+    # ------------------------------------------------------------------
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: dream-timescaledb
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: ${TIMESCALEDB_USER:-finance}
+      POSTGRES_PASSWORD: ${TIMESCALEDB_PASSWORD:?TIMESCALEDB_PASSWORD is required (set in .env)}
+      POSTGRES_DB: ${TIMESCALEDB_DB:-finance}
+      # Telemetry off — we run fully local.
+      TS_TUNE_MEMORY: ${TIMESCALEDB_TUNE_MEMORY:-1GB}
+      TS_TUNE_NUM_CPUS: ${TIMESCALEDB_TUNE_CPUS:-2}
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      - ./data/timescaledb:/var/lib/postgresql/data
+      # Init scripts run only when the data dir is empty (first boot).
+      # Schema migrations after that are the responsibility of the
+      # finance-prices / finance-guru-api services (idempotent CREATE
+      # statements at startup — see app/db.py in finance-prices).
+      - ./extensions/services/timescaledb/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Bound to BIND_ADDRESS (defaults to 127.0.0.1) so the DB is not
+      # reachable from the LAN. Internal services use docker DNS
+      # ("timescaledb:5432") and don't need this mapping.
+      - "${BIND_ADDRESS:-127.0.0.1}:${TIMESCALEDB_PORT:-5434}:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALEDB_USER:-finance} -d ${TIMESCALEDB_DB:-finance}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

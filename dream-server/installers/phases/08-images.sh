@@ -56,6 +56,9 @@ fi
 [[ "$ENABLE_OPENCLAW" == "true" ]] && PULL_LIST+=("ghcr.io/openclaw/openclaw:2026.3.8|OPENCLAW — agent framework")
 [[ "${ENABLE_EMBEDDINGS:-${ENABLE_RAG:-false}}" == "true" ]] && PULL_LIST+=("ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.3|TEI — embedding engine")
 [[ "${ENABLE_DREAMFORGE:-}" == "true" ]] && PULL_LIST+=("ghcr.io/light-heart-labs/dreamforge:v0.1.0|DREAMFORGE — agent system")
+# TimescaleDB powers the finance-prices / finance-news / finance-guru pipeline.
+# Mirror this pin in extensions/services/timescaledb/compose.yaml (image: line).
+[[ "${ENABLE_TIMESCALEDB:-${ENABLE_FINANCE_PRICES:-false}}" == "true" ]] && PULL_LIST+=("timescale/timescaledb:2.17.2-pg16|TIMESCALEDB — finance time-series store")
 
 if $DRY_RUN; then
     ai "[DRY RUN] I would download ${#PULL_LIST[@]} modules."

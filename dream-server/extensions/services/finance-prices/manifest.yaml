@@ -1,0 +1,22 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: finance-prices
+  name: Finance Intraday Price Fetcher
+  aliases: [finance-ticker]
+  container_name: dream-finance-prices
+  host_env: FINANCE_PRICES_HOST
+  default_host: finance-prices
+  port: 8096
+  external_port_env: FINANCE_PRICES_PORT
+  external_port_default: 8096
+  health: /health
+  type: docker
+  gpu_backends: [all]
+  compose_file: compose.yaml
+  category: optional
+  depends_on: [timescaledb, finance-vector]
+

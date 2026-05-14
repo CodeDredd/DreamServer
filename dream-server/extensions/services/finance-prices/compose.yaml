@@ -1,0 +1,74 @@
+services:
+  finance-prices:
+    build:
+      context: ./extensions/services/finance-prices
+      dockerfile: Dockerfile
+    image: dream-server/finance-prices:0.1.0
+    container_name: dream-finance-prices
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - FINANCE_PRICES_PORT=8096
+      # Connection to TimescaleDB (internal docker DNS).
+      - TIMESCALEDB_HOST=${TIMESCALEDB_HOST:-timescaledb}
+      - TIMESCALEDB_PORT_INTERNAL=5432
+      - TIMESCALEDB_USER=${TIMESCALEDB_USER:-finance}
+      - TIMESCALEDB_PASSWORD=${TIMESCALEDB_PASSWORD:?TIMESCALEDB_PASSWORD is required (set in .env)}
+      - TIMESCALEDB_DB=${TIMESCALEDB_DB:-finance}
+      # Universe source: which symbols to fetch. The Qdrant
+      # finance_assets collection (populated by finance-vector) is the
+      # source of truth for "what's worth tracking".
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - FINANCE_COLLECTION=${FINANCE_COLLECTION:-finance_assets}
+      # How many of the top-by-marketcap to actually fetch intraday.
+      # Default lower than finance-vector's 250 each to stay polite to
+      # yfinance/CoinGecko at high cadence.
+      - FINANCE_PRICES_TOP_STOCKS=${FINANCE_PRICES_TOP_STOCKS:-100}
+      - FINANCE_PRICES_TOP_CRYPTO=${FINANCE_PRICES_TOP_CRYPTO:-100}
+      # Intraday cadence (cron, 5-field). Defaults are the
+      # cadences sized in AGENT-OPERATIONS.md §11:
+      #   stocks  every 15 min, Mon–Fri only (Mo=1 in cron)
+      #   crypto  every  5 min, all day every day
+      - FINANCE_PRICES_STOCKS_CRON=${FINANCE_PRICES_STOCKS_CRON:-*/15 * * * 1-5}
+      - FINANCE_PRICES_CRYPTO_CRON=${FINANCE_PRICES_CRYPTO_CRON:-*/5 * * * *}
+      - FINANCE_PRICES_TZ=${TIMEZONE:-UTC}
+      # auto = run once on boot if hypertable empty; always | never also valid
+      - FINANCE_PRICES_RUN_ON_START=${FINANCE_PRICES_RUN_ON_START:-auto}
+      # If set, /refresh requires Authorization: Bearer <token>
+      - FINANCE_PRICES_TOKEN=${FINANCE_PRICES_TOKEN:-}
+      - COINGECKO_API_KEY=${COINGECKO_API_KEY:-}
+      # Honour US market hours for the stocks job (skip the cron tick
+      # if exchange is closed); set to "false" to fetch around the
+      # clock (useful for ETFs / OTC).
+      - FINANCE_PRICES_RESPECT_MARKET_HOURS=${FINANCE_PRICES_RESPECT_MARKET_HOURS:-true}
+    volumes:
+      - ./data/finance-prices:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FINANCE_PRICES_PORT:-8096}:8096"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8096/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

@@ -189,8 +189,8 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
   node needs via `$env.NAME` must be exposed in
   `extensions/services/n8n/compose.yaml` under `environment:`.
   Currently exposed: `VIKUNJA_API_TOKEN`, `OPENCLAW_TOKEN`,
-  `GITHUB_TOKEN`, `AGENT_*`, `FINANCE_VECTOR_TOKEN`, `N8N_*`,
-  `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
+  `GITHUB_TOKEN`, `AGENT_*`, `FINANCE_VECTOR_TOKEN`,
+  `FINANCE_PRICES_TOKEN`, `N8N_*`, `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
 
 * **searxng config dir has GID conflicts with rsync.** rsync emits a
   benign `chgrp … failed: Operation not permitted` for
@@ -226,7 +226,133 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
 * `dream-server/extensions/services/<sid>/README.md` — per-service
   details (most have one; finance-vector definitely does).
 
-## 10. Quick-paste prompt for new sessions
+## 10. LiteLLM-routed models (Lemonade `/api/v1` → `:4000`)
+
+| Alias                 | Size    | Load mode    | Intended role                                      |
+|-----------------------|---------|--------------|----------------------------------------------------|
+| `qwen3-4b`            | ~3.5 GB | warm-loaded  | Tool-routing, classification, fast pre-filter      |
+| `Qwen3.6-35B-A3B`     | ~22 GB  | on-demand    | Default all-rounder / agent (text only!)           |
+| `qwen3-vl-30b`        | ~22 GB  | on-demand    | Vision (mmproj) — ONLY model that reads images     |
+| `qwen3-coder-next`    | ~48 GB  | on-demand    | Code generation / refactor                         |
+| `Qwen3.5-122B-A10B`   | ~77 GB  | on-demand    | Heavy reasoning, weekly retrospectives             |
+
+> Fact-check: `Qwen3.6-35B-A3B` Instruct is **text-only**. Web claims to the
+> contrary are wrong. For images use `qwen3-vl-30b` (mmproj loaded).
+
+Pick the smallest model that fits the task. Never call the 122B on every
+event-loop tick — use it for batched / scheduled reasoning only (cost &
+latency).
+
+## 11. Finance pipeline — strategy engine roadmap
+
+The user wants: **dependencies between prices and news/social → AI-driven
+strategies → paper trade with €1000 reference, target ~10 %/week.**
+
+### Decision: dashboard-integrated, not standalone
+
+Implement as a **headless backend service** (`finance-guru-api`) +
+**dashboard tab** in the existing UI. Reasons:
+
+- `dashboard` and `dashboard-api` already exist → reuse the pattern.
+- Strategies must run 24/7 (even with the dashboard closed) → headless
+  daemon is required either way; a standalone GUI app on top would
+  duplicate state.
+- One source of truth (Qdrant + TimescaleDB), dashboard is just a view.
+- LiteLLM routing, dream-network auth, n8n triggers are already wired —
+  no new auth surface.
+
+### Service layer (extend the README roadmap of `finance-vector`)
+
+```
+                                                          ┌──> dashboard tab
+finance-vector  (this service, daily)  ──┐                │     "Finance Guru"
+finance-prices  (NEW, 5–15 min, OHLCV) ──┼──> TimescaleDB │
+finance-news    (NEW, 10 min, RSS+SearX)─┼──> Qdrant      │
+finance-social  (NEW, 15 min, Reddit)   ─┘     finance_news
+                                          ↘                ↑
+                                           finance-guru-api ┘
+                                           (FastAPI, strategies,
+                                            paper-trade ledger,
+                                            LiteLLM client)
+```
+
+| New service        | Stack                  | Writes to                  | Notes                                                                 |
+|--------------------|------------------------|----------------------------|-----------------------------------------------------------------------|
+| `finance-prices`   | Python + APScheduler   | TimescaleDB hypertable     | OHLCV via yfinance batched + CoinGecko `/coins/markets`. NO embedding. |
+| `finance-news`     | Python + feedparser    | Qdrant `finance_news`      | RSS (Yahoo, Reuters, Handelsblatt) + SearXNG fallback. TEI embeds.    |
+| `finance-social`   | Python + PRAW          | Qdrant `finance_social`    | Reddit free tier first; Mastodon/Bluesky later. X/Twitter is paid → out. |
+| `timescaledb`      | `timescale/timescaledb`| (own volume)               | Postgres-compatible → n8n + dashboard-api use existing Postgres node. |
+| `finance-guru-api` | FastAPI + APScheduler  | own SQLite ledger          | Strategy plugins, paper trading, LiteLLM calls.                       |
+
+Why TimescaleDB and not "just Qdrant": the finance-vector README already
+warns that vectors are the wrong tool for *"price moved X % within Y min
+of news Z"*. Time-series joins need a real time-series store.
+
+### Refresh cadence (all free-tier compatible)
+
+| Source                    | Cadence                          | Free-tier headroom                                     |
+|---------------------------|----------------------------------|--------------------------------------------------------|
+| Stammdaten (`finance-vector`) | **1×/day**, unchanged        | re-embedding 500 docs is the cost driver, daily is fine |
+| Prices stocks             | **15 min** during market hours   | yfinance batched (50 syms/req); ~7 calls/quarter-hour  |
+| Prices crypto             | **5 min**                        | CoinGecko Demo = 30 req/min, top-250 = 1 paginated call |
+| News (RSS)                | **10 min**                       | RSS has no real limit                                  |
+| Social (Reddit)           | **15 min**                       | Reddit free OAuth = 100 QPM authenticated              |
+
+Hourly was the original question — for **strategy reaction** 15 min on
+prices is the sweet spot (free, gives ~26 ticks/day per symbol, enough
+for intraday signals without burning CPU/embeddings). Going below 5 min
+needs paid market data; not worth it for a paper-trade prototype.
+
+### Strategy engine (`finance-guru-api`)
+
+- **Plugin layout**: `app/strategies/<name>.py`, each exports
+  `signal(state, prices_df, news_df) -> {action, qty, confidence, risk}`.
+- **Initial strategies**:
+  - `momentum_breakout`  — 20-day high + volume spike
+  - `mean_reversion`     — Bollinger ±2σ
+  - `news_sentiment`     — Qwen-classified headline polarity → entry
+  - `event_driven`       — earnings + post-earnings drift
+  - `pairs_correlation`  — co-moved pairs from finance-vector clusters
+- **Paper ledger**: SQLite, one ledger per strategy, seeded with
+  €1 000.00 each; every trade records entry, exit, PnL, reason text from
+  the LLM (for the dashboard "why did it buy?" panel).
+- **Backtest first, then live paper**: REST endpoint `POST /backtest`
+  runs the strategy against 2 years of history before it's promoted to
+  the live paper loop.
+- **Target tracking**: weekly KPI = realised + unrealised PnL / 1 000;
+  the 10 %/week target is a *KPI*, not a constraint — the engine shows
+  which strategies hit it and the operator picks survivors.
+
+### LLM call routing (which model for what)
+
+| Task                                                       | Model               |
+|------------------------------------------------------------|---------------------|
+| News headline → (symbols, sentiment, urgency)              | `qwen3-4b`          |
+| Per-tick strategy decision over aggregated signals         | `Qwen3.6-35B-A3B`   |
+| Generate / refactor a new strategy plugin                  | `qwen3-coder-next`  |
+| Weekly retrospective: "why did strategy X under-perform?"  | `Qwen3.5-122B-A10B` |
+| Read a TradingView screenshot (later, optional)            | `qwen3-vl-30b`      |
+
+**Never** call the 35B/122B inside a per-tick loop. The pattern is:
+deterministic Python computes signals → batched LLM call summarises /
+decides → result cached for the next N ticks.
+
+### Build order (smallest shippable steps)
+
+1. `timescaledb` service + retention policy (30 d raw, 2 y daily).
+2. `finance-prices` writing to TimescaleDB; n8n cron triggers it.
+3. `finance-news` + `finance_news` Qdrant collection (768-dim, same TEI).
+4. `finance-guru-api` skeleton: `/health`, `/strategies`, `/ledger`,
+   `/backtest`, `/decide`. Wire `qwen3-4b` first.
+5. Dashboard tab "Finance Guru" consumes the API (positions, PnL,
+   "why did it trade" log, per-strategy KPI vs 10 % target).
+6. `finance-social` last — quality of Reddit signal is the unknown.
+
+Everything follows the existing service contract (`compose.yaml`,
+`manifest.yaml`, `installers/phases/08-images.sh` pin, `dream sync`
+behaviour). No new ops surface for the operator.
+
+## 12. Quick-paste prompt for new sessions
 
 > I'm working on the DreamServer fork at
 > `~/PhpstormProjects/codedredd/DreamServer`.  Read

@@ -1,0 +1,22 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: timescaledb
+  name: TimescaleDB (Finance Time-Series)
+  aliases: [tsdb, finance-tsdb]
+  container_name: dream-timescaledb
+  host_env: TIMESCALEDB_HOST
+  default_host: timescaledb
+  port: 5432
+  external_port_env: TIMESCALEDB_PORT
+  external_port_default: 5434
+  health: pg_isready
+  type: docker
+  gpu_backends: [all]
+  compose_file: compose.yaml
+  category: optional
+  depends_on: []
+

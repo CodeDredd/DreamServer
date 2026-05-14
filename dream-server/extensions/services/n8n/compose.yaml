@@ -32,6 +32,9 @@ services:
       - AGENT_TRIGGER_LABEL=${AGENT_TRIGGER_LABEL:-agent}
       # finance-vector seeder bearer token, used by config/n8n/finance-vector-refresh.json
       - FINANCE_VECTOR_TOKEN=${FINANCE_VECTOR_TOKEN:-}
+      # finance-prices intraday fetcher bearer token (POST /refresh).
+      # See extensions/services/finance-prices/README.md → "Trigger from n8n".
+      - FINANCE_PRICES_TOKEN=${FINANCE_PRICES_TOKEN:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows

@@ -137,6 +137,20 @@
       "service_id": "vikunja",
       "internal_port": 3456,
       "manifest_service": "vikunja"
+    },
+    {
+      "env_var": "TIMESCALEDB_PORT",
+      "external_default": 5434,
+      "service_id": "timescaledb",
+      "internal_port": 5432,
+      "manifest_service": "timescaledb"
+    },
+    {
+      "env_var": "FINANCE_PRICES_PORT",
+      "external_default": 8096,
+      "service_id": "finance-prices",
+      "internal_port": 8096,
+      "manifest_service": "finance-prices"
     }
   ]
 }
