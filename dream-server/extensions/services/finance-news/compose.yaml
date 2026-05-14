@@ -39,7 +39,9 @@ services:
       # headline classification (warm-loaded, ~3.5 GB).
       - FINANCE_NEWS_USE_LLM=${FINANCE_NEWS_USE_LLM:-true}
       - LITELLM_URL=${LITELLM_URL:-http://litellm:4000/v1}
-      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      # The project-wide convention is `LITELLM_KEY` in .env; the
+      # OpenAI-compatible client expects `LITELLM_API_KEY`. Bridge them.
+      - LITELLM_API_KEY=${LITELLM_KEY:-${LITELLM_API_KEY:-}}
       - FINANCE_NEWS_LLM_MODEL=${FINANCE_NEWS_LLM_MODEL:-qwen3-4b}
       - FINANCE_NEWS_LLM_BATCH=${FINANCE_NEWS_LLM_BATCH:-16}
       # ── Cadence ──────────────────────────────────────────────────────

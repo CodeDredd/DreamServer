@@ -39,7 +39,9 @@ USER_AGENT = "DreamServer-FinanceNews/0.1 (+local)"
 DEFAULT_FEEDS: list[tuple[str, str]] = [
     # (channel, url)
     ("yahoo-finance",   "https://finance.yahoo.com/news/rssindex"),
-    ("reuters-business", "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"),
+    # Reuters Agency moved to a paywalled feed in 2025; the open
+    # business news feed lives on the consumer site instead.
+    ("reuters-business", "https://www.reuters.com/world/business/rss"),
     ("handelsblatt",    "https://www.handelsblatt.com/contentexport/feed/finanzen"),
     ("cnbc-top",        "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
     ("marketwatch-top", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
