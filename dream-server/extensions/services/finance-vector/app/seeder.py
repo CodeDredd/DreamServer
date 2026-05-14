@@ -348,11 +348,27 @@ def ensure_collection(client: QdrantClient, name: str, dim: int, recreate: bool)
             ("symbol", qm.PayloadSchemaType.KEYWORD),
             ("sector", qm.PayloadSchemaType.KEYWORD),
             ("country", qm.PayloadSchemaType.KEYWORD),
+            # FLOAT index lets Qdrant /scroll order_by market_cap and
+            # supports range filters like "stocks > $100B".
+            ("market_cap", qm.PayloadSchemaType.FLOAT),
         ]:
             client.create_payload_index(name, field_name=field_name, field_schema=schema)
         log.info("Collection '%s' created (dim=%d, cosine)", name, dim)
     else:
         log.info("Collection '%s' exists -- upserting", name)
+        # Ensure indexes are present on already-existing collections too.
+        # Qdrant treats a re-create as a no-op, so this is idempotent.
+        for field_name, schema in [
+            ("type", qm.PayloadSchemaType.KEYWORD),
+            ("symbol", qm.PayloadSchemaType.KEYWORD),
+            ("sector", qm.PayloadSchemaType.KEYWORD),
+            ("country", qm.PayloadSchemaType.KEYWORD),
+            ("market_cap", qm.PayloadSchemaType.FLOAT),
+        ]:
+            try:
+                client.create_payload_index(name, field_name=field_name, field_schema=schema)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("payload index %s: %s", field_name, exc)
 
 
 def upsert(client: QdrantClient, collection: str, items: list[dict],
