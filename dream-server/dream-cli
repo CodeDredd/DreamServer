@@ -1769,6 +1769,105 @@ cmd_audit() {
 }
 
 #=============================================================================
+# Image-Update check
+#=============================================================================
+# Walks every image: pin in extensions/services/*/compose*.yaml plus
+# installers/phases/08-images.sh, queries the relevant Docker Hub / GHCR
+# registries, and reports which pins have a newer stable tag available.
+# Backed by scripts/check-image-updates.py — see docs/IMAGE-UPDATES.md.
+cmd_check_image_updates() {
+    check_install
+    sr_load 2>/dev/null || true
+
+    local -a script_args=()
+    local repo_dir="${DREAM_REPO_DIR:-}"
+    if [[ -z "$repo_dir" ]]; then
+        for cand in \
+            "$HOME/DreamServer/dream-server" \
+            "$HOME/projects/DreamServer/dream-server" \
+            "$HOME/dev/DreamServer/dream-server"; do
+            [[ -d "$cand" ]] && { repo_dir="$cand"; break; }
+        done
+    fi
+    # Prefer repo source-of-truth if available; fall back to install dir
+    # (which is in lock-step after `dream sync`).
+    local project_dir="${repo_dir:-$INSTALL_DIR}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --service|-s)
+                shift
+                [[ -n "${1:-}" ]] || error "--service requires a name"
+                script_args+=(--service "$1")
+                shift
+                ;;
+            --json|--strict)
+                script_args+=("$1")
+                shift
+                ;;
+            --max-pages-dockerhub|--max-pages-ghcr)
+                script_args+=("$1" "${2:?$1 requires a number}")
+                shift 2
+                ;;
+            --repo)
+                shift
+                project_dir="${1:?--repo requires a path}"
+                shift
+                ;;
+            --install)
+                project_dir="$INSTALL_DIR"
+                shift
+                ;;
+            --help|-h)
+                cat <<EOF
+Usage: dream check-image-updates [options]
+
+Compare every image: pin in the repo against current Docker Hub / GHCR
+tags and suggest bumps.  Reads pins from:
+
+  extensions/services/*/compose*.yaml
+  installers/phases/08-images.sh
+
+Three buckets:
+  bumps        a newer stable tag exists upstream
+  up-to-date   pinned tag is the highest non-prerelease in its family
+  unchecked    custom tag, sha-pinned, prerelease, or pagination miss
+
+Options:
+  --service NAME, -s NAME       Limit to one or more service names (repeatable)
+  --json                        Emit machine-readable JSON
+  --strict                      Exit 1 if any bump is available (CI gate)
+  --repo PATH                   Override repo dir (default: auto-detect or
+                                \$DREAM_REPO_DIR; falls back to install dir)
+  --install                     Force scan of install dir instead of repo
+  --max-pages-dockerhub N       Pagination cap for Docker Hub (default 5,
+                                = 500 most-recently-pushed tags)
+  --max-pages-ghcr N            Pagination cap for GHCR (default 10,
+                                = 10000 alphabetical tags)
+
+Workflow when a bump is available:
+  1) Edit BOTH the compose.yaml AND installers/phases/08-images.sh
+  2) git commit -m 'chore(<svc>): bump to <new>' && git push
+  3) dream sync --pull --auto-restart   (pulls, syncs, restarts changed)
+
+See docs/IMAGE-UPDATES.md for the full tag-family rules and how to
+extend the parser for new image conventions.
+EOF
+                return 0
+                ;;
+            *)
+                error "Unknown option: $1 (try: dream check-image-updates --help)"
+                ;;
+        esac
+    done
+
+    local script="$INSTALL_DIR/scripts/check-image-updates.py"
+    [[ -f "$script" ]] || error "check-image-updates.py not found at $script (run 'dream sync --pull')"
+
+    python3 "$script" --project-dir "$project_dir" "${script_args[@]}"
+}
+
+#=============================================================================
 # Extension Management Commands
 #=============================================================================
 
@@ -3783,6 +3882,7 @@ ${CYAN}Commands:${NC}
   repair|fix          Run basic repairs (currently redirects to doctor)
   template [action]   Apply pre-built service templates (list|preview|apply)
   audit [extensions]  Audit extension manifests and compose contracts
+  check-image-updates Compare image: pins against upstream registries (alias: check-images)
   agent [action]      Manage dream host agent (status|start|stop|restart|logs)
   sync-from-repo      Sync repo working copy into install dir (alias: sync)
   help                Show this help
@@ -3864,6 +3964,8 @@ ${CYAN}Examples:${NC}
                                   # Apply a template (enables services)
   dream audit                     # Audit every extension contract
   dream audit --json whisper      # Audit one service as JSON
+  dream check-image-updates       # See which image: pins have a newer upstream tag
+  dream check-image-updates --strict   # CI-friendly: exit 1 if any bump exists
   dream agent status              # Check host agent health
   dream agent restart             # Restart host agent
   dream sync-from-repo --dry-run  # Preview repo→install sync
@@ -4025,6 +4127,7 @@ case "${1:-help}" in
     benchmark|bench|b) cmd_benchmark ;;
     doctor|diag|d) shift; cmd_doctor "$@" ;;
     audit)        shift; cmd_audit "$@" ;;
+    check-image-updates|check-images|images-check) shift; cmd_check_image_updates "$@" ;;
     template|tmpl) shift; cmd_template "$@" ;;
     agent)        shift; cmd_agent "$@" ;;
     sync-from-repo|sync) shift; cmd_sync "$@" ;;
