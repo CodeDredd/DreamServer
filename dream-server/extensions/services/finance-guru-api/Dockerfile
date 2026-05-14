@@ -22,6 +22,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY app/requirements.txt ./
@@ -29,8 +30,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
+# Container starts as root so the entrypoint can chown the bind-mounted
+# /data volume to UID 1000 (dreamer) — bind-mounts inherit host owner,
+# which is typically root on a fresh `docker compose up`. After the
+# chown the entrypoint drops to dreamer via gosu.
 RUN useradd -m -u 1000 dreamer && mkdir -p /data && chown -R dreamer:dreamer /app /data
-USER dreamer
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV FINANCE_GURU_PORT=8098 \
     TIMESCALEDB_HOST=timescaledb \
@@ -52,5 +59,6 @@ EXPOSE 8098
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:${FINANCE_GURU_PORT}/health || exit 1
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${FINANCE_GURU_PORT}"]
 
