@@ -92,36 +92,60 @@ def fetch_stock_universe() -> pd.DataFrame:
     return df
 
 
-def enrich_stocks_with_yf(df: pd.DataFrame, top_n: int) -> list[dict]:
+def enrich_stocks_with_yf(df: pd.DataFrame, top_n: int,
+                          sleep_secs: float = 0.25) -> list[dict]:
+    """Enrich the stock universe with market cap + price.
+
+    Uses ``Ticker.fast_info`` (Yahoo ``chart`` endpoint) which is far less
+    rate-limited than ``Ticker.info`` (``quoteSummary`` endpoint that
+    returns 429 within ~10 calls when unauthenticated). Sector / name /
+    exchange come straight from the Wikipedia universe rows so we never
+    need the heavy ``info`` payload for the basic record.
+    """
     import yfinance as yf
 
     enriched: list[dict] = []
     tickers = df["yf_symbol"].tolist()
-    log.info("Fetching yfinance info for %d tickers ...", len(tickers))
+    log.info("Pulling fast_info for %d tickers (sleep=%.2fs) ...",
+             len(tickers), sleep_secs)
+    fail_streak = 0
     for i, row in enumerate(df.itertuples(index=False), 1):
         try:
-            info = yf.Ticker(row.yf_symbol).info or {}
-        except Exception as exc:  # pragma: no cover
-            log.debug("yf failed for %s: %s", row.yf_symbol, exc)
+            fi = yf.Ticker(row.yf_symbol).fast_info
+            mcap = float(getattr(fi, "market_cap", 0) or 0)
+            price = float(getattr(fi, "last_price", 0) or 0)
+            currency = (getattr(fi, "currency", None) or row.currency)
+            exchange = (getattr(fi, "exchange", None) or row.exchange)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("fast_info failed for %s: %s", row.yf_symbol, exc)
+            fail_streak += 1
+            # Light adaptive backoff on bursts of failures.
+            if fail_streak >= 5:
+                time.sleep(min(5.0, sleep_secs * 4))
+                fail_streak = 0
             continue
-        mcap = info.get("marketCap") or 0
+        fail_streak = 0
         if not mcap:
             continue
         enriched.append({
             "symbol": row.symbol,
-            "name": info.get("longName") or row.name,
-            "sector": info.get("sector") or row.sector,
-            "country": info.get("country") or row.country,
-            "currency": info.get("currency") or row.currency,
-            "exchange": info.get("exchange") or row.exchange,
-            "market_cap": float(mcap),
-            "price": float(info.get("currentPrice") or info.get("regularMarketPrice") or 0.0),
-            "description": (info.get("longBusinessSummary") or "").strip()[:1500],
-            "website": info.get("website") or "",
+            "name": row.name,
+            "sector": row.sector,
+            "country": row.country,
+            "currency": currency,
+            "exchange": exchange,
+            "market_cap": mcap,
+            "price": price,
+            # Description is optional — left empty for stocks to avoid
+            # the heavily throttled quoteSummary endpoint. The embedding
+            # text already includes name + sector + country + exchange.
+            "description": "",
+            "website": "",
         })
-        if i % 25 == 0:
+        if i % 50 == 0:
             log.info("  ... %d/%d processed, %d kept", i, len(tickers), len(enriched))
-        time.sleep(0.05)
+        if sleep_secs > 0:
+            time.sleep(sleep_secs)
     enriched.sort(key=lambda x: x["market_cap"], reverse=True)
     return enriched[:top_n]
 
@@ -260,7 +284,7 @@ def run_seed(cfg: SeederConfig, recreate: bool = False) -> dict:
     """Run a full refresh. Returns a summary dict."""
     t0 = time.monotonic()
     universe = fetch_stock_universe()
-    stocks = enrich_stocks_with_yf(universe, cfg.top_stocks)
+    stocks = enrich_stocks_with_yf(universe, cfg.top_stocks, sleep_secs=cfg.yf_sleep_secs)
     cryptos = fetch_top_crypto(cfg.top_crypto, cfg.coingecko_api_key)
 
     if not stocks and not cryptos:
