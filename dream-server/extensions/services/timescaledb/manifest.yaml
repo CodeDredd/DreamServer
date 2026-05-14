@@ -13,7 +13,11 @@ service:
   port: 5432
   external_port_env: TIMESCALEDB_PORT
   external_port_default: 5434
-  health: pg_isready
+  # No HTTP health endpoint — Postgres is TCP-only. The container's
+  # built-in healthcheck (pg_isready) in compose.yaml is the source of
+  # truth; dream-cli's HTTP probe would always fail on this port.
+  # Leaving `health` empty makes dream status skip it.
+  health: ""
   type: docker
   gpu_backends: [all]
   compose_file: compose.yaml
