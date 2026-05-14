@@ -21,7 +21,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = logging.getLogger("finance-vector.seeder")
 
-NAMESPACE = uuid.UUID("4f3b9f6e-1c1a-4d6c-9a55-financeassets00")
+# Stable namespace for deterministic point IDs.
+# Derived from a fixed DNS name so it never drifts across deployments.
+NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "finance-assets.dreamserver.local")
 HTTP_HEADERS = {"User-Agent": "DreamServer-FinanceSeeder/1.0 (+local)"}
 
 WIKI_TABLES = [
