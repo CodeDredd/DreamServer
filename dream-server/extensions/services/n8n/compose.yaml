@@ -24,6 +24,8 @@ services:
       - AGENT_BASE_URL=${AGENT_BASE_URL:-http://openclaw:18790}
       - AGENT_MODEL=${AGENT_MODEL:-openclaw}
       - AGENT_TRIGGER_LABEL=${AGENT_TRIGGER_LABEL:-agent}
+      # finance-vector seeder bearer token, used by config/n8n/finance-vector-refresh.json
+      - FINANCE_VECTOR_TOKEN=${FINANCE_VECTOR_TOKEN:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows

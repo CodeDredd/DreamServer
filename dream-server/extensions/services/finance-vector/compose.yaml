@@ -1,0 +1,55 @@
+services:
+  finance-vector:
+    build:
+      context: ./extensions/services/finance-vector
+      dockerfile: Dockerfile
+    image: dream-server/finance-vector:0.1.0
+    container_name: dream-finance-vector
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - FINANCE_VECTOR_PORT=8095
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - EMBEDDINGS_URL=http://embeddings:80
+      - FINANCE_COLLECTION=${FINANCE_COLLECTION:-finance_assets}
+      - FINANCE_TOP_STOCKS=${FINANCE_TOP_STOCKS:-250}
+      - FINANCE_TOP_CRYPTO=${FINANCE_TOP_CRYPTO:-250}
+      - FINANCE_REFRESH_CRON=${FINANCE_REFRESH_CRON:-17 3 * * *}
+      - FINANCE_REFRESH_TZ=${TIMEZONE:-UTC}
+      # If set, /refresh requires Authorization: Bearer <token>
+      - FINANCE_VECTOR_TOKEN=${FINANCE_VECTOR_TOKEN:-}
+      # Optional CoinGecko Demo API key (free tier, ~30 req/min, 10k/month)
+      - COINGECKO_API_KEY=${COINGECKO_API_KEY:-}
+      # auto = run once on startup if collection is empty; always | never also valid
+      - FINANCE_RUN_ON_START=${FINANCE_RUN_ON_START:-auto}
+    volumes:
+      - ./data/finance-vector:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FINANCE_VECTOR_PORT:-8095}:8095"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8095/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

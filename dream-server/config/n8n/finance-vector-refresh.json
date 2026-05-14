@@ -1,0 +1,137 @@
+{
+  "name": "Finance Vector Refresh",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 17 3 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Daily 03:17 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 240]
+    },
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-vector:8095/refresh",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_VECTOR_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "recreate",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "refresh",
+      "name": "POST /refresh",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 320]
+    },
+    {
+      "parameters": {
+        "amount": 30,
+        "unit": "seconds"
+      },
+      "id": "wait",
+      "name": "Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [780, 320]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-vector:8095/status",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "status",
+      "name": "GET /status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 320]
+    },
+    {
+      "parameters": {
+        "content": "## Finance Vector Refresh\n\nDaily refresh of the `finance_assets` Qdrant collection (top 250 stocks + top 250 crypto).\n\n**Trigger paths**\n- Schedule: 03:17 UTC daily (matches the in-process scheduler — disable one of them if you want a single source of truth)\n- Manual: click *Execute Workflow*\n\n**Auth**\nThe seeder requires `Authorization: Bearer $FINANCE_VECTOR_TOKEN` if that env var is set on the dream-finance-vector container. Make sure n8n was started with the same `FINANCE_VECTOR_TOKEN` (already wired in `extensions/services/n8n/compose.yaml` once you add it).\n\n**What it does**\n1. POST /refresh — fire-and-forget, returns 202 immediately\n2. Wait 30s\n3. GET /status — pull last_summary / last_error so the workflow log shows the result",
+        "height": 320,
+        "width": 460
+      },
+      "id": "note",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, -100]
+    }
+  ],
+  "connections": {
+    "Daily 03:17 UTC": {
+      "main": [[{"node": "POST /refresh", "type": "main", "index": 0}]]
+    },
+    "Manual Trigger": {
+      "main": [[{"node": "POST /refresh", "type": "main", "index": 0}]]
+    },
+    "POST /refresh": {
+      "main": [[{"node": "Wait 30s", "type": "main", "index": 0}]]
+    },
+    "Wait 30s": {
+      "main": [[{"node": "GET /status", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateId": "finance-vector-refresh"
+  },
+  "tags": [{"name": "finance"}]
+}
+

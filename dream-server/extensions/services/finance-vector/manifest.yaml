@@ -1,0 +1,22 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: finance-vector
+  name: Finance Vector Seeder
+  aliases: [finance-seeder]
+  container_name: dream-finance-vector
+  host_env: FINANCE_VECTOR_HOST
+  default_host: finance-vector
+  port: 8095
+  external_port_env: FINANCE_VECTOR_PORT
+  external_port_default: 8095
+  health: /health
+  type: docker
+  gpu_backends: [all]
+  compose_file: compose.yaml
+  category: optional
+  depends_on: [qdrant, embeddings]
+
