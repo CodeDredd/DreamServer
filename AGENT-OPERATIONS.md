@@ -229,20 +229,67 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
 
 ## 10. LiteLLM-routed models (Lemonade `/api/v1` → `:4000`)
 
-| Alias                 | Size    | Load mode    | Intended role                                      |
-|-----------------------|---------|--------------|----------------------------------------------------|
-| `qwen3-4b`            | ~3.5 GB | warm-loaded  | Tool-routing, classification, fast pre-filter      |
-| `Qwen3.6-35B-A3B`     | ~22 GB  | on-demand    | Default all-rounder / agent (text only!)           |
-| `qwen3-vl-30b`        | ~22 GB  | on-demand    | Vision (mmproj) — ONLY model that reads images     |
-| `qwen3-coder-next`    | ~48 GB  | on-demand    | Code generation / refactor                         |
-| `Qwen3.5-122B-A10B`   | ~77 GB  | on-demand    | Heavy reasoning, weekly retrospectives             |
+### What clients actually call
 
-> Fact-check: `Qwen3.6-35B-A3B` Instruct is **text-only**. Web claims to the
-> contrary are wrong. For images use `qwen3-vl-30b` (mmproj loaded).
+LiteLLM (port `:4000`) exposes a small set of **routing aliases** that
+map onto the underlying Lemonade models. Application code should
+**always** use the alias, never the raw Lemonade name — that way the
+operator can swap the backing model without touching service code.
 
-Pick the smallest model that fits the task. Never call the 122B on every
-event-loop tick — use it for batched / scheduled reasoning only (cost &
-latency).
+| LiteLLM alias  | Backing Lemonade model | Size    | Load mode    | Use for                                         |
+|----------------|------------------------|---------|--------------|-------------------------------------------------|
+| `fast`         | `qwen3-4b`             | ~3.5 GB | warm-loaded  | Tool-routing, classification, news headlines    |
+| `default`      | `Qwen3.6-35B-A3B`      | ~22 GB  | on-demand    | All-rounder / agent (text only!)                |
+| `vision`       | `qwen3-vl-30b`         | ~22 GB  | on-demand    | Vision (mmproj) — ONLY model that reads images  |
+| `code`         | `qwen3-coder-next`     | ~48 GB  | on-demand    | Code generation / refactor                      |
+| `reasoning`    | `Qwen3.5-122B-A10B`    | ~77 GB  | on-demand    | Heavy reasoning, weekly retrospectives          |
+
+To check the live alias list against the gateway:
+
+```bash
+KEY=$(grep ^LITELLM_KEY= ~/dream-server/.env | cut -d= -f2-)
+curl -fsS -H "Authorization: Bearer $KEY" http://127.0.0.1:4000/v1/models | jq
+```
+
+### Defined fallbacks (LiteLLM router config)
+
+```
+reasoning -> default -> vision -> fast
+vision    -> default -> fast
+code      -> default -> fast
+default   -> fast
+```
+
+So if `code` is busy or out of memory, LiteLLM transparently retries
+on `default`, then `fast`. Application code does not need to handle
+fallback itself.
+
+### Auth (the bit that bit us once)
+
+The project-wide convention in `.env` is **`LITELLM_KEY`** (not
+`LITELLM_API_KEY`). The OpenAI-compatible HTTP client expects
+`LITELLM_API_KEY`. Service compose files should bridge the two:
+
+```yaml
+- LITELLM_API_KEY=${LITELLM_KEY:-${LITELLM_API_KEY:-}}
+```
+
+The internal master key is `LITELLM_MASTER_KEY` (set in the litellm
+container env, surfaced as `LITELLM_KEY` to clients via `.env`).
+
+### Facts that contradict common web claims
+
+> `Qwen3.6-35B-A3B` Instruct is **text-only**. Web claims to the
+> contrary are wrong. For images use `vision` (qwen3-vl-30b).
+
+### Cost discipline
+
+Pick the smallest model that fits the task. Never call `reasoning`
+(122B) on every event-loop tick — use it for batched / scheduled
+reasoning only (cost & latency). The pattern that finance-news
+follows: deterministic Python computes the per-item work, the LLM is
+only invoked **batched** (16 headlines per `chat/completions` call)
+and **only when needed** (sentiment that's already filled is skipped).
 
 ## 11. Finance pipeline — strategy engine roadmap
 
@@ -328,13 +375,15 @@ needs paid market data; not worth it for a paper-trade prototype.
 
 | Task                                                       | Model               |
 |------------------------------------------------------------|---------------------|
-| News headline → (symbols, sentiment, urgency)              | `qwen3-4b`          |
-| Per-tick strategy decision over aggregated signals         | `Qwen3.6-35B-A3B`   |
-| Generate / refactor a new strategy plugin                  | `qwen3-coder-next`  |
-| Weekly retrospective: "why did strategy X under-perform?"  | `Qwen3.5-122B-A10B` |
-| Read a TradingView screenshot (later, optional)            | `qwen3-vl-30b`      |
+| Task                                                       | LiteLLM alias       |
+|------------------------------------------------------------|---------------------|
+| News headline → (symbols, sentiment, urgency)              | `fast`              |
+| Per-tick strategy decision over aggregated signals         | `default`           |
+| Generate / refactor a new strategy plugin                  | `code`              |
+| Weekly retrospective: "why did strategy X under-perform?"  | `reasoning`         |
+| Read a TradingView screenshot (later, optional)            | `vision`            |
 
-**Never** call the 35B/122B inside a per-tick loop. The pattern is:
+**Never** call `default`/`reasoning` inside a per-tick loop. The pattern is:
 deterministic Python computes signals → batched LLM call summarises /
 decides → result cached for the next N ticks.
 
@@ -346,9 +395,9 @@ decides → result cached for the next N ticks.
    `/refresh` for n8n triggers.
 3. ✅ `finance-news` writing to TimescaleDB `news.events` AND Qdrant
    `finance_news` (768-dim, same TEI as finance-vector); LiteLLM
-   qwen3-4b for sentiment + urgency tagging.
+   `fast` alias for sentiment + urgency tagging.
 4. `finance-guru-api` skeleton: `/health`, `/strategies`, `/ledger`,
-   `/backtest`, `/decide`. Wire `qwen3-4b` first.
+   `/backtest`, `/decide`. Wire `fast` alias first.
 5. Dashboard tab "Finance Guru" consumes the API (positions, PnL,
    "why did it trade" log, per-strategy KPI vs 10 % target).
 6. `finance-social` last — quality of Reddit signal is the unknown.

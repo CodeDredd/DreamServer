@@ -42,7 +42,7 @@ services:
       # The project-wide convention is `LITELLM_KEY` in .env; the
       # OpenAI-compatible client expects `LITELLM_API_KEY`. Bridge them.
       - LITELLM_API_KEY=${LITELLM_KEY:-${LITELLM_API_KEY:-}}
-      - FINANCE_NEWS_LLM_MODEL=${FINANCE_NEWS_LLM_MODEL:-qwen3-4b}
+      - FINANCE_NEWS_LLM_MODEL=${FINANCE_NEWS_LLM_MODEL:-fast}
       - FINANCE_NEWS_LLM_BATCH=${FINANCE_NEWS_LLM_BATCH:-16}
       # ── Cadence ──────────────────────────────────────────────────────
       # Per AGENT-OPERATIONS.md §11: 10 min — RSS has no real rate limit.

@@ -64,7 +64,7 @@ therefore lands in both stores; the `id` column in TimescaleDB and the
 | `EMBEDDINGS_URL`             | `http://embeddings:80`   | TEI embedding service                             |
 | `FINANCE_NEWS_FEEDS`         | _empty (= curated list)_ | comma-separated RSS URLs to override the defaults |
 | `FINANCE_NEWS_USE_LLM`       | `true`                   | classify sentiment + urgency via LiteLLM          |
-| `FINANCE_NEWS_LLM_MODEL`     | `qwen3-4b`               | LiteLLM model alias                               |
+| `FINANCE_NEWS_LLM_MODEL`     | `fast`                   | LiteLLM routing alias (see AGENT-OPERATIONS.md §10) |
 | `FINANCE_NEWS_LLM_BATCH`     | `16`                     | headlines per LLM call                            |
 | `LITELLM_URL`                | `http://litellm:4000/v1` | LiteLLM gateway                                   |
 | `FINANCE_NEWS_CRON`          | `*/10 * * * *`           | 5-field cron (per §11 cadence table)              |
