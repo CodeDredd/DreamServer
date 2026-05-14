@@ -34,6 +34,7 @@ def _build_context(strategy_name: str, asset_types: Iterable[str],
         positions=positions,
         get_price_history=data.price_history,
         get_news=data.recent_news,
+        get_social=data.recent_social,
     )
 
 

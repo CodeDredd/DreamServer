@@ -112,9 +112,13 @@ export const coreRoutes = [
     component: FinanceGuru,
     getProps: () => ({}),
     sidebar: ({ status }) =>
-      (status?.services || []).some((s) =>
-        (s.name || '').toLowerCase().includes('finance-guru')
-      ),
+      (status?.services || []).some((s) => {
+        // Service inventory exposes the human-readable name (e.g.
+        // "Finance Guru API (Strategy Engine)"), not the service id.
+        // Match either spelling defensively.
+        const n = (s.name || '').toLowerCase()
+        return n.includes('finance guru') || n.includes('finance-guru')
+      }),
     order: 4.5,
   },
   {

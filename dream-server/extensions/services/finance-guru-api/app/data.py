@@ -211,3 +211,73 @@ def history_extent() -> dict:
         "symbols": int(n or 0),
     }
 
+
+# --------------------------------------------------------------------------- #
+# Social — written by finance-social. Same column shape as news.events
+# minus the sentiment-only quirks.
+# --------------------------------------------------------------------------- #
+def recent_social(lookback: dt.timedelta = dt.timedelta(hours=12),
+                  symbols: Iterable[str] | None = None,
+                  min_score: int = 1) -> pd.DataFrame:
+    """Reddit posts from social.events. Returns columns (id, ts, source,
+    channel, author, symbols, score, num_comments, sentiment, urgency,
+    title, url).
+
+    The table may not exist (finance-social isn't deployed yet). In that
+    case we return an empty DataFrame so strategies degrade gracefully.
+    """
+    cols = ["id", "ts", "source", "channel", "author", "symbols",
+            "score", "num_comments", "sentiment", "urgency", "title", "url"]
+    sql = [f"""SELECT {', '.join(cols)}
+              FROM social.events
+              WHERE ts >= now() - %s
+                AND COALESCE(score, 0) >= %s"""]
+    args: list = [lookback, int(min_score)]
+    if symbols:
+        sql.append("AND symbols && %s")
+        args.append(list(symbols))
+    sql.append("ORDER BY ts DESC")
+    try:
+        with conn() as c, c.cursor() as cur:
+            cur.execute(" ".join(sql), tuple(args))
+            rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001
+        # Most likely cause: social.events doesn't exist yet because
+        # finance-social hasn't run. Strategies should treat "no social
+        # data" as a no-signal cycle, not as an error.
+        log.debug("recent_social query failed (%s) — returning empty", exc)
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(rows, columns=cols)
+    if not df.empty:
+        df["ts"] = pd.to_datetime(df["ts"], utc=True)
+    return df
+
+
+def social_at(end: dt.datetime, lookback: dt.timedelta,
+              symbols: Iterable[str] | None = None,
+              min_score: int = 1) -> pd.DataFrame:
+    """Backtest variant of recent_social() anchored at a historical ts."""
+    cols = ["id", "ts", "source", "channel", "author", "symbols",
+            "score", "num_comments", "sentiment", "urgency", "title", "url"]
+    sql = [f"""SELECT {', '.join(cols)}
+              FROM social.events
+              WHERE ts BETWEEN %s AND %s
+                AND COALESCE(score, 0) >= %s"""]
+    args: list = [end - lookback, end, int(min_score)]
+    if symbols:
+        sql.append("AND symbols && %s")
+        args.append(list(symbols))
+    sql.append("ORDER BY ts")
+    try:
+        with conn() as c, c.cursor() as cur:
+            cur.execute(" ".join(sql), tuple(args))
+            rows = cur.fetchall()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("social_at query failed (%s) — returning empty", exc)
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame(rows, columns=cols)
+    if not df.empty:
+        df["ts"] = pd.to_datetime(df["ts"], utc=True)
+    return df
+
+

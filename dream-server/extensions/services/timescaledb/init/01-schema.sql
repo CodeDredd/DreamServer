@@ -21,6 +21,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 -- ---------------------------------------------------------------------
 CREATE SCHEMA IF NOT EXISTS finance;
 CREATE SCHEMA IF NOT EXISTS news;
+CREATE SCHEMA IF NOT EXISTS social;    -- reserved for finance-social posts
 CREATE SCHEMA IF NOT EXISTS guru;     -- reserved for finance-guru-api ledgers
 
 -- ---------------------------------------------------------------------
@@ -133,6 +134,52 @@ SELECT add_retention_policy('news.events', INTERVAL '180 days',
                             if_not_exists => TRUE);
 
 -- ---------------------------------------------------------------------
+-- 4b. Social posts (written by finance-social: Reddit + later
+--     Mastodon/Bluesky). Same column shape as news.events on purpose
+--     so strategies can UNION ALL when treating both as "signal events".
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS social.events (
+    id            TEXT        NOT NULL,
+    ts            TIMESTAMPTZ NOT NULL,
+    source        TEXT        NOT NULL,        -- 'reddit' | 'mastodon' | 'bluesky'
+    channel       TEXT,                        -- subreddit/instance/feed name
+    author        TEXT,                        -- username (no PII beyond what's public)
+    symbols       TEXT[]      NOT NULL DEFAULT '{}',
+    score         INTEGER,                     -- platform-native score (upvotes)
+    num_comments  INTEGER,
+    sentiment     REAL,                        -- -1.0 .. +1.0
+    urgency       REAL,                        --  0.0 ..  1.0
+    title         TEXT,
+    url           TEXT,
+    payload       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (id, ts)
+);
+
+SELECT create_hypertable(
+    'social.events', 'ts',
+    chunk_time_interval => INTERVAL '7 days',
+    if_not_exists       => TRUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_symbols_ts
+    ON social.events USING GIN (symbols);
+CREATE INDEX IF NOT EXISTS idx_social_source_ts
+    ON social.events (source, channel, ts DESC);
+
+ALTER TABLE social.events SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'source',
+    timescaledb.compress_orderby   = 'ts DESC'
+);
+
+SELECT add_compression_policy('social.events', INTERVAL '14 days',
+                              if_not_exists => TRUE);
+-- 60 days is shorter than news because Reddit posts age out of relevance
+-- much faster (intraday "buzz" signal vs. multi-day macro news cycles).
+SELECT add_retention_policy('social.events', INTERVAL '60 days',
+                            if_not_exists => TRUE);
+
+-- ---------------------------------------------------------------------
 -- 5. Read-only role for the dashboard / external explorers
 -- ---------------------------------------------------------------------
 DO $$
@@ -142,8 +189,8 @@ BEGIN
     END IF;
 END $$;
 
-GRANT USAGE ON SCHEMA finance, news, guru TO finance_ro;
-GRANT SELECT ON ALL TABLES    IN SCHEMA finance, news, guru TO finance_ro;
-ALTER DEFAULT PRIVILEGES IN SCHEMA finance, news, guru
+GRANT USAGE ON SCHEMA finance, news, social, guru TO finance_ro;
+GRANT SELECT ON ALL TABLES    IN SCHEMA finance, news, social, guru TO finance_ro;
+ALTER DEFAULT PRIVILEGES IN SCHEMA finance, news, social, guru
     GRANT SELECT ON TABLES TO finance_ro;
 

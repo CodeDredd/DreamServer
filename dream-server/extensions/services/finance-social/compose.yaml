@@ -1,0 +1,96 @@
+services:
+  finance-social:
+    build:
+      context: ./extensions/services/finance-social
+      dockerfile: Dockerfile
+    image: dream-server/finance-social:0.1.0
+    container_name: dream-finance-social
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - FINANCE_SOCIAL_PORT=8099
+      # ── TimescaleDB sink (social.events hypertable) ────────────────────
+      - TIMESCALEDB_HOST=${TIMESCALEDB_HOST:-timescaledb}
+      - TIMESCALEDB_PORT_INTERNAL=5432
+      - TIMESCALEDB_USER=${TIMESCALEDB_USER:-finance}
+      - TIMESCALEDB_PASSWORD=${TIMESCALEDB_PASSWORD:?TIMESCALEDB_PASSWORD is required (set in .env)}
+      - TIMESCALEDB_DB=${TIMESCALEDB_DB:-finance}
+      # ── Qdrant sink (finance_social collection) ────────────────────────
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - FINANCE_SOCIAL_COLLECTION=${FINANCE_SOCIAL_COLLECTION:-finance_social}
+      # Stammdaten universe shared with finance-news for symbol extraction.
+      - FINANCE_COLLECTION=${FINANCE_COLLECTION:-finance_assets}
+      # ── Embeddings (TEI, same instance the rest of the stack uses) ─────
+      - EMBEDDINGS_URL=${EMBEDDINGS_URL:-http://embeddings:80}
+      # ── Reddit (PRAW) credentials ──────────────────────────────────────
+      # Register a "script" type app at https://www.reddit.com/prefs/apps
+      # and put the client id + secret in .env. The user agent should be
+      # informative and version-stamped (Reddit ToS).
+      # If creds are missing the service stays alive and reports
+      # configured=false in /status — no fetches are performed.
+      - REDDIT_CLIENT_ID=${REDDIT_CLIENT_ID:-}
+      - REDDIT_CLIENT_SECRET=${REDDIT_CLIENT_SECRET:-}
+      - REDDIT_USER_AGENT=${REDDIT_USER_AGENT:-DreamServer-FinanceSocial/0.1 (by u/anonymous)}
+      # ── Subreddit list (curated default if empty) ──────────────────────
+      # Comma-separated. Per-subreddit failures are non-fatal.
+      - FINANCE_SOCIAL_SUBREDDITS=${FINANCE_SOCIAL_SUBREDDITS:-}
+      # ── Sentiment classification via LiteLLM (qwen3-4b "fast") ─────────
+      # Reddit posts are short — same batched-fast pattern as finance-news.
+      - FINANCE_SOCIAL_USE_LLM=${FINANCE_SOCIAL_USE_LLM:-true}
+      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000/v1}
+      # The project-wide convention is `LITELLM_KEY` in .env; the
+      # OpenAI-compatible client expects `LITELLM_API_KEY`. Bridge them.
+      - LITELLM_API_KEY=${LITELLM_KEY:-${LITELLM_API_KEY:-}}
+      - FINANCE_SOCIAL_LLM_MODEL=${FINANCE_SOCIAL_LLM_MODEL:-fast}
+      - FINANCE_SOCIAL_LLM_BATCH=${FINANCE_SOCIAL_LLM_BATCH:-16}
+      # ── Cadence ────────────────────────────────────────────────────────
+      # Per AGENT-OPERATIONS.md §11: 15 min — Reddit free OAuth allows
+      # ~100 QPM authenticated; pulling new() from ~6 subreddits at this
+      # cadence stays well below.
+      - FINANCE_SOCIAL_CRON=${FINANCE_SOCIAL_CRON:-*/15 * * * *}
+      - FINANCE_SOCIAL_TZ=${TIMEZONE:-UTC}
+      - FINANCE_SOCIAL_RUN_ON_START=${FINANCE_SOCIAL_RUN_ON_START:-auto}
+      # ── Authn for /refresh ─────────────────────────────────────────────
+      - FINANCE_SOCIAL_TOKEN=${FINANCE_SOCIAL_TOKEN:-}
+      # ── Rate-limit knobs ───────────────────────────────────────────────
+      # Cap how many submissions per subreddit are pulled per cycle (newest
+      # first). Keeps the embedding load bounded.
+      - FINANCE_SOCIAL_MAX_PER_SUB=${FINANCE_SOCIAL_MAX_PER_SUB:-50}
+      # Drop posts already present in social.events (id-keyed). Default ON.
+      - FINANCE_SOCIAL_DEDUP=${FINANCE_SOCIAL_DEDUP:-true}
+      # Minimum score to consider a post "signal" (filters out brand-new
+      # zero-score noise). 0 disables.
+      - FINANCE_SOCIAL_MIN_SCORE=${FINANCE_SOCIAL_MIN_SCORE:-1}
+    volumes:
+      - ./data/finance-social:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FINANCE_SOCIAL_PORT:-8099}:8099"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

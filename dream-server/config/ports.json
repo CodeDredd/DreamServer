@@ -165,6 +165,13 @@
       "service_id": "finance-guru-api",
       "internal_port": 8098,
       "manifest_service": "finance-guru-api"
+    },
+    {
+      "env_var": "FINANCE_SOCIAL_PORT",
+      "external_default": 8099,
+      "service_id": "finance-social",
+      "internal_port": 8099,
+      "manifest_service": "finance-social"
     }
   ]
 }

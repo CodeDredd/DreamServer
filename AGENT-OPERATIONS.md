@@ -191,7 +191,8 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
   Currently exposed: `VIKUNJA_API_TOKEN`, `OPENCLAW_TOKEN`,
   `GITHUB_TOKEN`, `AGENT_*`, `FINANCE_VECTOR_TOKEN`,
   `FINANCE_PRICES_TOKEN`, `FINANCE_NEWS_TOKEN`,
-  `FINANCE_GURU_TOKEN`, `N8N_*`, `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
+  `FINANCE_GURU_TOKEN`, `FINANCE_SOCIAL_TOKEN`, `N8N_*`,
+  `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
 
 * **searxng config dir has GID conflicts with rsync.** rsync emits a
   benign `chgrp … failed: Operation not permitted` for
@@ -414,7 +415,19 @@ decides → result cached for the next N ticks.
    delta vs 10 %/week target, open positions), per-strategy list, and
    a detail pane with positions table + trade log including the LLM
    "why" reason string.
-6. `finance-social` last — quality of Reddit signal is the unknown.
+6. ✅ `finance-social` — Reddit aggregator (PRAW free-tier OAuth)
+   pulling new submissions from `wallstreetbets`, `stocks`, `investing`,
+   `StockMarket`, `CryptoCurrency`, `SecurityAnalysis` every 15 min.
+   Same dual-sink pattern as finance-news: TimescaleDB `social.events`
+   hypertable (own retention: 60 d) + Qdrant `finance_social` collection.
+   Sentiment via LiteLLM `fast` (qwen3-4b) — only posts that mention a
+   known symbol get embedded/scored to keep cost proportional to signal.
+   Bonus: shipped a third strategy `social_buzz` in finance-guru-api
+   (buy on Reddit-buzz spike + positive mean sentiment, sell on
+   negative buzz or +5 % take-profit). DecisionContext gained an
+   optional `get_social` lookup; older strategies are unaffected.
+   Operator setup (Reddit script app + .env credentials) documented in
+   `extensions/services/finance-social/README.md`.
 
 Everything follows the existing service contract (`compose.yaml`,
 `manifest.yaml`, `installers/phases/08-images.sh` pin, `dream sync`

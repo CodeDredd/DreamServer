@@ -42,6 +42,9 @@ class DecisionContext:
     # Lazy lookups — strategies pull what they need.
     get_price_history: Callable[[list[str], dt.timedelta], pd.DataFrame] = field(default=None)  # type: ignore
     get_news:          Callable[[dt.timedelta, list[str] | None], pd.DataFrame] = field(default=None)  # type: ignore
+    # Optional — only populated when finance-social has been deployed.
+    # Strategies should treat an empty DataFrame as "no signal", not error.
+    get_social:        Callable[[dt.timedelta, list[str] | None], pd.DataFrame] = field(default=None)  # type: ignore
 
 
 @dataclass

@@ -40,6 +40,8 @@ services:
       # finance-guru-api strategy engine bearer token
       # (POST /decide, POST /backtest).
       - FINANCE_GURU_TOKEN=${FINANCE_GURU_TOKEN:-}
+      # finance-social Reddit aggregator bearer token (POST /refresh).
+      - FINANCE_SOCIAL_TOKEN=${FINANCE_SOCIAL_TOKEN:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows
