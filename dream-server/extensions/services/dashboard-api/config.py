@@ -217,6 +217,23 @@ def _default_vikunja_url() -> str:
 VIKUNJA_URL = os.environ.get("VIKUNJA_URL", _default_vikunja_url())
 VIKUNJA_API_TOKEN = os.environ.get("VIKUNJA_API_TOKEN", "") or _read_env_from_file("VIKUNJA_API_TOKEN")
 
+
+# --- Finance Guru API (paper-trade strategy engine, see AGENT-OPERATIONS.md §11) ---
+
+def _default_finance_guru_url() -> str:
+    cfg = SERVICES.get("finance-guru-api", {})
+    host = cfg.get("host", "finance-guru-api")
+    port = cfg.get("port", 8098)
+    return f"http://{host}:{port}"
+
+
+FINANCE_GURU_URL = os.environ.get("FINANCE_GURU_URL", _default_finance_guru_url())
+# Bearer token guarding POST /decide and POST /backtest on finance-guru-api.
+# Read endpoints (/health, /strategies, /ledger) are public on the
+# dream-network so the dashboard proxy can call them without a secret.
+FINANCE_GURU_TOKEN = os.environ.get("FINANCE_GURU_TOKEN", "") or _read_env_from_file("FINANCE_GURU_TOKEN")
+
+
 # --- Setup / Personas ---
 
 SETUP_CONFIG_DIR = Path(DATA_DIR) / "config"

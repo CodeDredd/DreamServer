@@ -8,6 +8,7 @@ import {
   ListChecks,
   Network,
   UserPlus,
+  TrendingUp,
 } from 'lucide-react'
 
 const Dashboard = lazy(() => import('../pages/Dashboard'))
@@ -18,6 +19,7 @@ const Models = lazy(() => import('../pages/Models'))
 const Projects = lazy(() => import('../pages/Projects'))
 const ServiceMap = lazy(() => import('../pages/ServiceMap'))
 const Invites = lazy(() => import('../pages/Invites'))
+const FinanceGuru = lazy(() => import('../pages/FinanceGuru'))
 
 export const coreRoutes = [
   {
@@ -94,6 +96,24 @@ export const coreRoutes = [
     getProps: () => ({}),
     sidebar: true,
     order: 4,
+  },
+  {
+    // Finance Guru — paper-trade strategy engine. Sidebar entry only
+    // appears when the upstream finance-guru-api service is registered
+    // in the dashboard's service inventory; route stays reachable so
+    // first-time setup can land here directly via URL.
+    // See AGENT-OPERATIONS.md §11.
+    id: 'finance-guru',
+    path: '/finance-guru',
+    label: 'Finance Guru',
+    icon: TrendingUp,
+    component: FinanceGuru,
+    getProps: () => ({}),
+    sidebar: ({ status }) =>
+      (status?.services || []).some((s) =>
+        (s.name || '').toLowerCase().includes('finance-guru')
+      ),
+    order: 4.5,
   },
   {
     id: 'repo-map',

@@ -403,8 +403,17 @@ decides → result cached for the next N ticks.
    decide loop; LiteLLM `fast` alias for the `news_sentiment`
    reason-string. Two starter strategies shipped: `news_sentiment`
    (LLM-assisted) and `momentum_breakout` (pure Python).
-5. Dashboard tab "Finance Guru" consumes the API (positions, PnL,
-   "why did it trade" log, per-strategy KPI vs 10 % target).
+5. ✅ Dashboard tab "Finance Guru" consumes the API. Backend: new
+   `dashboard-api/routers/finance_guru.py` proxy that forwards
+   `/api/finance-guru/{status,strategies,ledger,decide,backtest}` to
+   the upstream service over the dream-network — `FINANCE_GURU_TOKEN`
+   never leaves the host (read from `.env` like `VIKUNJA_API_TOKEN`).
+   Frontend: `pages/FinanceGuru.jsx` registered in `plugins/core.js`
+   with sidebar visibility gated on the `finance-guru-api` service
+   being present. Renders aggregate KPI strip (seeded, equity, PnL,
+   delta vs 10 %/week target, open positions), per-strategy list, and
+   a detail pane with positions table + trade log including the LLM
+   "why" reason string.
 6. `finance-social` last — quality of Reddit signal is the unknown.
 
 Everything follows the existing service contract (`compose.yaml`,
