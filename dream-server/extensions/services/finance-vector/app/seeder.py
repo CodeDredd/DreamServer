@@ -55,17 +55,103 @@ class SeederConfig:
 
 
 # --------------------------------------------------------------------------- #
-# Stocks
+# Stocks — primary source: NASDAQ screener API (free, no key, single call)
+# Fallback: Wikipedia + yfinance.fast_info (used only if NASDAQ unreachable)
 # --------------------------------------------------------------------------- #
+NASDAQ_SCREENER_URL = (
+    "https://api.nasdaq.com/api/screener/stocks"
+    "?tableonly=true&limit=9999&download=true"
+)
+NASDAQ_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.nasdaq.com",
+    "Referer": "https://www.nasdaq.com/",
+}
+def _parse_market_cap(raw) -> float:
+    if raw is None or raw == "" or raw == "N/A":
+        return 0.0
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    s = str(raw).replace("$", "").replace(",", "").strip()
+    mult = 1.0
+    if s.endswith("B"):
+        mult, s = 1e9, s[:-1]
+    elif s.endswith("M"):
+        mult, s = 1e6, s[:-1]
+    elif s.endswith("K"):
+        mult, s = 1e3, s[:-1]
+    try:
+        return float(s) * mult
+    except ValueError:
+        return 0.0
+def _parse_price(raw) -> float:
+    if raw is None or raw == "" or raw == "N/A":
+        return 0.0
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    s = str(raw).replace("$", "").replace(",", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
+def _fetch_nasdaq_screener() -> list[dict]:
+    r = requests.get(NASDAQ_SCREENER_URL, headers=NASDAQ_HEADERS, timeout=30)
+    r.raise_for_status()
+    payload = r.json()
+    rows = (((payload or {}).get("data") or {}).get("rows")) or []
+    if not rows:
+        raise RuntimeError("NASDAQ screener returned no rows")
+    return rows
+def fetch_top_stocks_via_nasdaq(top_n: int) -> list[dict]:
+    """Single-call source for the US top-N by market cap.
+    Returns rows already shaped like the Qdrant payload (no further enrichment
+    needed). Sector / industry / country come from NASDAQ; no per-ticker call.
+    """
+    rows = _fetch_nasdaq_screener()
+    log.info("NASDAQ screener returned %d rows", len(rows))
+    out: list[dict] = []
+    for r in rows:
+        mcap = _parse_market_cap(r.get("marketCap"))
+        if not mcap:
+            continue
+        sym = (r.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        out.append({
+            "symbol": sym,
+            "name": (r.get("name") or sym).strip(),
+            "sector": (r.get("sector") or "Unknown").strip() or "Unknown",
+            "country": (r.get("country") or "US").strip() or "US",
+            "currency": "USD",
+            "exchange": "NASDAQ" if (r.get("url") or "").startswith("/market-activity/stocks") else "US",
+            "market_cap": mcap,
+            "price": _parse_price(r.get("lastsale")),
+            "description": "",
+            "website": "",
+        })
+    out.sort(key=lambda x: x["market_cap"], reverse=True)
+    return out[:top_n]
+# --- Fallback (Wikipedia + yfinance) -------------------------------------- #
+WIKI_TABLES = [
+    # (url, ticker_col, name_col, sector_col, exchange, country, currency, yf_suffix)
+    ("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+     "Symbol", "Security", "GICS Sector", "NYSE/NASDAQ", "US", "USD", ""),
+    ("https://en.wikipedia.org/wiki/DAX",
+     "Ticker", "Company", "Prime Standard Sector", "XETRA", "DE", "EUR", ".DE"),
+]
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
 def _read_wiki_tables(url: str) -> list[pd.DataFrame]:
     from io import StringIO  # silence pandas literal-html FutureWarning
     r = requests.get(url, headers=HTTP_HEADERS, timeout=30)
     r.raise_for_status()
     return pd.read_html(StringIO(r.text))
-
-
-def fetch_stock_universe() -> pd.DataFrame:
+def fetch_stock_universe_wiki() -> pd.DataFrame:
     rows: list[dict] = []
     for url, t_col, n_col, s_col, exch, country, ccy, suffix in WIKI_TABLES:
         try:
@@ -90,26 +176,17 @@ def fetch_stock_universe() -> pd.DataFrame:
                 "country": country,
                 "currency": ccy,
             })
-    df = pd.DataFrame(rows).drop_duplicates(subset=["yf_symbol"])
-    log.info("Stock universe candidates: %d", len(df))
-    return df
-
-
+    return pd.DataFrame(rows).drop_duplicates(subset=["yf_symbol"])
 def enrich_stocks_with_yf(df: pd.DataFrame, top_n: int,
                           sleep_secs: float = 0.25) -> list[dict]:
-    """Enrich the stock universe with market cap + price.
-
-    Uses ``Ticker.fast_info`` (Yahoo ``chart`` endpoint) which is far less
-    rate-limited than ``Ticker.info`` (``quoteSummary`` endpoint that
-    returns 429 within ~10 calls when unauthenticated). Sector / name /
-    exchange come straight from the Wikipedia universe rows so we never
-    need the heavy ``info`` payload for the basic record.
+    """Fallback enrichment via yfinance.fast_info.
+    Used only when the NASDAQ screener API is unreachable. Keep the request
+    rate low and tolerate empty responses (Yahoo throttles aggressively).
     """
     import yfinance as yf
-
     enriched: list[dict] = []
     tickers = df["yf_symbol"].tolist()
-    log.info("Pulling fast_info for %d tickers (sleep=%.2fs) ...",
+    log.info("fast_info fallback for %d tickers (sleep=%.2fs) ...",
              len(tickers), sleep_secs)
     fail_streak = 0
     for i, row in enumerate(df.itertuples(index=False), 1):
@@ -117,12 +194,11 @@ def enrich_stocks_with_yf(df: pd.DataFrame, top_n: int,
             fi = yf.Ticker(row.yf_symbol).fast_info
             mcap = float(getattr(fi, "market_cap", 0) or 0)
             price = float(getattr(fi, "last_price", 0) or 0)
-            currency = (getattr(fi, "currency", None) or row.currency)
-            exchange = (getattr(fi, "exchange", None) or row.exchange)
+            currency = getattr(fi, "currency", None) or row.currency
+            exchange = getattr(fi, "exchange", None) or row.exchange
         except Exception as exc:  # noqa: BLE001
             log.debug("fast_info failed for %s: %s", row.yf_symbol, exc)
             fail_streak += 1
-            # Light adaptive backoff on bursts of failures.
             if fail_streak >= 5:
                 time.sleep(min(5.0, sleep_secs * 4))
                 fail_streak = 0
@@ -139,19 +215,29 @@ def enrich_stocks_with_yf(df: pd.DataFrame, top_n: int,
             "exchange": exchange,
             "market_cap": mcap,
             "price": price,
-            # Description is optional — left empty for stocks to avoid
-            # the heavily throttled quoteSummary endpoint. The embedding
-            # text already includes name + sector + country + exchange.
             "description": "",
             "website": "",
         })
-        if i % 50 == 0:
-            log.info("  ... %d/%d processed, %d kept", i, len(tickers), len(enriched))
         if sleep_secs > 0:
             time.sleep(sleep_secs)
     enriched.sort(key=lambda x: x["market_cap"], reverse=True)
     return enriched[:top_n]
-
+def fetch_stocks(cfg: "SeederConfig") -> list[dict]:
+    """Try NASDAQ screener first; fall back to yfinance enrichment."""
+    try:
+        stocks = fetch_top_stocks_via_nasdaq(cfg.top_stocks)
+        if stocks:
+            log.info("Stocks via NASDAQ screener: kept %d (largest: %s, $%.0fB)",
+                     len(stocks), stocks[0]["symbol"], stocks[0]["market_cap"] / 1e9)
+            return stocks
+        log.warning("NASDAQ screener returned 0 usable rows -- falling back to yfinance")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("NASDAQ screener failed (%s) -- falling back to yfinance", exc)
+    universe = fetch_stock_universe_wiki()
+    log.info("Wiki universe: %d candidates", len(universe))
+    stocks = enrich_stocks_with_yf(universe, cfg.top_stocks, sleep_secs=cfg.yf_sleep_secs)
+    log.info("Stocks via yfinance fallback: %d", len(stocks))
+    return stocks
 
 # --------------------------------------------------------------------------- #
 # Crypto (CoinGecko free tier; optional Demo API key)
@@ -286,8 +372,7 @@ def upsert(client: QdrantClient, collection: str, items: list[dict],
 def run_seed(cfg: SeederConfig, recreate: bool = False) -> dict:
     """Run a full refresh. Returns a summary dict."""
     t0 = time.monotonic()
-    universe = fetch_stock_universe()
-    stocks = enrich_stocks_with_yf(universe, cfg.top_stocks, sleep_secs=cfg.yf_sleep_secs)
+    stocks = fetch_stocks(cfg)
     cryptos = fetch_top_crypto(cfg.top_crypto, cfg.coingecko_api_key)
 
     if not stocks and not cryptos:
