@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:v1.16.3
+    image: qdrant/qdrant:v1.18.0
     container_name: dream-qdrant
     restart: unless-stopped
     security_opt:
