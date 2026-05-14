@@ -8,10 +8,10 @@
 
 ## 1. Servers
 
-| Alias        | Host                                     | Role                                                                 |
-|--------------|------------------------------------------|----------------------------------------------------------------------|
-| **Halo Strix** | `sky-net@192.168.178.110`              | Primary DreamServer host (NVIDIA backend, this repo's `dream-server/`) |
-| **Open Claw**  | `claw-pi5` (SSH alias in `~/.ssh/config`) | Open Claw on Pi 5 — secondary AI-agent runtime                       |
+| Alias        | Host                                     | Role                                                                |
+|--------------|------------------------------------------|---------------------------------------------------------------------|
+| **Halo Strix** | `sky-net@192.168.178.110`              | Primary DreamServer host (AMD backend, this repo's `dream-server/`) |
+| **Open Claw**  | `claw-pi5` (SSH alias in `~/.ssh/config`) | Open Claw on Pi 5 — secondary AI-agent runtime                      |
 
 ### SSH
 
