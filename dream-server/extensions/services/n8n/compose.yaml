@@ -1,6 +1,12 @@
 services:
   n8n:
-    image: n8nio/n8n:2.6.4
+    # Pinned: 2.20.7 (released 2026-05-13). Bumped from 2.6.4 because that
+    # tag was a year old and missed every recent fix to the OAuth callback
+    # handler + the new code-node sandbox.  Bump procedure:
+    #   1) Pick a tag from https://hub.docker.com/r/n8nio/n8n/tags
+    #   2) Update both this line AND installers/phases/08-images.sh
+    #   3) dream sync --pull --auto-restart   (preserve-state keeps it enabled)
+    image: n8nio/n8n:2.20.7
     container_name: dream-n8n
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"

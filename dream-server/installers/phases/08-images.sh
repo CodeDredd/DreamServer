@@ -44,7 +44,7 @@ if [[ "$ENABLE_VOICE" == "true" ]]; then
     fi
     PULL_LIST+=("ghcr.io/remsky/kokoro-fastapi-cpu:v0.2.4|KOKORO — voice module")
 fi
-[[ "$ENABLE_WORKFLOWS" == "true" ]] && PULL_LIST+=("n8nio/n8n:2.6.4|N8N — automation engine")
+[[ "$ENABLE_WORKFLOWS" == "true" ]] && PULL_LIST+=("n8nio/n8n:2.20.7|N8N — automation engine")
 [[ "$ENABLE_RAG" == "true" ]] && PULL_LIST+=("qdrant/qdrant:v1.16.3|QDRANT — memory vault")
 if [[ "$ENABLE_HERMES" == "true" ]]; then
     # SHA-pinned: see extensions/services/hermes/compose.yaml for the pin
