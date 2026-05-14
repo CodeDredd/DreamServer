@@ -1,0 +1,88 @@
+services:
+  finance-news:
+    build:
+      context: ./extensions/services/finance-news
+      dockerfile: Dockerfile
+    image: dream-server/finance-news:0.1.0
+    container_name: dream-finance-news
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - FINANCE_NEWS_PORT=8097
+      # ── TimescaleDB sink (news.events hypertable) ────────────────────
+      - TIMESCALEDB_HOST=${TIMESCALEDB_HOST:-timescaledb}
+      - TIMESCALEDB_PORT_INTERNAL=5432
+      - TIMESCALEDB_USER=${TIMESCALEDB_USER:-finance}
+      - TIMESCALEDB_PASSWORD=${TIMESCALEDB_PASSWORD:?TIMESCALEDB_PASSWORD is required (set in .env)}
+      - TIMESCALEDB_DB=${TIMESCALEDB_DB:-finance}
+      # ── Qdrant sink (finance_news collection) ─────────────────────────
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - FINANCE_NEWS_COLLECTION=${FINANCE_NEWS_COLLECTION:-finance_news}
+      # The Stammdaten collection populated by finance-vector is the
+      # source of truth for "which symbols/aliases to look for in
+      # headlines".
+      - FINANCE_COLLECTION=${FINANCE_COLLECTION:-finance_assets}
+      # ── Embeddings (TEI, same instance finance-vector uses) ───────────
+      - EMBEDDINGS_URL=${EMBEDDINGS_URL:-http://embeddings:80}
+      # ── Feed list ─────────────────────────────────────────────────────
+      # Comma-separated RSS URLs. Per-feed failures are non-fatal.
+      # See app/feeds.py for the curated default set.
+      - FINANCE_NEWS_FEEDS=${FINANCE_NEWS_FEEDS:-}
+      # ── SearXNG fallback (optional, for ad-hoc symbol searches) ───────
+      - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
+      - FINANCE_NEWS_USE_SEARXNG=${FINANCE_NEWS_USE_SEARXNG:-false}
+      # ── Sentiment classification via LiteLLM (qwen3-4b, optional) ─────
+      # ON by default — only requires LiteLLM to be reachable.
+      # Per AGENT-OPERATIONS.md §10 this is the right model for news
+      # headline classification (warm-loaded, ~3.5 GB).
+      - FINANCE_NEWS_USE_LLM=${FINANCE_NEWS_USE_LLM:-true}
+      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000/v1}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-}
+      - FINANCE_NEWS_LLM_MODEL=${FINANCE_NEWS_LLM_MODEL:-qwen3-4b}
+      - FINANCE_NEWS_LLM_BATCH=${FINANCE_NEWS_LLM_BATCH:-16}
+      # ── Cadence ──────────────────────────────────────────────────────
+      # Per AGENT-OPERATIONS.md §11: 10 min — RSS has no real rate limit.
+      - FINANCE_NEWS_CRON=${FINANCE_NEWS_CRON:-*/10 * * * *}
+      - FINANCE_NEWS_TZ=${TIMEZONE:-UTC}
+      - FINANCE_NEWS_RUN_ON_START=${FINANCE_NEWS_RUN_ON_START:-auto}
+      # ── Authn for /refresh ───────────────────────────────────────────
+      - FINANCE_NEWS_TOKEN=${FINANCE_NEWS_TOKEN:-}
+      # ── Rate-limit knobs ─────────────────────────────────────────────
+      # Cap how many items per cycle are pulled from each feed (newest
+      # first). Keeps the embedding load bounded.
+      - FINANCE_NEWS_MAX_PER_FEED=${FINANCE_NEWS_MAX_PER_FEED:-50}
+      # Drop items already present in news.events (id-hashed). Default ON.
+      - FINANCE_NEWS_DEDUP=${FINANCE_NEWS_DEDUP:-true}
+    volumes:
+      - ./data/finance-news:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FINANCE_NEWS_PORT:-8097}:8097"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8097/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

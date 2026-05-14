@@ -190,7 +190,8 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
   `extensions/services/n8n/compose.yaml` under `environment:`.
   Currently exposed: `VIKUNJA_API_TOKEN`, `OPENCLAW_TOKEN`,
   `GITHUB_TOKEN`, `AGENT_*`, `FINANCE_VECTOR_TOKEN`,
-  `FINANCE_PRICES_TOKEN`, `N8N_*`, `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
+  `FINANCE_PRICES_TOKEN`, `FINANCE_NEWS_TOKEN`, `N8N_*`,
+  `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
 
 * **searxng config dir has GID conflicts with rsync.** rsync emits a
   benign `chgrp … failed: Operation not permitted` for
@@ -339,9 +340,13 @@ decides → result cached for the next N ticks.
 
 ### Build order (smallest shippable steps)
 
-1. `timescaledb` service + retention policy (30 d raw, 2 y daily).
-2. `finance-prices` writing to TimescaleDB; n8n cron triggers it.
-3. `finance-news` + `finance_news` Qdrant collection (768-dim, same TEI).
+1. ✅ `timescaledb` service + retention policy (90 d raw intraday,
+   5 y daily aggregate; 180 d news.events).
+2. ✅ `finance-prices` writing to TimescaleDB; bearer-guarded
+   `/refresh` for n8n triggers.
+3. ✅ `finance-news` writing to TimescaleDB `news.events` AND Qdrant
+   `finance_news` (768-dim, same TEI as finance-vector); LiteLLM
+   qwen3-4b for sentiment + urgency tagging.
 4. `finance-guru-api` skeleton: `/health`, `/strategies`, `/ledger`,
    `/backtest`, `/decide`. Wire `qwen3-4b` first.
 5. Dashboard tab "Finance Guru" consumes the API (positions, PnL,

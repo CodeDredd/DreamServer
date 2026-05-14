@@ -151,6 +151,13 @@
       "service_id": "finance-prices",
       "internal_port": 8096,
       "manifest_service": "finance-prices"
+    },
+    {
+      "env_var": "FINANCE_NEWS_PORT",
+      "external_default": 8097,
+      "service_id": "finance-news",
+      "internal_port": 8097,
+      "manifest_service": "finance-news"
     }
   ]
 }

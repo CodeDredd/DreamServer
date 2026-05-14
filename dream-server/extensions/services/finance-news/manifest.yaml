@@ -1,0 +1,22 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: finance-news
+  name: Finance News Aggregator
+  aliases: [finance-rss]
+  container_name: dream-finance-news
+  host_env: FINANCE_NEWS_HOST
+  default_host: finance-news
+  port: 8097
+  external_port_env: FINANCE_NEWS_PORT
+  external_port_default: 8097
+  health: /health
+  type: docker
+  gpu_backends: [all]
+  compose_file: compose.yaml
+  category: optional
+  depends_on: [timescaledb, embeddings, qdrant, finance-vector]
+

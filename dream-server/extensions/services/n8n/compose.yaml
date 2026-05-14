@@ -35,6 +35,8 @@ services:
       # finance-prices intraday fetcher bearer token (POST /refresh).
       # See extensions/services/finance-prices/README.md → "Trigger from n8n".
       - FINANCE_PRICES_TOKEN=${FINANCE_PRICES_TOKEN:-}
+      # finance-news aggregator bearer token (POST /refresh).
+      - FINANCE_NEWS_TOKEN=${FINANCE_NEWS_TOKEN:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows
