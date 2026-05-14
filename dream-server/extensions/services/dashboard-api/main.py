@@ -58,6 +58,7 @@ from routers import (
     magic_link,
     tailscale,
     finance_guru,
+    repo_map,
 )
 from settings import (
     _ENV_ASSIGNMENT_RE, _ENV_COMMENTED_ASSIGNMENT_RE, _SETTINGS_APPLY_ALLOWED_SERVICES, _parse_env_text, _read_env_map_from_path,
