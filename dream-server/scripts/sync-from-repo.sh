@@ -281,7 +281,6 @@ detect_changed_services() {
   local names=()
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    [[ "$line" =~ $NOISE_REGEX ]] && continue
     local code path
     code="${line:0:11}"
     path="${line:12}"
@@ -290,6 +289,23 @@ detect_changed_services() {
       \>f*|cd+++++++++*) : ;;
       *) continue ;;
     esac
+
+    # NOISE_REGEX (mtime-only / dir mtime-only) usually means "no real
+    # change" and we filter it for the pretty-printed sync summary.  But
+    # when an image-pin bump happens to keep the *exact same byte length*
+    # (e.g. v1.16.3 → v1.18.0, 7 chars → 7 chars), rsync's quick-check
+    # ends up classifying the just-copied compose.yaml as `>f..t......`
+    # because the size matches and only the mtime differs.  Skipping
+    # those would silently strand the live container on the old image
+    # even though the pin was bumped.  So: keep the noise filter for
+    # generic paths, but make an EXCEPTION for files that carry the
+    # service contract (compose.yaml*, .env*, Dockerfile*, manifest.*)
+    # under extensions/services/<sid>/ — those always trigger a restart.
+    if [[ "$line" =~ $NOISE_REGEX ]]; then
+      if [[ ! "$path" =~ ^extensions/services/[^/]+/(compose\..+\.yaml|compose\.yaml|Dockerfile.*|manifest\..+|\.env.*)$ ]]; then
+        continue
+      fi
+    fi
 
     if [[ "$path" =~ ^docker-compose\..+\.yml$ ]]; then
       stack_wide=1
