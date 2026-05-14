@@ -9,6 +9,7 @@ import {
   Network,
   UserPlus,
   TrendingUp,
+  GitBranch,
 } from 'lucide-react'
 
 const Dashboard = lazy(() => import('../pages/Dashboard'))
@@ -20,6 +21,7 @@ const Projects = lazy(() => import('../pages/Projects'))
 const ServiceMap = lazy(() => import('../pages/ServiceMap'))
 const Invites = lazy(() => import('../pages/Invites'))
 const FinanceGuru = lazy(() => import('../pages/FinanceGuru'))
+const RepoProjectMap = lazy(() => import('../pages/RepoProjectMap'))
 
 export const coreRoutes = [
   {
