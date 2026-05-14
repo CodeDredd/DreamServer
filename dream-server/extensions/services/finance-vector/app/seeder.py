@@ -50,6 +50,8 @@ class SeederConfig:
     top_crypto: int = field(default_factory=lambda: int(os.getenv("FINANCE_TOP_CRYPTO", "250")))
     coingecko_api_key: str | None = field(default_factory=lambda: os.getenv("COINGECKO_API_KEY") or None)
     embed_batch: int = 32
+    yf_sleep_secs: float = field(
+        default_factory=lambda: float(os.getenv("FINANCE_YF_SLEEP", "0.25")))
 
 
 # --------------------------------------------------------------------------- #
@@ -57,9 +59,10 @@ class SeederConfig:
 # --------------------------------------------------------------------------- #
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=20))
 def _read_wiki_tables(url: str) -> list[pd.DataFrame]:
+    from io import StringIO  # silence pandas literal-html FutureWarning
     r = requests.get(url, headers=HTTP_HEADERS, timeout=30)
     r.raise_for_status()
-    return pd.read_html(r.text)
+    return pd.read_html(StringIO(r.text))
 
 
 def fetch_stock_universe() -> pd.DataFrame:
