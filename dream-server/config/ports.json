@@ -158,6 +158,13 @@
       "service_id": "finance-news",
       "internal_port": 8097,
       "manifest_service": "finance-news"
+    },
+    {
+      "env_var": "FINANCE_GURU_PORT",
+      "external_default": 8098,
+      "service_id": "finance-guru-api",
+      "internal_port": 8098,
+      "manifest_service": "finance-guru-api"
     }
   ]
 }

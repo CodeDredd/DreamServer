@@ -37,6 +37,9 @@ services:
       - FINANCE_PRICES_TOKEN=${FINANCE_PRICES_TOKEN:-}
       # finance-news aggregator bearer token (POST /refresh).
       - FINANCE_NEWS_TOKEN=${FINANCE_NEWS_TOKEN:-}
+      # finance-guru-api strategy engine bearer token
+      # (POST /decide, POST /backtest).
+      - FINANCE_GURU_TOKEN=${FINANCE_GURU_TOKEN:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows

@@ -190,8 +190,8 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
   `extensions/services/n8n/compose.yaml` under `environment:`.
   Currently exposed: `VIKUNJA_API_TOKEN`, `OPENCLAW_TOKEN`,
   `GITHUB_TOKEN`, `AGENT_*`, `FINANCE_VECTOR_TOKEN`,
-  `FINANCE_PRICES_TOKEN`, `FINANCE_NEWS_TOKEN`, `N8N_*`,
-  `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
+  `FINANCE_PRICES_TOKEN`, `FINANCE_NEWS_TOKEN`,
+  `FINANCE_GURU_TOKEN`, `N8N_*`, `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
 
 * **searxng config dir has GID conflicts with rsync.** rsync emits a
   benign `chgrp … failed: Operation not permitted` for
@@ -396,8 +396,13 @@ decides → result cached for the next N ticks.
 3. ✅ `finance-news` writing to TimescaleDB `news.events` AND Qdrant
    `finance_news` (768-dim, same TEI as finance-vector); LiteLLM
    `fast` alias for sentiment + urgency tagging.
-4. `finance-guru-api` skeleton: `/health`, `/strategies`, `/ledger`,
-   `/backtest`, `/decide`. Wire `fast` alias first.
+4. ✅ `finance-guru-api` skeleton: `/health`, `/strategies`,
+   `/ledger`, `/decide`, `/backtest`. Plugin layout
+   `app/strategies/<name>.py` with auto-discovery; SQLite paper
+   ledger seeded €1 000 per strategy; APScheduler `*/30 * * * *`
+   decide loop; LiteLLM `fast` alias for the `news_sentiment`
+   reason-string. Two starter strategies shipped: `news_sentiment`
+   (LLM-assisted) and `momentum_breakout` (pure Python).
 5. Dashboard tab "Finance Guru" consumes the API (positions, PnL,
    "why did it trade" log, per-strategy KPI vs 10 % target).
 6. `finance-social` last — quality of Reddit signal is the unknown.

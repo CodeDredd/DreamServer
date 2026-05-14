@@ -1,0 +1,22 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: finance-guru-api
+  name: Finance Guru API (Strategy Engine)
+  aliases: [finance-guru, guru]
+  container_name: dream-finance-guru-api
+  host_env: FINANCE_GURU_HOST
+  default_host: finance-guru-api
+  port: 8098
+  external_port_env: FINANCE_GURU_PORT
+  external_port_default: 8098
+  health: /health
+  type: docker
+  gpu_backends: [all]
+  compose_file: compose.yaml
+  category: optional
+  depends_on: [timescaledb, finance-prices, finance-news, litellm]
+

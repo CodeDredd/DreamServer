@@ -1,0 +1,68 @@
+services:
+  finance-guru-api:
+    build:
+      context: ./extensions/services/finance-guru-api
+      dockerfile: Dockerfile
+    image: dream-server/finance-guru-api:0.1.0
+    container_name: dream-finance-guru-api
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - FINANCE_GURU_PORT=8098
+      # ── Read-side: TimescaleDB (prices_intraday, news.events) ────────
+      - TIMESCALEDB_HOST=${TIMESCALEDB_HOST:-timescaledb}
+      - TIMESCALEDB_PORT_INTERNAL=5432
+      - TIMESCALEDB_USER=${TIMESCALEDB_USER:-finance}
+      - TIMESCALEDB_PASSWORD=${TIMESCALEDB_PASSWORD:?TIMESCALEDB_PASSWORD is required}
+      - TIMESCALEDB_DB=${TIMESCALEDB_DB:-finance}
+      # ── Write-side: SQLite paper-trade ledger (per strategy) ──────────
+      - FINANCE_GURU_LEDGER_PATH=/data/ledger.sqlite
+      - FINANCE_GURU_SEED_EUR=${FINANCE_GURU_SEED_EUR:-1000}
+      # ── LLM (news_sentiment strategy uses it for batched scoring) ─────
+      - LITELLM_URL=${LITELLM_URL:-http://litellm:4000/v1}
+      - LITELLM_API_KEY=${LITELLM_KEY:-${LITELLM_API_KEY:-}}
+      - FINANCE_GURU_LLM_MODEL=${FINANCE_GURU_LLM_MODEL:-fast}
+      # ── Decision cadence ─────────────────────────────────────────────
+      # Per AGENT-OPERATIONS.md §11 — every 30 min during US market hours
+      # is the natural cadence for paper-trade strategies that ride
+      # 15-min OHLCV. Adjust per strategy in the future.
+      - FINANCE_GURU_CRON=${FINANCE_GURU_CRON:-*/30 * * * *}
+      - FINANCE_GURU_TZ=${TIMEZONE:-UTC}
+      # ── Which strategies are enabled (comma-separated, "all" = every
+      #     plugin discovered under app/strategies/) ─────────────────────
+      - FINANCE_GURU_STRATEGIES=${FINANCE_GURU_STRATEGIES:-all}
+      # ── Authn for /decide and /backtest ──────────────────────────────
+      - FINANCE_GURU_TOKEN=${FINANCE_GURU_TOKEN:-}
+      # ── Risk knobs ───────────────────────────────────────────────────
+      # Max % of free cash any single buy may consume.
+      - FINANCE_GURU_MAX_POSITION_FRAC=${FINANCE_GURU_MAX_POSITION_FRAC:-0.10}
+      # Simulated round-trip fee (default 0.10% per trade).
+      - FINANCE_GURU_FEE_BPS=${FINANCE_GURU_FEE_BPS:-10}
+    volumes:
+      - ./data/finance-guru-api:/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${FINANCE_GURU_PORT:-8098}:8098"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8098/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
