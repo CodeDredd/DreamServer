@@ -36,6 +36,13 @@ FORCE_PULL=0
 VERBOSE=0
 AUTO_RESTART=0
 RESTART_SERVICES=()
+# Default: preserve per-service enabled/disabled intent across pulls.
+# A user who ran `dream disable searxng` should NOT see searxng silently re-enabled
+# just because the repo ships it as compose.yaml.  Conversely, a user who ran
+# `dream enable langfuse` should keep langfuse enabled even though the repo ships
+# it as compose.yaml.disabled.  We snapshot the pre-sync state of every service
+# directory and reconcile after rsync.
+PRESERVE_STATE=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +71,14 @@ while [[ $# -gt 0 ]]; do
       AUTO_RESTART=1
       shift
       ;;
+    --no-preserve-state)
+      PRESERVE_STATE=0
+      shift
+      ;;
+    --preserve-state)
+      PRESERVE_STATE=1
+      shift
+      ;;
     --restart)
       shift
       while [[ $# -gt 0 && "$1" != --* ]]; do
@@ -73,7 +88,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<EOF
-Usage: $(basename "$0") [--dry-run] [--prune] [--pull] [--verbose] [--auto-restart] [--restart svc1 svc2 ...]
+Usage: $(basename "$0") [--dry-run] [--prune] [--pull] [--verbose] [--auto-restart]
+                        [--no-preserve-state] [--restart svc1 svc2 ...]
 
 Sync the repo working copy into the installed runtime directory.
 Default mode is ADDITIVE (no deletes) to preserve local state.
@@ -90,6 +106,14 @@ Options:
   --auto-restart        Auto-detect changed services and restart them via dream-cli
   --restart svc...      Restart given services after sync via dream-cli
                         (combinable with --auto-restart; explicit names always restart)
+  --preserve-state      (default) Snapshot per-service enabled/disabled state in DST
+                        BEFORE sync and reconcile AFTER sync, so a previously
+                        disabled service stays disabled (and vice versa) across
+                        repo pulls.  Updated content of compose.yaml.disabled
+                        files is still applied — only the *active* filename
+                        (compose.yaml vs compose.yaml.disabled) is restored.
+  --no-preserve-state   Skip the snapshot/reconcile step (raw rsync behaviour;
+                        repo's enable/disable defaults win).
 
 Environment overrides:
   DREAM_REPO_DIR        (default: \$HOME/DreamServer/dream-server)
@@ -103,8 +127,15 @@ Always preserved (excluded from sync, even with --prune):
   Backups:        *.bak  *.bak.*  *.bak2  *.broken
   Logs:           *.log  *-import.log
   Installer:      .compose-flags  .install-state*
-  Enabled state:  *.disabled  (so --prune does not delete enabled compose.yaml)
   Build/VCS:      .git/  node_modules/  __pycache__/  *.pyc
+
+Per-service enable state:
+  By default we no longer exclude *.disabled.  Instead we snapshot which
+  services are enabled (compose.yaml) vs disabled (compose.yaml.disabled) in
+  DST before sync, and restore that intent after sync.  This lets repo
+  changes to compose.yaml.disabled files reach enabled services while
+  preventing repo defaults from silently flipping a user's choice.
+  Pass --no-preserve-state to skip the reconcile step.
 
 Examples:
   $(basename "$0") --dry-run
@@ -220,7 +251,6 @@ EXCLUDES=(
   --exclude='*.bak.*'
   --exclude='*.bak2'
   --exclude='*.broken'
-  --exclude='*.disabled'
   --exclude='.git/'
   --exclude='node_modules/'
   --exclude='__pycache__/'
@@ -290,6 +320,118 @@ detect_changed_services() {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-service enable-state snapshot/reconcile.
+#
+# A service directory is one of:
+#   <DST>/extensions/services/<sid>/      (built-in extensions)
+#   <DST>/data/user-extensions/<sid>/     (user extensions installed via dashboard)
+#
+# State is one of:
+#   enabled   → compose.yaml exists
+#   disabled  → compose.yaml.disabled exists (and compose.yaml does not)
+#   none      → neither exists yet (brand-new dir created by sync)
+#
+# We capture state BEFORE rsync, then re-apply it AFTER rsync.  Both files may
+# briefly coexist after rsync (if the repo ships compose.yaml and DST already
+# had compose.yaml.disabled, or vice versa); reconcile picks the snapshot
+# variant and removes the other so the next `dream up` only sees one fragment.
+# ─────────────────────────────────────────────────────────────────────────────
+declare -A SVC_STATE_BEFORE=()
+SVC_STATE_BASES=("${DST}extensions/services" "${DST}data/user-extensions")
+
+snapshot_service_state() {
+  local base d sid
+  for base in "${SVC_STATE_BASES[@]}"; do
+    [[ -d "$base" ]] || continue
+    for d in "$base"/*/; do
+      [[ -d "$d" ]] || continue
+      sid=$(basename "$d")
+      if [[ -f "$d/compose.yaml" ]]; then
+        SVC_STATE_BEFORE["$base|$sid"]=enabled
+      elif [[ -f "$d/compose.yaml.disabled" ]]; then
+        SVC_STATE_BEFORE["$base|$sid"]=disabled
+      fi
+    done
+  done
+}
+
+# Reconcile DST against the snapshot.  Echoes one line per service that was
+# flipped back, plus the names of services that ended up DISABLED (so the
+# auto-restart logic can skip them).  Sets RECONCILED_DISABLED as a global.
+RECONCILED_DISABLED=()
+reconcile_service_state() {
+  local key base sid state d cf cfd
+  RECONCILED_DISABLED=()
+  for key in "${!SVC_STATE_BEFORE[@]}"; do
+    base="${key%|*}"
+    sid="${key#*|}"
+    state="${SVC_STATE_BEFORE[$key]}"
+    d="$base/$sid"
+    cf="$d/compose.yaml"
+    cfd="$d/compose.yaml.disabled"
+    [[ -d "$d" ]] || continue
+    case "$state" in
+      enabled)
+        if [[ -f "$cf" && -f "$cfd" ]]; then
+          # Both exist: rsync wrote whichever file the repo ships.  If repo
+          # ships .disabled, that file carries the FRESH content while DST's
+          # compose.yaml is stale.  Promote the fresh one into the user's
+          # chosen filename so they get content updates *and* keep their
+          # enabled state.
+          rel="${d#$DST}"; src_d="${SRC}${rel}"
+          if [[ -f "$src_d/compose.yaml.disabled" && ! -f "$src_d/compose.yaml" ]]; then
+            mv -f "$cfd" "$cf"
+            echo "  · kept ENABLED:  $sid (promoted fresh .disabled → compose.yaml)"
+          else
+            # Repo ships compose.yaml (the active one was just rewritten).
+            # Drop the stale .disabled marker that lingered in DST.
+            rm -f "$cfd"
+            echo "  · kept ENABLED:  $sid (removed stale .disabled marker)"
+          fi
+        elif [[ ! -f "$cf" && -f "$cfd" ]]; then
+          # Repo removed compose.yaml entirely (rare, --prune mode); promote.
+          mv "$cfd" "$cf"
+          echo "  · restored ENABLED:  $sid"
+        elif [[ ! -f "$cf" && ! -f "$cfd" ]]; then
+          echo "  · WARN: $sid was enabled but compose fragment vanished after sync" >&2
+        fi
+        ;;
+      disabled)
+        if [[ -f "$cf" && -f "$cfd" ]]; then
+          rel="${d#$DST}"; src_d="${SRC}${rel}"
+          if [[ -f "$src_d/compose.yaml" && ! -f "$src_d/compose.yaml.disabled" ]]; then
+            # Repo ships compose.yaml → that's where the FRESH content lives.
+            # User wants disabled, so park the fresh content under .disabled.
+            mv -f "$cf" "$cfd"
+            echo "  · kept DISABLED: $sid (parked fresh compose.yaml → .disabled)"
+          else
+            rm -f "$cf"
+            echo "  · kept DISABLED: $sid (removed stale compose.yaml)"
+          fi
+          RECONCILED_DISABLED+=("$sid")
+        elif [[ -f "$cf" && ! -f "$cfd" ]]; then
+          mv "$cf" "$cfd"
+          echo "  · restored DISABLED: $sid"
+          RECONCILED_DISABLED+=("$sid")
+        else
+          # Already disabled; nothing to do.
+          RECONCILED_DISABLED+=("$sid")
+        fi
+        ;;
+    esac
+  done
+}
+
+# Snapshot now (only if state preservation is on).
+if [[ "$PRESERVE_STATE" -eq 1 ]]; then
+  snapshot_service_state
+  if [[ ${#SVC_STATE_BEFORE[@]} -gt 0 ]]; then
+    echo "→ Snapshot: ${#SVC_STATE_BEFORE[@]} service dir(s) tracked for state preservation"
+    echo
+  fi
+fi
+
 # Capture itemize output to compute summary
 OUTPUT=$(rsync "${RSYNC_FLAGS[@]}" "${DRY_RUN[@]}" "${PRUNE[@]}" \
   "${EXCLUDES[@]}" \
@@ -352,6 +494,30 @@ if [[ "$noise_count" -gt 0 && "$VERBOSE" -ne 1 ]]; then
 fi
 if [[ ${#DRY_RUN[@]} -gt 0 ]]; then
   echo "  (dry-run only — re-run without --dry-run to apply)"
+  if [[ "$PRESERVE_STATE" -eq 1 ]]; then
+    # Predict which services would be flipped back, without touching the FS.
+    flip_count=0
+    for key in "${!SVC_STATE_BEFORE[@]}"; do
+      base="${key%|*}"
+      sid="${key#*|}"
+      state="${SVC_STATE_BEFORE[$key]}"
+      d="$base/$sid"
+      # Look at what the SRC ships for this service.
+      rel="${d#$DST}"
+      src_d="${SRC}${rel}"
+      [[ -d "$src_d" ]] || continue
+      src_has_cf=0;  [[ -f "$src_d/compose.yaml" ]] && src_has_cf=1
+      src_has_dis=0; [[ -f "$src_d/compose.yaml.disabled" ]] && src_has_dis=1
+      if [[ "$state" == enabled && "$src_has_cf" -eq 0 && "$src_has_dis" -eq 1 ]]; then
+        echo "    would re-enable:  $sid"
+        flip_count=$((flip_count+1))
+      elif [[ "$state" == disabled && "$src_has_cf" -eq 1 ]]; then
+        echo "    would re-disable: $sid"
+        flip_count=$((flip_count+1))
+      fi
+    done
+    [[ "$flip_count" -gt 0 ]] && echo "  ($flip_count state flip(s) would be reconciled)"
+  fi
   # Still preview which services WOULD be auto-restarted
   if [[ "$AUTO_RESTART" -eq 1 ]]; then
     echo
@@ -364,6 +530,29 @@ if [[ ${#DRY_RUN[@]} -gt 0 ]]; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Apply state reconciliation BEFORE auto-restart logic so we know which
+# services ended up disabled (and must be skipped by restart).
+# ─────────────────────────────────────────────────────────────────────────────
+if [[ "$PRESERVE_STATE" -eq 1 && ${#SVC_STATE_BEFORE[@]} -gt 0 ]]; then
+  echo
+  echo "→ Reconciling per-service enable state"
+  reconcile_service_state
+
+  # Regenerate .compose-flags so docker compose picks up the right fragment set
+  # on the next dream invocation.  Mirrors what cmd_enable/cmd_disable do.
+  if [[ -x "${DST}scripts/resolve-compose-stack.sh" ]]; then
+    "${DST}scripts/resolve-compose-stack.sh" \
+      --script-dir "${DST%/}" \
+      --tier "${TIER:-1}" \
+      --gpu-backend "${GPU_BACKEND:-nvidia}" \
+      > "${DST}.compose-flags" 2>/dev/null \
+      || rm -f "${DST}.compose-flags"
+  else
+    rm -f "${DST}.compose-flags"
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Combine explicit + auto-detected restart targets (dedup, preserve order).
 # detect_changed_services() is defined near the top of this file.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -371,8 +560,13 @@ ALL_RESTARTS=("${RESTART_SERVICES[@]}")
 if [[ "$AUTO_RESTART" -eq 1 ]]; then
   while IFS= read -r svc; do
     [[ -z "$svc" ]] && continue
-    # Skip if already in the list
+    # Skip services that ended up disabled — restarting them would error out.
     skip=0
+    for dis in "${RECONCILED_DISABLED[@]}"; do
+      [[ "$dis" == "$svc" ]] && skip=1 && break
+    done
+    [[ "$skip" -eq 1 ]] && continue
+    # Skip duplicates
     for existing in "${ALL_RESTARTS[@]}"; do
       [[ "$existing" == "$svc" ]] && skip=1 && break
     done

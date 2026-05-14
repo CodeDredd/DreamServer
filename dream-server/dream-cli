@@ -3902,6 +3902,7 @@ cmd_sync() {
     local force_pull="false"
     local verbose="false"
     local auto_restart="false"
+    local preserve_state="true"
     local restart_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -3911,6 +3912,8 @@ cmd_sync() {
             --force-pull) pull="true"; force_pull="true"; shift ;;
             --verbose|-v) verbose="true"; shift ;;
             --auto-restart) auto_restart="true"; shift ;;
+            --preserve-state) preserve_state="true"; shift ;;
+            --no-preserve-state) preserve_state="false"; shift ;;
             --restart)
                 shift
                 while [[ $# -gt 0 && "$1" != --* ]]; do
@@ -3926,12 +3929,14 @@ cmd_sync() {
             -h|--help)
                 cat <<EOF
 Usage: dream sync-from-repo [--dry-run] [--prune] [--pull] [--verbose]
-                            [--auto-restart] [--repo <path>]
+                            [--auto-restart] [--no-preserve-state]
+                            [--repo <path>]
                             [--restart svc1 svc2 ...]
 
 Syncs the repo working copy into the installed runtime ($INSTALL_DIR),
 preserving local state (.env, data/, logs/, models/, workspace/, images/,
-backups, *.disabled markers, user-added config dirs).
+backups, user-added config dirs) AND each service's enabled/disabled
+intent (compose.yaml vs compose.yaml.disabled).
 
 Options:
   --dry-run, -n         Preview changes without writing
@@ -3941,6 +3946,11 @@ Options:
   --force-pull          Like --pull but resets local changes first (DESTRUCTIVE)
   --verbose, -v         Show every file rsync visits (not just changes)
   --auto-restart        Auto-detect changed services and restart them
+                        (services kept disabled by --preserve-state are skipped)
+  --no-preserve-state   Skip per-service enable/disable reconcile.  Default is
+                        ENABLED: services you previously disabled stay disabled
+                        across pulls, services you previously enabled stay
+                        enabled (and get content updates from the repo).
   --repo <path>         Override repo location (default: auto-detect or \$DREAM_REPO_DIR)
   --restart svc...      Restart given services after sync (combinable with --auto-restart)
 
@@ -3975,6 +3985,7 @@ EOF
     [[ "$force_pull" == "true" ]]   && args+=(--force-pull)
     [[ "$verbose" == "true" ]]      && args+=(--verbose)
     [[ "$auto_restart" == "true" ]] && args+=(--auto-restart)
+    [[ "$preserve_state" == "false" ]] && args+=(--no-preserve-state)
     if [[ ${#restart_args[@]} -gt 0 ]]; then
         args+=(--restart "${restart_args[@]}")
     fi
