@@ -314,14 +314,14 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 ### Phase 6 — Tests
 
-- [ ] **Unit**: `vitest` + `@nuxt/test-utils` für Composables und
+- [x] **Unit**: `vitest` + `@nuxt/test-utils` für Composables und
       Pinia-Stores (`useSystemStatus`, `useDownloadProgress`,
       Lotto-Strategie-Reactivity).
-- [ ] **Component**: `@nuxt/test-utils`/`vue-test-utils` für jede
+- [x] **Component**: `@nuxt/test-utils`/`vue-test-utils` für jede
       Page-Welle (Snapshot + Role-basiert wie das React-Pendant).
-- [ ] **E2E**: Playwright-Profil `dashboard-nuxt` (Smoke-Test:
+- [x] **E2E**: Playwright-Profil `dashboard-nuxt` (Smoke-Test:
       Splash → Dashboard → Sidebar collapse → Settings öffnen).
-- [ ] CI: neuer Workflow-Job `dashboard-nuxt-lint-test`, läuft
+- [x] CI: neuer Workflow-Job `dashboard-nuxt-lint-test`, läuft
       parallel zum bestehenden `dashboard`-Job.
 
 ### Phase 7 — Cutover
