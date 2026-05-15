@@ -354,14 +354,30 @@ detect_changed_services() {
 # ─────────────────────────────────────────────────────────────────────────────
 service_needs_build() {
   local sid="$1"
+  # Path 1: a per-extension compose fragment under extensions/services/<sid>/.
   local cf="${DST}extensions/services/${sid}/compose.yaml"
   [[ -f "$cf" ]] || cf="${DST}data/user-extensions/${sid}/compose.yaml"
-  [[ -f "$cf" ]] || return 1
-  # A YAML `build:` key under a service definition. Match the common shapes:
-  #   build: ./path
-  #   build:
-  #     context: …
-  grep -Eq '^[[:space:]]+build:([[:space:]]|$)' "$cf"
+  if [[ -f "$cf" ]] && grep -Eq '^[[:space:]]+build:([[:space:]]|$)' "$cf"; then
+    return 0
+  fi
+  # Path 2: a "core" service defined in one of the docker-compose.*.yml
+  # overlays (e.g. dashboard / dashboard-api / dream-proxy live in
+  # docker-compose.base.yml).  Locate the service block by its
+  # `^  <sid>:` header and check whether the next ~25 lines contain a
+  # `build:` directive before the next service header.
+  local f
+  for f in "${DST}"docker-compose.*.yml; do
+    [[ -f "$f" ]] || continue
+    if awk -v sid="$sid" '
+      $0 ~ "^  " sid ":[[:space:]]*$" { in_block=1; next }
+      in_block && $0 ~ "^  [a-zA-Z0-9_-]+:[[:space:]]*$" { exit }
+      in_block && $0 ~ "^[[:space:]]+build:" { found=1; exit }
+      END { exit found ? 0 : 1 }
+    ' "$f"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
