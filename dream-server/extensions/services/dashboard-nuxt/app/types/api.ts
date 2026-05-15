@@ -512,3 +512,158 @@ export interface FinanceDecideResponse {
   queued_for?: string
   detail?: string
 }
+
+// ---------------------------------------------------------------------------
+// Lotto Oracle (Phase 4 Welle C.1b). Pendant zu /api/lotto/* —
+// dashboard-api proxied lotto-oracle.
+// Vier Spielarten: lotto-6aus49, eurojackpot, spiel77, super6.
+// ---------------------------------------------------------------------------
+
+export interface LottoSubmissionNotice {
+  available?: boolean
+  note?: string
+}
+
+export interface LottoSchedule {
+  cron?: string
+  tz?: string
+}
+
+export interface LottoStatus {
+  available?: boolean
+  message?: string
+  schedule?: LottoSchedule
+  submission_api?: LottoSubmissionNotice | null
+}
+
+export interface LottoPool {
+  name: string
+  pick: number
+  high: number
+  low: number
+}
+
+export type LottoGameKind = 'combinatorial' | 'digit'
+
+export interface LottoGame {
+  id: string
+  label: string
+  kind: LottoGameKind
+  digits?: number
+  pools?: LottoPool[]
+  draw_days?: string[]
+  n_draws?: number
+  last_in_db?: string | null
+}
+
+export interface LottoGamesResponse {
+  games: LottoGame[]
+}
+
+export interface LottoDraw {
+  draw_date?: string
+  digits?: string
+  // dynamic pool keys (e.g. Hauptzahlen, Eurozahlen) via index
+  [poolName: string]: unknown
+}
+
+export interface LottoDrawsResponse {
+  draws: LottoDraw[]
+}
+
+export interface LottoTip {
+  strategy: string
+  display?: string
+  digits?: string
+  rationale?: string
+  // dynamic pool keys (number arrays per pool)
+  [poolName: string]: unknown
+}
+
+export interface LottoStrategyMeta {
+  edge?: number
+  avg_match?: number
+  expected_random?: number
+  n_trials?: number
+  window?: number
+  hit_rates?: { k: number, prob: number }[]
+}
+
+export interface LottoRecencyLookbackBucket {
+  samples?: number
+  mean?: number | null
+  expected_random?: number
+  p_at_least?: { k: number, prob: number }[]
+}
+
+export interface LottoRecencyStats {
+  kind?: 'combinatorial' | 'positional'
+  n_history?: number
+  main_pool?: string
+  lookbacks?: Record<string, LottoRecencyLookbackBucket>
+}
+
+export interface LottoTipRunParams {
+  recency_k?: number
+  [key: string]: unknown
+}
+
+export interface LottoTipsRun {
+  generated_at?: string
+  based_on_draw?: string
+  params?: LottoTipRunParams
+  tips?: LottoTip[]
+  strategy_meta?: Record<string, LottoStrategyMeta>
+  recency_stats?: LottoRecencyStats | null
+}
+
+export interface LottoTipsResponse {
+  run?: LottoTipsRun | null
+}
+
+export interface LottoStrategyDescriptor {
+  name: string
+  label?: string
+  description?: string
+}
+
+export interface LottoStrategiesResponse {
+  strategies: LottoStrategyDescriptor[]
+}
+
+export interface LottoSweetSpotRow {
+  k: number
+  avg_match?: number | null
+  expected_random?: number | null
+  edge?: number | null
+  n_trials?: number
+}
+
+export interface LottoSweetSpotResponse {
+  recommended_k?: number | null
+  window?: number
+  per_k?: LottoSweetSpotRow[]
+}
+
+export interface LottoStatsFrequencyRow {
+  number?: number
+  digit?: number
+  count: number
+  gap?: number
+}
+
+export interface LottoStatsPositional {
+  position: number
+  frequency: { digit: number, count: number }[]
+}
+
+export interface LottoStats {
+  n: number
+  per_position?: LottoStatsPositional[]
+  // dynamic pool keys -> { frequency: LottoStatsFrequencyRow[] }
+  [poolName: string]: unknown
+}
+
+export interface LottoActionResponse {
+  detail?: string
+}

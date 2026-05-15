@@ -1,7 +1,7 @@
 <!--
-  Finance Guru (Phase 4 Welle C.1a). Pendant zu
+  Finance Guru (Phase 4 Welle C.1a + C.1b). Pendant zu
   dashboard/src/pages/FinanceGuru.jsx — Tab-Wrapper mit zwei
-  Tabs (Strategies, Lotto). Lotto folgt in Welle C.1b.
+  Tabs (Strategies, Lotto).
 
   Tab-State wird wie im Original via window.location.hash persistiert
   (`#lotto`), damit Bookmarks/Refresh den Tab erhalten.
@@ -9,6 +9,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import StrategiesTab from '~/components/finance-guru/StrategiesTab.vue'
+import LottoTab from '~/components/finance-guru/LottoTab.vue'
 
 definePageMeta({ layout: 'default' })
 
@@ -56,18 +57,7 @@ const tabs = computed(() => [
       <UTabs v-model="tab" :items="tabs" :ui="{ list: 'mb-4' }">
         <template #content="{ item }">
           <StrategiesTab v-if="item.value === 'strategies'" />
-          <div
-            v-else
-            class="rounded-xl border border-default bg-elevated p-12 text-center text-muted"
-          >
-            <UIcon name="i-lucide-ticket" class="mx-auto mb-3 size-10 text-primary" />
-            <p class="text-lg font-medium text-default">
-              Lotto Oracle
-            </p>
-            <p class="mt-2 text-sm">
-              Wird in Welle C.1b nachgereicht.
-            </p>
-          </div>
+          <LottoTab v-else />
         </template>
       </UTabs>
     </template>
