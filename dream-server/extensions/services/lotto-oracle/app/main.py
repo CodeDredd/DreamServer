@@ -74,6 +74,25 @@ def _bootstrap_seed_if_empty() -> None:
                     break
 
 
+def _bootstrap_tips_if_missing() -> None:
+    """Generate an initial tip set for every game at startup so the
+    dashboard always has something to render — even on cold boot before
+    the first cron tick. Spiel 77 / Super 6 in particular usually have
+    no live source, so without this they would stay empty until the
+    operator manually triggers /tips/generate."""
+    for gid in GAMES:
+        latest = store.latest_tip_run(gid) if hasattr(store, "latest_tip_run") else None
+        if latest:
+            continue
+        try:
+            info = _do_generate(gid)
+            log.info("[%s] bootstrap tips: n=%d (run_id=%s)",
+                     gid, info.get("n_tips", 0), info.get("run_id"))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[%s] bootstrap tip generation failed: %s", gid, exc)
+
+
+
 def _do_fetch(full_archive: bool = False) -> dict:
     if _state["running"]:
         return {"accepted": False, "reason": "another run in progress"}
@@ -93,7 +112,7 @@ def _do_fetch(full_archive: bool = False) -> dict:
         _state["running"] = False
 
 
-def _do_generate(game_id: str, rows_per_strategy: int = 2) -> dict:
+def _do_generate(game_id: str, rows_per_strategy: int = 3) -> dict:
     history = list(store.all_draws(game_id))
     tips = generate_tips(game_id, history, rows_per_strategy=rows_per_strategy)
     if not tips:
@@ -124,6 +143,7 @@ async def lifespan(app: FastAPI):
     log.info("Initialising SQLite store at %s", CFG.db_path)
     store.init_db(CFG.db_path)
     _bootstrap_seed_if_empty()
+    _bootstrap_tips_if_missing()
 
     scheduler = AsyncIOScheduler(timezone=CFG.tz)
     try:

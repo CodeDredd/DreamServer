@@ -391,6 +391,122 @@ def _digit_strat_recency_exclude(g: Game, history: list[dict], *, rng: random.Ra
     return out
 
 
+def _digit_strat_recency_exclude_k3(g: Game, history: list[dict], *, rng: random.Random,
+                                    rows: int) -> list[dict]:
+    """Like recency_exclude, but excludes the digits from the **last 3
+    draws** at each position. Keeps tips changing more aggressively
+    even when consecutive draws happen to share a digit at one slot.
+    """
+    out = []
+    history_strs = _digit_history(history)[:3]
+    for _ in range(rows):
+        digits = []
+        relax_count = 0
+        for pos in range(g.digits):
+            forbidden = {int(s[pos]) for s in history_strs if len(s) > pos}
+            choices = [d for d in range(10) if d not in forbidden]
+            if not choices:
+                # All 10 digits already used in last 3 draws → relax.
+                choices = list(range(10))
+                relax_count += 1
+            digits.append(str(rng.choice(choices)))
+        payload, display = _format_digits("".join(digits))
+        out.append({
+            "strategy":  "recency_exclude_k3",
+            "payload":   payload,
+            "display":   display,
+            "rationale": (f"Pro Position eine Ziffer ungleich der letzten 3 Ziehungen"
+                          f"{' (' + str(relax_count) + ' Position(en) relaxed)' if relax_count else ''}"
+                          if history_strs else "Keine vorherige Ziehung — uniform"),
+        })
+    return out
+
+
+def _digit_strat_first_digit_recency(g: Game, history: list[dict], *, rng: random.Random,
+                                     rows: int) -> list[dict]:
+    """User-requested: the **first digit** of the Losnummer / Spielschein-
+    nummer is the one most often "anchored" by superstition (it doubles
+    as the Spiel 77 Gewinnklasse-7 marker), so we treat it as the most
+    important position to vary. The first digit is drawn from the
+    complement of the last K=5 draws' first digits; the remaining
+    positions stay uniform-random.
+    """
+    out = []
+    first_digit_history = [int(s[0]) for s in _digit_history(history)[:5] if s]
+    for _ in range(rows):
+        forbidden_first = set(first_digit_history)
+        first_choices = [d for d in range(10) if d not in forbidden_first]
+        if not first_choices:
+            first_choices = list(range(10))
+        digits = [str(rng.choice(first_choices))]
+        for _ in range(g.digits - 1):
+            digits.append(str(rng.randint(0, 9)))
+        payload, display = _format_digits("".join(digits))
+        out.append({
+            "strategy":  "first_digit_recency",
+            "payload":   payload,
+            "display":   display,
+            "rationale": (f"Erste Ziffer ≠ erste Ziffer(n) der letzten {len(first_digit_history)} "
+                          "Ziehung(en); restliche Positionen zufällig"
+                          if first_digit_history else
+                          "Keine vorherige Ziehung — alle Positionen uniform"),
+        })
+    return out
+
+
+def _digit_strat_anti_pattern(g: Game, history: list[dict], *, rng: random.Random,
+                              rows: int) -> list[dict]:
+    """Avoid digit patterns that humans love → reduces share of jackpot
+    if we *do* hit. Excludes:
+
+      - all identical digits (1111111)
+      - strictly monotone sequences (1234567 / 9876543)
+      - 7-digit dates (DDMMYYY-style: starts with 0/1/2/3 + month-like)
+      - palindromes (1234321) — over-represented in popular tips
+    """
+    out = []
+    last_digits = (_digit_history(history) or [None])[0]
+    for _ in range(rows):
+        attempts = 0
+        digits = ""
+        while attempts < 200:
+            attempts += 1
+            cand = "".join(str(rng.randint(0, 9)) for _ in range(g.digits))
+            # all-same?
+            if len(set(cand)) == 1:
+                continue
+            # monotone?
+            asc = all(int(b) - int(a) == 1 for a, b in zip(cand, cand[1:]))
+            desc = all(int(a) - int(b) == 1 for a, b in zip(cand, cand[1:]))
+            if asc or desc:
+                continue
+            # palindrome?
+            if cand == cand[::-1]:
+                continue
+            # date-shape: first 2 digits 01–31, next 2 digits 01–12 (typical
+            # Geburtstags-Lotto-Tipp). Only reject when it could plausibly be
+            # a date — being strict would discard too much.
+            if g.digits >= 4:
+                d1 = int(cand[:2]); d2 = int(cand[2:4])
+                if 1 <= d1 <= 31 and 1 <= d2 <= 12:
+                    continue
+            # avoid exact match with last draw
+            if last_digits and cand == last_digits:
+                continue
+            digits = cand
+            break
+        if not digits:
+            digits = "".join(str(rng.randint(0, 9)) for _ in range(g.digits))
+        payload, display = _format_digits(digits)
+        out.append({
+            "strategy":  "anti_pattern",
+            "payload":   payload,
+            "display":   display,
+            "rationale": "Vermeidet beliebte Muster (gleiche Ziffer, Folge, Datum, Palindrom)",
+        })
+    return out
+
+
 def _digit_strat_frequency(g: Game, history: list[dict], *, rng: random.Random,
                            rows: int, hot: bool) -> list[dict]:
     out = []
@@ -429,7 +545,7 @@ def _digit_strat_random_uniform(g: Game, history: list[dict], *, rng: random.Ran
             "strategy":  "random_uniform",
             "payload":   payload,
             "display":   display,
-            "rationale": "Baseline: 7 unabhängige uniform-zufällige Ziffern",
+            "rationale": "Baseline: unabhängige uniform-zufällige Ziffern",
         })
     return out
 
@@ -465,12 +581,21 @@ DIGIT_STRATEGIES: list[Strategy] = [
     Strategy("recency_exclude", "Letzte Ziehung ausgeschlossen",
              "Jede Position erhält eine andere Ziffer als die letzte Ziehung.",
              lambda g, h, rng, rows: _digit_strat_recency_exclude(g, h, rng=rng, rows=rows)),
+    Strategy("recency_exclude_k3", "Letzte 3 Ziehungen ausgeschlossen",
+             "Jede Position vermeidet alle Ziffern der letzten 3 Ziehungen — Tipps ändern sich aggressiver.",
+             lambda g, h, rng, rows: _digit_strat_recency_exclude_k3(g, h, rng=rng, rows=rows)),
+    Strategy("first_digit_recency", "Erste Ziffer rotieren",
+             "Erste Ziffer ungleich der ersten Ziffer der letzten 5 Ziehungen (Spiel 77 Klasse-7-Marker).",
+             lambda g, h, rng, rows: _digit_strat_first_digit_recency(g, h, rng=rng, rows=rows)),
     Strategy("frequency_hot", "Hot per Position",
              "Häufigste Ziffer pro Position (gewichtet).",
              lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=True)),
     Strategy("frequency_cold", "Cold per Position",
              "Seltenste Ziffer pro Position (gewichtet).",
              lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=False)),
+    Strategy("anti_pattern", "Anti-Massenmuster",
+             "Vermeidet beliebte Muster (gleiche Ziffer, 1234567, Datums-Tipps, Palindrome).",
+             lambda g, h, rng, rows: _digit_strat_anti_pattern(g, h, rng=rng, rows=rows)),
     Strategy("random_uniform", "Zufall (Baseline)",
              "10⁷ bzw. 10⁶ gleichverteilt.",
              lambda g, h, rng, rows: _digit_strat_random_uniform(g, h, rng=rng, rows=rows)),
