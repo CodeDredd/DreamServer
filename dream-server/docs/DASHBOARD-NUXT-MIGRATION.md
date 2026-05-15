@@ -276,7 +276,7 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 **Welle B — Operative Pages**
 
-- [ ] `pages/extensions/index.vue` ← `Extensions.jsx` (1 254 LoC)
+- [x] `pages/extensions/index.vue` ← `Extensions.jsx` (1 254 LoC)
 - [x] `pages/extensions/integrations.vue` ← `ServiceMap.jsx`
 - [x] `pages/projects.vue` ← `Projects.jsx`
 - [x] `pages/repo-map.vue` ← `RepoProjectMap.jsx`
