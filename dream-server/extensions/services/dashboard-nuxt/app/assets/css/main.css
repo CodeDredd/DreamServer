@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Theme-Variablen aus der React-Variante (`dashboard/src/index.css`)
+ * werden in Phase 5 dialektisch in `app.config.ts` und hier eingebaut.
+ * Phase 1 lässt es bei den Nuxt-UI-Defaults (zinc/cyan) — siehe
+ * `app.config.ts`.
+ */
+
+:root {
+  --dream-mono-font:
+    "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+html, body, #__nuxt {
+  height: 100%;
+}
+
+code, pre {
+  font-family: var(--dream-mono-font);
+}
+

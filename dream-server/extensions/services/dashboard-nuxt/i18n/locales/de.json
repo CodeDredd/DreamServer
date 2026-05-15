@@ -1,0 +1,13 @@
+{
+  "common": {
+    "loading": "Lädt …",
+    "error": "Fehler",
+    "ok": "OK",
+    "retry": "Erneut versuchen"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "settings": "Einstellungen"
+  }
+}
+
