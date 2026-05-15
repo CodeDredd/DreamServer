@@ -284,9 +284,9 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 **Welle C — Finance-Stack** (siehe AGENT-OPERATIONS §11/§13)
 
-- [ ] `pages/finance-guru/index.vue` mit `<UTabs>`:
+- [x] `pages/finance-guru/index.vue` mit `<UTabs>`:
   - Tab 1 `<StrategiesTab>` ← `FinanceGuru.jsx` (594 LoC)
-  - Tab 2 `<LottoTab>` ← `LottoTab.jsx` (1 011 LoC, größte Page)
+  - Tab 2 `<LottoTab>` ← `LottoTab.jsx` (1 011 LoC, grte Page)
 - [x] `pages/voice.vue` ← `Voice.jsx`
 
 **Welle D — Onboarding**
