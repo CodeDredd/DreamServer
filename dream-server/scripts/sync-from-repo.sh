@@ -556,11 +556,24 @@ if [[ "$PRESERVE_STATE" -eq 1 && ${#SVC_STATE_BEFORE[@]} -gt 0 ]]; then
 
   # Regenerate .compose-flags so docker compose picks up the right fragment set
   # on the next dream invocation.  Mirrors what cmd_enable/cmd_disable do.
+  #
+  # GPU_BACKEND / TIER are normally set by the installer; if not exported in
+  # the current shell, fall back to the value persisted in the install's
+  # `.env` file. Hardcoding `nvidia` as a default has burned operators with
+  # AMD-only hosts (Halo Strix etc.) — every sync regenerated a flags file
+  # pointing at docker-compose.nvidia.yml and broke the next restart with
+  # "could not select device driver \"nvidia\""; see AGENT-OPERATIONS.md §1.
+  _resolved_backend="${GPU_BACKEND:-}"
+  _resolved_tier="${TIER:-}"
+  if [[ -z "$_resolved_backend" || -z "$_resolved_tier" ]] && [[ -f "${DST}.env" ]]; then
+    _resolved_backend="${_resolved_backend:-$(grep -E '^GPU_BACKEND=' "${DST}.env" | tail -1 | cut -d= -f2- | tr -d '"' || true)}"
+    _resolved_tier="${_resolved_tier:-$(grep -E '^TIER=' "${DST}.env" | tail -1 | cut -d= -f2- | tr -d '"' || true)}"
+  fi
   if [[ -x "${DST}scripts/resolve-compose-stack.sh" ]]; then
     "${DST}scripts/resolve-compose-stack.sh" \
       --script-dir "${DST%/}" \
-      --tier "${TIER:-1}" \
-      --gpu-backend "${GPU_BACKEND:-nvidia}" \
+      --tier "${_resolved_tier:-1}" \
+      --gpu-backend "${_resolved_backend:-cpu}" \
       > "${DST}.compose-flags" 2>/dev/null \
       || rm -f "${DST}.compose-flags"
   else
