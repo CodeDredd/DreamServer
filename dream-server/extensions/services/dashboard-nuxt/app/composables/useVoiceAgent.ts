@@ -61,8 +61,13 @@ export function useVoiceAgent() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let livekit: any
       try {
-        // @ts-expect-error — optional runtime dependency
-        livekit = await import('livekit-client')
+        // /* @vite-ignore */ verhindert, dass Rollup den Import zur
+        // Build-Zeit aufzuloesen versucht — livekit-client ist
+        // optionale Runtime-Dependency und nicht in package.json.
+        // Variable statt Literal hilft zusaetzlich gegen statische
+        // Analyse durch andere Bundler.
+        const mod = 'livekit-client'
+        livekit = await import(/* @vite-ignore */ mod)
       }
       catch {
         throw new Error(
