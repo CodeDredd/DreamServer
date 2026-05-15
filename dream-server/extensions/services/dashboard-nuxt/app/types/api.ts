@@ -436,3 +436,79 @@ export interface ExtensionMutationResult {
 export interface ExtensionLogsResponse {
   logs: string
 }
+
+// ---------- /api/finance-guru/* (Welle C.1a) -----------------------------
+
+export interface FinanceStatus {
+  available: boolean
+  configured?: boolean
+  message?: string
+}
+
+export interface FinanceStrategy {
+  name: string
+  description?: string
+  asset_types?: string[]
+  enabled: boolean
+  last_ts?: string | null
+  last_signals?: number
+  last_executed?: number
+  last_skipped?: number
+  max_position_frac?: number
+}
+
+export interface FinanceSchedule {
+  cron?: string
+  tz?: string
+}
+
+export interface FinanceHistoryExtent {
+  symbols?: number
+}
+
+export interface FinanceStrategiesResponse {
+  strategies: FinanceStrategy[]
+  schedule?: FinanceSchedule
+  next_run?: string | null
+  history_extent?: FinanceHistoryExtent | null
+}
+
+export interface FinanceKpi {
+  seeded_eur?: number
+  equity_eur?: number
+  cash_eur?: number
+  holdings_eur?: number
+  realised_pnl_eur?: number
+  total_pnl_pct?: number
+  n_trades?: number
+  n_positions?: number
+}
+
+export interface FinancePosition {
+  symbol: string
+  qty: number
+  avg_price: number
+  mark_price: number
+}
+
+export interface FinanceTrade {
+  ts: string
+  side: 'BUY' | 'SELL' | string
+  symbol: string
+  qty: number
+  price: number
+  reason?: string
+  pnl_eur?: number | null
+}
+
+export interface FinanceLedger {
+  kpi?: FinanceKpi
+  positions?: FinancePosition[]
+  trades?: FinanceTrade[]
+  error?: string
+}
+
+export interface FinanceDecideResponse {
+  queued_for?: string
+  detail?: string
+}

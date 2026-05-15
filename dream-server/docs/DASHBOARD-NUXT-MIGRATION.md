@@ -287,7 +287,7 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 - [ ] `pages/finance-guru/index.vue` mit `<UTabs>`:
   - Tab 1 `<StrategiesTab>` ← `FinanceGuru.jsx` (594 LoC)
   - Tab 2 `<LottoTab>` ← `LottoTab.jsx` (1 011 LoC, größte Page)
-- [ ] `pages/voice.vue` ← `Voice.jsx`
+- [x] `pages/voice.vue` ← `Voice.jsx`
 
 **Welle D — Onboarding**
 
