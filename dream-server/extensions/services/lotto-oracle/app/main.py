@@ -1,4 +1,4 @@
-"""Lotto Oracle FastAPI service. (rev test 115657)
+"""Lotto Oracle FastAPI service.
 
 Endpoints
 ---------
