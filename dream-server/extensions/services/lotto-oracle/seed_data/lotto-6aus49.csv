@@ -1,4 +1,10 @@
 date,Hauptzahlen,Superzahl
+# Verified from lottoreport.de on 2026-05-15. The cron grows the
+# archive autonomously after every Mi/Sa draw; for a full 30-year
+# backfill the operator must drop their own CSV here (no public
+# server-side mirror exists for German lottery archives, see README).
+2026-05-13,13 15 20 26 31 43,7
+
 
 
 

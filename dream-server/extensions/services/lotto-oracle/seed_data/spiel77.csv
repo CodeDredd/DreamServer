@@ -1,2 +1,8 @@
 date,digits
+# Spiel 77 hat keine öffentliche server-seitige Datenquelle (lotto.de
+# ist eine SPA). Operator kann via POST /admin/import oder durch
+# Ablegen einer CSV in diesem Verzeichnis (gleiches Schema) seeden.
+# Das Tip-Engine arbeitet auch mit kleiner Historie — die per-Position
+# Frequenz konvergiert dann erst über Zeit.
+
 

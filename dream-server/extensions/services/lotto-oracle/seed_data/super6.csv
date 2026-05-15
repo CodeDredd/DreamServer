@@ -1,2 +1,6 @@
 date,digits
+# Super 6 hat keine öffentliche server-seitige Datenquelle (lotto.de
+# ist eine SPA). Operator kann via POST /admin/import oder durch
+# Ablegen einer CSV in diesem Verzeichnis (gleiches Schema) seeden.
+
 

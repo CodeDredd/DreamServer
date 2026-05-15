@@ -13,6 +13,19 @@
 | **Halo Strix** | `sky-net@192.168.178.110`              | Primary DreamServer host (AMD backend, this repo's `dream-server/`) |
 | **Open Claw**  | `claw-pi5` (SSH alias in `~/.ssh/config`) | Open Claw on Pi 5 — secondary AI-agent runtime                      |
 
+### Halo Strix hardware (so the agent doesn't suggest CUDA)
+
+* **AMD Ryzen AI Max+ 395 "Halo Strix"**, integrated **Radeon 8060S**
+  iGPU (RDNA 3.5, ROCm-class), **128 GB unified LPDDR5x**.
+* **No discrete NVIDIA GPU.** Anything that requires CUDA / nvidia-smi
+  / `--gpus all` is a non-starter on this host. Backend stack is
+  **AMD-only** (ROCm via `docker-compose.amd.yml`, llama-server with
+  Vulkan, LiteLLM → Lemonade `/api/v1`).
+* When recommending containers, prefer images with explicit
+  `linux/amd64` + ROCm/Vulkan/CPU paths. CPU-only images
+  (`*-cpu` tags) are fine and already used for `embeddings`,
+  `whisper`, `tts`.
+
 ### SSH
 
 Don't paste passwords into prompts or commit them.  Set up once on your
@@ -521,9 +534,14 @@ service directly (`http://lotto-oracle:8100/refresh`) with
 
 1. ✅ Backend: FastAPI + SQLite (`extensions/services/lotto-oracle/`)
    with `games.py`, `store.py`, `fetchers.py`, `strategies.py`,
-   `main.py`. CSV seed bootstrap + multi-source HTML archive scraping
-   (`lottozahlenonline.de` per-year pages, `lotto.de` / `eurojackpot.de`
-   as fallback) + `/admin/import` for operator-supplied CSV.
+   `main.py`. CSV seed bootstrap + lottoreport.de latest-draw scraper
+   + `/admin/import` for operator-supplied CSV. **All German lottery
+   archives are SPAs as of 05/2026** — the previously listed
+   `lottozahlenonline.de` mirror went 404 across the board, the
+   official `lotto.de` / `eurojackpot.de` archives don't render
+   server-side. Only `lottoreport.de/dyn-vorw-lo.htm` returns parseable
+   HTML (last draw of 6aus49 + Eurojackpot per request); spiel77 /
+   super6 require operator-supplied seed CSV.
 2. ✅ Dashboard-api proxy (`routers/lotto.py`) with bearer injection.
 3. ✅ Dashboard tab navigation in `pages/FinanceGuru.jsx` —
    `StrategiesTab` (existing UI) + `LottoTab` (new). Sidebar entry

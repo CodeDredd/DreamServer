@@ -57,32 +57,48 @@ verstoßen, deshalb tut der `random_uniform`-Baseline-Tipp das nicht.
 
 ## Datenquellen
 
-Reihenfolge wie der Fetcher sie probiert:
+> **Reality-Check (Stand 05/2026)**: alle deutschen Lotterie-Anbieter
+> (`lotto.de`, `eurojackpot.de`, `westlotto.de`, `lottozahlen.de`,
+> `dielottozahlen.de`, `lotto-bayern.de` …) liefern ihre Lottozahlen-
+> Archive heute als JS-gerenderte SPAs aus. Ein server-seitiger HTTP-
+> Request bekommt nur die HTML-Hülle ohne Ziehungsdaten zurück.
+> Der zuvor genutzte Mirror `lottozahlenonline.de` ist offline.
 
-1. `seed_data/<game>.csv` (im Container unter `/seed`, vom Repo
-   eingebunden) — bootstrappt offline, wenn der DB leer ist.
-2. `https://www.lottozahlenonline.de/statistik/<game>/jahr/<year>/`
-   — Mirror mit pro-Jahr-Archivseiten, stabile HTML-Tabelle.
-3. Game-spezifische offizielle Archive
-   (`lotto.de/lotto-6aus49/lottozahlen-archiv`, `eurojackpot.de`)
-   als zweite Wahl.
+Der Fetcher arbeitet daher in Schichten:
 
-URL-Templates stehen in `app/fetchers.py` (`_URL_TEMPLATES`).
-Wenn ein Anbieter den Mirror umstellt, ist nur diese Tabelle anzupassen.
+1. **`CsvSeedParser`** — `seed_data/<game>.csv` (im Container unter
+   `/seed`) bootstrappt die DB beim Cold-Start. Das Repo enthält je
+   einen verifizierten Eintrag, damit das UI vom ersten Tag an etwas
+   anzeigen kann.
+2. **`LottoReportLatestParser`** — scrapet die jeweils **letzte**
+   Ziehung von `lotto-6aus49` und `eurojackpot` aus
+   `https://www.lottoreport.de/dyn-vorw-lo.htm` (die einzige
+   verifiziert server-seitig gerenderte deutsche Lotterie-Seite).
+   Wächst die DB pro Cron-Lauf um 1–2 Ziehungen.
+3. **Operator-CSV via `POST /admin/import`** — der einzige Pfad für
+   den vollständigen 30-Jahres-Backfill von `spiel77` und `super6`
+   (es gibt schlicht keinen öffentlichen Mirror, der diese Spiele
+   server-seitig ausliefert). Wer die Daten besitzt (eigener Scraper,
+   PDF-Auszüge, frühere Datensätze), legt sie als CSV ab und ruft den
+   Endpoint einmalig auf.
 
-### Volle Historie nachladen
-
-Direkt nach dem ersten Start (oder nach Erweiterung der Retention):
+### Backfill-Strategie in der Praxis
 
 ```bash
 TOKEN=$(grep ^LOTTO_ORACLE_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+
+# Schritt 1: was offiziell geht (nimmt aktuelle Ziehung mit)
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8100/refresh/full
+  http://127.0.0.1:8100/refresh
+
+# Schritt 2: vollständige Historie aus eigener CSV einspielen
+curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
+  -F game=lotto-6aus49 \
+  -F file=@/path/to/lotto-6aus49-1995-2026.csv \
+  http://127.0.0.1:8100/admin/import
 ```
 
-Das iteriert ab `Game.history_from` (gekappt durch
-`LOTTO_RETENTION_YEARS`, default 30 Jahre) jede Jahresseite je Spiel.
-Erwartete Laufzeit: 1–3 Minuten auf Halo Strix.
+CSV-Schema siehe `seed_data/README.md`.
 
 ## Auto-Update (Cron)
 

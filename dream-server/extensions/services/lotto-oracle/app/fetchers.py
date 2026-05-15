@@ -1,20 +1,35 @@
 """External data fetchers for German lottery archives.
 
 The DLTB (Deutscher Lotto- und Totoblock) does not publish a stable
-machine-readable bulk archive. Several third-party mirrors and statistics
-sites do — none of them are guaranteed to be stable forever, so this
-module:
+machine-readable bulk archive. As of 05/2026 every German operator
+(`lotto.de`, `eurojackpot.de`, `westlotto.de`, `lotto-bayern.de`,
+`lottozahlen.de`, `dielottozahlen.de`, …) ships their lottozahlen
+archive as a JS-rendered SPA — the HTML returned to a non-browser
+client is a tiny shell with no draw data inline. The previously used
+`lottozahlenonline.de` mirror has gone offline (every URL 404s).
 
-  1. Tries multiple parsers per game in declared order.
-  2. Treats a "fetch" as "give me everything I don't already have, going
-     back to ``Game.history_from`` if necessary".
-  3. Gracefully no-ops if every source fails — the operator can drop a
-     CSV into the bind-mounted ``/seed`` directory (see README) and call
-     ``POST /admin/import`` to bootstrap manually.
+We therefore use a **layered**, intentionally pessimistic strategy:
 
-Parsers return:  list[(draw_date_iso, payload_dict, display_string)]
+  1. ``CsvSeedParser`` — bundled CSVs in ``seed_data/`` (mounted at
+     ``/seed`` in the container) bootstrap the DB on cold-start.
+     The repo ships a small but accurate seed of recent draws so the
+     UI has *something* to render even when every live source is dead.
+  2. ``LottoReportLatestParser`` — scrapes the latest draw of
+     ``lotto-6aus49`` and ``eurojackpot`` from
+     ``https://www.lottoreport.de/dyn-vorw-lo.htm`` (the only public
+     German lottery page we have verified to render server-side).
+     This grows the DB by 1–2 draws per run, on top of the seed.
+  3. Operator-supplied CSV via ``POST /admin/import`` — for the full
+     30-year backfill of ``spiel77`` and ``super6`` (no public mirror
+     exposes those server-side; an operator with their own scraper
+     can drop a CSV into the seed dir and POST it).
 
+If a parser raises, the others still run. ``fetch_into`` reports per
+parser counts so the operator can tell which source contributed.
+
+Parsers return ``list[(draw_date_iso, payload_dict, display_string)]``.
 The payload schema follows ``store.upsert_draw``:
+
     combinatorial → {"<pool_name>": [int, ...], ...}
     digit         → {"digits": "0123456"}
 
@@ -29,7 +44,6 @@ import csv
 import datetime as dt
 import io
 import logging
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,8 +67,13 @@ DrawTuple = tuple[str, dict, str]
 def _client() -> httpx.Client:
     return httpx.Client(
         timeout=CFG.fetch_timeout_sec,
-        headers={"User-Agent": CFG.user_agent, "Accept": "text/html, text/csv, */*"},
+        headers={
+            "User-Agent": CFG.user_agent,
+            "Accept": "text/html, text/csv, */*",
+            "Accept-Language": "de-DE,de;q=0.9,en;q=0.5",
+        },
         follow_redirects=True,
+        verify=False,  # lottoreport.de presents an outdated chain
     )
 
 
@@ -67,7 +86,7 @@ class BaseParser:
     name: str
 
     def fetch_recent(self) -> list[DrawTuple]:
-        """Return the most recent ~30 draws (since-last-update fetch)."""
+        """Return the most recent ~N draws (since-last-update fetch)."""
         return []
 
     def fetch_archive(self, since: str | None = None) -> list[DrawTuple]:
@@ -102,164 +121,6 @@ def _payload_combinatorial(g: Game, pool_values: dict[str, list[int]]) -> tuple[
 
 def _payload_digits(digits: str) -> tuple[dict, str]:
     return {"digits": digits}, digits
-
-
-# --------------------------------------------------------------------------- #
-# Parser: lottozahlenonline.de — covers 6aus49, eurojackpot, super6, spiel77
-# --------------------------------------------------------------------------- #
-# This site exposes per-year HTML archive pages with a stable layout
-# (one row per draw). We probe a few URL templates per game; whichever
-# returns 200 is parsed.
-#
-# This parser is intentionally tolerant: it accepts any HTML containing
-# `<td>NN.NN.NNNN</td>` followed by digit-only cells, and assigns them
-# to the game's pools in declaration order.
-# --------------------------------------------------------------------------- #
-_URL_TEMPLATES: dict[str, list[str]] = {
-    "lotto-6aus49": [
-        "https://www.lottozahlenonline.de/statistik/6aus49/jahr/{year}/",
-        "https://www.lotto.de/lotto-6aus49/lottozahlen-archiv?year={year}",
-    ],
-    "eurojackpot": [
-        "https://www.lottozahlenonline.de/statistik/eurojackpot/jahr/{year}/",
-        "https://www.eurojackpot.de/ej/eurojackpot/zahlen-und-quoten/archiv?year={year}",
-    ],
-    "spiel77": [
-        "https://www.lottozahlenonline.de/statistik/spiel77/jahr/{year}/",
-    ],
-    "super6": [
-        "https://www.lottozahlenonline.de/statistik/super6/jahr/{year}/",
-    ],
-}
-
-
-class HtmlYearArchiveParser(BaseParser):
-    """Iterates per-year archive pages of a known mirror."""
-
-    def __init__(self, game_id: str):
-        super().__init__(game_id=game_id, name="html-year-archive")
-        self.game = GAMES[game_id]
-
-    def _years_to_scan(self, since: str | None) -> list[int]:
-        start_year = int((since or self.game.history_from)[:4])
-        end_year = dt.date.today().year
-        # Clamp to retention window so we don't re-fetch 1955–1980 every
-        # run if the operator capped retention to 30 years.
-        retention_start = end_year - max(CFG.retention_years - 1, 0)
-        start_year = max(start_year, retention_start)
-        return list(range(start_year, end_year + 1))
-
-    def fetch_archive(self, since: str | None = None) -> list[DrawTuple]:
-        years = self._years_to_scan(since)
-        log.info("[%s] scanning %d year archive page(s) (%s..%s)",
-                 self.game_id, len(years), years[0], years[-1])
-        results: list[DrawTuple] = []
-        with _client() as cx:
-            for year in years:
-                for tmpl in _URL_TEMPLATES.get(self.game_id, []):
-                    url = tmpl.format(year=year)
-                    try:
-                        r = cx.get(url)
-                    except httpx.HTTPError as exc:
-                        log.debug("[%s] %s: %s", self.game_id, url, exc)
-                        continue
-                    if r.status_code != 200 or len(r.text) < 200:
-                        continue
-                    parsed = self._parse_html(r.text)
-                    if parsed:
-                        log.info("[%s] %d → %d draws from %s",
-                                 self.game_id, year, len(parsed), url)
-                        results.extend(parsed)
-                        break  # next year
-        return results
-
-    def fetch_recent(self) -> list[DrawTuple]:
-        # Just scan the current year.
-        return [
-            d for d in self.fetch_archive(
-                since=f"{dt.date.today().year}-01-01"
-            )
-        ]
-
-    # ---- parsing ---------------------------------------------------------
-    def _parse_html(self, html: str) -> list[DrawTuple]:
-        soup = BeautifulSoup(html, "lxml")
-        out: list[DrawTuple] = []
-        # Approach: find every table row that looks like a draw row.
-        for row in soup.find_all("tr"):
-            cells = [c.get_text(" ", strip=True) for c in row.find_all(["td", "th"])]
-            if not cells:
-                continue
-            date_iso = None
-            for c in cells:
-                d = _parse_date(c)
-                if d:
-                    date_iso = d
-                    break
-            if not date_iso:
-                continue
-            tup = self._row_to_payload(date_iso, cells)
-            if tup is not None:
-                out.append(tup)
-        return out
-
-    def _row_to_payload(self, date_iso: str, cells: list[str]) -> DrawTuple | None:
-        if self.game.kind == "digit":
-            # Find the first cell that is exactly N digits long.
-            for c in cells:
-                stripped = re.sub(r"\D", "", c)
-                if len(stripped) == self.game.digits:
-                    payload, display = _payload_digits(stripped)
-                    return (date_iso, payload, display)
-            return None
-
-        # Combinatorial: extract every standalone integer in remaining
-        # cells, ignoring the date itself.
-        nums: list[int] = []
-        for c in cells:
-            if _parse_date(c):
-                continue
-            for tok in re.findall(r"-?\d+", c):
-                try:
-                    nums.append(int(tok))
-                except ValueError:
-                    pass
-
-        # Filter to plausible numbers (within union of pool ranges).
-        plausible = []
-        max_high = max(p.high for p in self.game.pools)
-        min_low = min(p.low for p in self.game.pools)
-        for n in nums:
-            if min_low <= n <= max_high:
-                plausible.append(n)
-
-        # Need at least sum(pool.pick).
-        need = sum(p.pick for p in self.game.pools)
-        if len(plausible) < need:
-            return None
-        plausible = plausible[:need]
-
-        # Greedy assign: first pool's `pick` numbers (sorted), then next
-        # pool's `pick` numbers from what remains. Many archive pages
-        # already deliver them in this order; if not, rely on validity
-        # checks below.
-        pool_values: dict[str, list[int]] = {}
-        idx = 0
-        for p in self.game.pools:
-            slice_ = plausible[idx:idx + p.pick]
-            # Restrict to the pool's range.
-            slice_ok = [n for n in slice_ if p.low <= n <= p.high]
-            if len(slice_ok) != p.pick:
-                # Try filtering all plausible numbers to this pool's range.
-                pool_pool = [n for n in plausible if p.low <= n <= p.high]
-                if len(set(pool_pool)) < p.pick:
-                    return None
-                slice_ok = sorted(set(pool_pool))[:p.pick] if p.pick > 1 else pool_pool[:1]
-            pool_values[p.name] = slice_ok
-            idx += p.pick
-
-        payload, display = _payload_combinatorial(self.game, pool_values)
-        return (date_iso, payload, display)
 
 
 # --------------------------------------------------------------------------- #
@@ -327,10 +188,121 @@ class CsvSeedParser(BaseParser):
 
 
 # --------------------------------------------------------------------------- #
+# Parser: lottoreport.de — single-page latest-draw scraper
+# --------------------------------------------------------------------------- #
+# https://www.lottoreport.de/dyn-vorw-lo.htm renders server-side and
+# contains four "carousel cards", one per game (lotto, eurojackpot,
+# gluecksspirale, keno). Each card has a <h5>Ziehung vom <Tag>, den
+# DD.MM.YYYY</h5> and then a sequence of <p class="lotto-bullet--number">
+# elements (or eurojackpot-equivalents) carrying the drawn numbers.
+#
+# This parser yields **only the most recent draw** per supported game.
+# It runs on every cron tick and progressively grows the archive.
+# --------------------------------------------------------------------------- #
+_LOTTOREPORT_URL = "https://www.lottoreport.de/dyn-vorw-lo.htm"
+
+# Map game_id → (CSS class prefix on the result block,
+#                expected pool sizes in order).
+_LOTTOREPORT_CARDS: dict[str, tuple[str, ...]] = {
+    "lotto-6aus49": ("lotto",),
+    "eurojackpot": ("eurojackpot",),
+}
+
+
+class LottoReportLatestParser(BaseParser):
+    """Latest-draw scraper for lotto-6aus49 / eurojackpot."""
+
+    def __init__(self, game_id: str):
+        super().__init__(game_id=game_id, name="lottoreport-latest")
+        self.game = GAMES[game_id]
+
+    def fetch_recent(self) -> list[DrawTuple]:
+        if self.game_id not in _LOTTOREPORT_CARDS:
+            return []
+        try:
+            with _client() as cx:
+                r = cx.get(_LOTTOREPORT_URL)
+        except httpx.HTTPError as exc:
+            log.info("[%s] lottoreport.de unreachable: %s", self.game_id, exc)
+            return []
+        if r.status_code != 200 or len(r.text) < 1000:
+            return []
+        return self._parse_card(r.text)
+
+    def fetch_archive(self, since: str | None = None) -> list[DrawTuple]:
+        # The page only ever holds one draw — same as fetch_recent.
+        return self.fetch_recent()
+
+    def _parse_card(self, html: str) -> list[DrawTuple]:
+        soup = BeautifulSoup(html, "lxml")
+        prefix = _LOTTOREPORT_CARDS[self.game_id][0]
+        block = soup.find("div", class_=f"{prefix}-result")
+        if not block:
+            return []
+
+        # Extract the date.
+        h5 = block.find("h5")
+        if not h5:
+            return []
+        date_iso = _parse_date(h5.get_text(" ", strip=True))
+        if not date_iso:
+            return []
+
+        # Extract numbers — every <p class="*--number"> in the block.
+        nums: list[int] = []
+        for p in block.find_all("p", class_=re.compile(r"--number$")):
+            txt = p.get_text(strip=True)
+            if txt.isdigit():
+                nums.append(int(txt))
+
+        if self.game_id == "lotto-6aus49":
+            # 6 main numbers + Superzahl (1 digit). lottoreport places
+            # the Superzahl as the 7th bullet styled as "superzahl";
+            # the regex above already captures it.
+            if len(nums) < 7:
+                return []
+            main = sorted(nums[:6])
+            sz = nums[6] if 0 <= nums[6] <= 9 else None
+            if sz is None:
+                return []
+            payload, display = _payload_combinatorial(
+                self.game, {"Hauptzahlen": main, "Superzahl": [sz]},
+            )
+            return [(date_iso, payload, display)]
+
+        if self.game_id == "eurojackpot":
+            # 5 main + 2 Eurozahlen
+            main = [n for n in nums if 1 <= n <= 50]
+            euro = [n for n in nums if 1 <= n <= 12]
+            # crude split: take first 5 for main, last 2 for euro
+            if len(nums) < 7:
+                return []
+            main = sorted(nums[:5])
+            euro = sorted(nums[5:7])
+            payload, display = _payload_combinatorial(
+                self.game, {"Hauptzahlen": main, "Eurozahlen": euro},
+            )
+            return [(date_iso, payload, display)]
+
+        return []
+
+
+# --------------------------------------------------------------------------- #
 # Registry
 # --------------------------------------------------------------------------- #
 PARSERS: dict[str, list[BaseParser]] = {
-    gid: [CsvSeedParser(gid), HtmlYearArchiveParser(gid)] for gid in GAMES
+    "lotto-6aus49": [
+        CsvSeedParser("lotto-6aus49"),
+        LottoReportLatestParser("lotto-6aus49"),
+    ],
+    "eurojackpot": [
+        CsvSeedParser("eurojackpot"),
+        LottoReportLatestParser("eurojackpot"),
+    ],
+    # spiel77 / super6 have no public server-side source. Operator-supplied
+    # CSV (via the seed file or POST /admin/import) is the only path.
+    "spiel77": [CsvSeedParser("spiel77")],
+    "super6": [CsvSeedParser("super6")],
 }
 
 
