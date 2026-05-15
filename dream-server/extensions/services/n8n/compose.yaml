@@ -42,6 +42,8 @@ services:
       - FINANCE_GURU_TOKEN=${FINANCE_GURU_TOKEN:-}
       # finance-social Reddit aggregator bearer token (POST /refresh).
       - FINANCE_SOCIAL_TOKEN=${FINANCE_SOCIAL_TOKEN:-}
+      # lotto-oracle tip engine bearer token (POST /refresh, /tips/generate).
+      - LOTTO_ORACLE_TOKEN=${LOTTO_ORACLE_TOKEN:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows

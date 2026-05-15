@@ -191,8 +191,8 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
   Currently exposed: `VIKUNJA_API_TOKEN`, `OPENCLAW_TOKEN`,
   `GITHUB_TOKEN`, `AGENT_*`, `FINANCE_VECTOR_TOKEN`,
   `FINANCE_PRICES_TOKEN`, `FINANCE_NEWS_TOKEN`,
-  `FINANCE_GURU_TOKEN`, `FINANCE_SOCIAL_TOKEN`, `N8N_*`,
-  `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
+  `FINANCE_GURU_TOKEN`, `FINANCE_SOCIAL_TOKEN`, `LOTTO_ORACLE_TOKEN`,
+  `N8N_*`, `WEBHOOK_URL`, `GENERIC_TIMEZONE`.
 
 * **searxng config dir has GID conflicts with rsync.** rsync emits a
   benign `chgrp … failed: Operation not permitted` for
@@ -441,4 +441,94 @@ behaviour). No new ops surface for the operator.
 > layout, daily commands, sync semantics, things that bit us).
 > SSH to the Halo Strix is `sky-net@192.168.178.110` and I have
 > `SSHPASS` exported.  Pi 5 is the `claw-pi5` ssh alias.
+
+## 13. Lotto Oracle — second tab inside Finance Guru
+
+A separate FastAPI service `lotto-oracle` (port `:8099`, locally built
+image `dream-server/lotto-oracle:0.1.0`) collects German lottery draws
+and generates suggested tips. Surfaced in the dashboard as a **second
+tab** inside the existing Finance Guru page (next to "Paper-Trade
+Strategien"). The whole feature is opt-in — sidebar shows the page if
+*either* `finance-guru-api` or `lotto-oracle` is registered.
+
+### Supported games
+
+| Service id      | Spiel                | Pool                        | Days   |
+|-----------------|----------------------|-----------------------------|--------|
+| `lotto-6aus49`  | Lotto 6 aus 49       | 6/49 + Superzahl 0–9        | Mi/Sa  |
+| `eurojackpot`   | Eurojackpot          | 5/50 + 2/12 (since 03/2022) | Di/Fr  |
+| `spiel77`       | Spiel 77             | 7-digit Losnummer           | Mi/Sa  |
+| `super6`        | Super 6              | 6-digit Spielscheinnummer   | Mi/Sa  |
+
+### Strategies
+
+Combinatorial games (6aus49, Eurojackpot):
+`recency_exclude`, `frequency_hot`, `frequency_cold`, `gap_due`,
+`balanced`, `anti_pattern`, `random_uniform`.
+Digit games (Spiel77, Super6): `recency_exclude`, `frequency_hot`,
+`frequency_cold`, `random_uniform`.
+
+`recency_exclude` is a **hard constraint**: every number / digit drawn
+in the last K=1 draws is forbidden. This guarantees the user-stated
+requirement *"die Tipps müssen sich nach jeder Ziehung ändern"*.
+
+### Auto-update cron
+
+Default: `30 3 * * 1,4` in `Europe/Berlin` (Mon + Thu at 03:30) —
+covers the Sa & Fr draws, then the Mi & Di draws. After every fetch
+the engine auto-generates a fresh tip set per game
+(`LOTTO_ORACLE_AUTO_GENERATE=1`, default on).
+
+Override per-deployment via `.env`:
+
+```env
+LOTTO_ORACLE_FETCH_CRON=30 3 * * 1,4
+LOTTO_RETENTION_YEARS=30
+LOTTO_ORACLE_TOKEN=$(openssl rand -hex 32)   # Pflicht für Write-Endpoints
+```
+
+### Real-money submission
+
+> **There is no public/legal API to submit lottery tips in Germany.**
+> lotto.de / lotto24.de / tipp24.de require a registered account +
+> payment method and only expose web forms. Affiliate REST endpoints
+> exist for licensed B2B partners only.
+>
+> The service therefore generates tips that the operator transfers
+> manually (the dashboard provides per-tip Copy buttons).
+
+If we ever want true automation, only realistic path is an official
+Lotto24 / Tipp24 affiliate contract — out of scope for this repo.
+
+### Pipeline
+
+```
+external mirror(s) ──▶ lotto-oracle ──▶ /api/lotto/* (dashboard-api proxy)
+   (lottozahlenonline.de / lotto.de)        ▲
+   /seed/<game>.csv (offline bootstrap)     │
+                                            └── dashboard "Lotto Oracle" tab
+                                                inside Finance Guru page
+```
+
+### n8n exposure
+
+`LOTTO_ORACLE_TOKEN` is bridged into `extensions/services/n8n/compose.yaml`
+(same pattern as `FINANCE_*_TOKEN`). Workflows can call the upstream
+service directly (`http://lotto-oracle:8099/refresh`) with
+`{{ $env.LOTTO_ORACLE_TOKEN }}` as the bearer.
+
+### Build order completed
+
+1. ✅ Backend: FastAPI + SQLite (`extensions/services/lotto-oracle/`)
+   with `games.py`, `store.py`, `fetchers.py`, `strategies.py`,
+   `main.py`. CSV seed bootstrap + multi-source HTML archive scraping
+   (`lottozahlenonline.de` per-year pages, `lotto.de` / `eurojackpot.de`
+   as fallback) + `/admin/import` for operator-supplied CSV.
+2. ✅ Dashboard-api proxy (`routers/lotto.py`) with bearer injection.
+3. ✅ Dashboard tab navigation in `pages/FinanceGuru.jsx` —
+   `StrategiesTab` (existing UI) + `LottoTab` (new). Sidebar entry
+   gated on either service being present (`plugins/core.js`).
+4. ✅ Strategy unit-test (recency_exclude guarantees zero overlap with
+   last draw for every game) — see `dream-server/extensions/services/lotto-oracle/`
+   smoke test in commit history.
 

@@ -1,0 +1,22 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: lotto-oracle
+  name: Lotto Oracle (Tip Engine)
+  aliases: [lotto, lotto-guru]
+  container_name: dream-lotto-oracle
+  host_env: LOTTO_ORACLE_HOST
+  default_host: lotto-oracle
+  port: 8099
+  external_port_env: LOTTO_ORACLE_PORT
+  external_port_default: 8099
+  health: /health
+  type: docker
+  gpu_backends: [all]
+  compose_file: compose.yaml
+  category: optional
+  depends_on: []
+

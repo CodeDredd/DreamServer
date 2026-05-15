@@ -1,0 +1,574 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  Ticket, RefreshCw, Loader2, Play, Database, AlertCircle,
+  Calendar, Clock, Sparkles, Copy, Check, Info,
+} from 'lucide-react'
+
+// ---------------------------------------------------------------------------
+// Lotto Oracle — second tab inside the Finance Guru page.
+//
+// Talks to /api/lotto/* on dashboard-api which proxies the lotto-oracle
+// service. Handles all four supported games (lotto-6aus49, eurojackpot,
+// spiel77, super6) — game type drives whether we render number balls or
+// digit strings.
+// See AGENT-OPERATIONS.md §13.
+// ---------------------------------------------------------------------------
+
+const POLL_MS = 60_000
+
+function relTime(ts) {
+  if (!ts) return '—'
+  const t = new Date(ts).getTime()
+  if (Number.isNaN(t)) return '—'
+  const diffSec = Math.round((Date.now() - t) / 1000)
+  if (diffSec < 60) return `${diffSec}s ago`
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
+  return `${Math.floor(diffSec / 86400)}d ago`
+}
+
+function formatDate(iso) {
+  if (!iso) return '—'
+  try {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('de-DE', {
+      weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+    })
+  } catch {
+    return iso
+  }
+}
+
+export default function LottoTab() {
+  const [status, setStatus]     = useState(null)
+  const [games, setGames]       = useState([])
+  const [selectedId, setSelectedId] = useState(null)
+  const [draws, setDraws]       = useState([])
+  const [tipsRun, setTipsRun]   = useState(null)
+  const [stats, setStats]       = useState(null)
+  const [strategies, setStrategies] = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [error, setError]       = useState(null)
+  const [busy, setBusy]         = useState(null)   // 'refresh' | 'generate' | 'backfill'
+  const [busyMsg, setBusyMsg]   = useState(null)
+  const [copied, setCopied]     = useState(null)
+
+  // ── data load ─────────────────────────────────────────────────────────
+  const fetchOverview = useCallback(async () => {
+    try {
+      const sRes = await fetch('/api/lotto/status')
+      const sBody = sRes.ok ? await sRes.json() : null
+      setStatus(sBody)
+      if (!sRes.ok || !sBody?.available) {
+        setError(sBody?.message || `dashboard-api returned HTTP ${sRes.status}`)
+        setLoading(false)
+        return
+      }
+      const gRes = await fetch('/api/lotto/games')
+      if (!gRes.ok) throw new Error(`/api/lotto/games HTTP ${gRes.status}`)
+      const gBody = await gRes.json()
+      setGames(gBody.games || [])
+      setSelectedId((cur) => cur || (gBody.games?.[0]?.id ?? null))
+      setError(null)
+    } catch (e) {
+      setError(e?.message || String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const fetchSelected = useCallback(async (gameId) => {
+    if (!gameId) return
+    try {
+      const [drawRes, tipsRes, statsRes, stratRes] = await Promise.all([
+        fetch(`/api/lotto/draws?game=${encodeURIComponent(gameId)}&limit=20`),
+        fetch(`/api/lotto/tips?game=${encodeURIComponent(gameId)}`),
+        fetch(`/api/lotto/stats?game=${encodeURIComponent(gameId)}`),
+        fetch(`/api/lotto/games/${encodeURIComponent(gameId)}/strategies`),
+      ])
+      setDraws(drawRes.ok ? (await drawRes.json()).draws || [] : [])
+      setTipsRun(tipsRes.ok ? (await tipsRes.json()).run : null)
+      setStats(statsRes.ok ? await statsRes.json() : null)
+      setStrategies(stratRes.ok ? (await stratRes.json()).strategies || [] : [])
+    } catch (e) {
+      setError(e?.message || String(e))
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchOverview()
+    const id = setInterval(fetchOverview, POLL_MS)
+    return () => clearInterval(id)
+  }, [fetchOverview])
+
+  useEffect(() => { fetchSelected(selectedId) }, [selectedId, fetchSelected])
+
+  const selectedGame = useMemo(
+    () => games.find((g) => g.id === selectedId) || null,
+    [games, selectedId],
+  )
+
+  // ── actions ───────────────────────────────────────────────────────────
+  const doAction = useCallback(async (kind) => {
+    setBusy(kind)
+    setBusyMsg(null)
+    try {
+      let res
+      if (kind === 'refresh') {
+        res = await fetch('/api/lotto/refresh', { method: 'POST' })
+      } else if (kind === 'backfill') {
+        res = await fetch('/api/lotto/refresh/full', { method: 'POST' })
+      } else if (kind === 'generate') {
+        res = await fetch('/api/lotto/tips/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(selectedId ? { game: selectedId } : {}),
+        })
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setBusyMsg({ tone: 'error', text: body?.detail || `HTTP ${res.status}` })
+      } else {
+        setBusyMsg({
+          tone: 'ok',
+          text: kind === 'backfill'
+            ? 'Backfill gestartet — kann 1-3 Minuten dauern.'
+            : kind === 'refresh'
+              ? 'Inkrementeller Fetch gestartet.'
+              : 'Neue Tipps generiert.',
+        })
+        setTimeout(() => { fetchOverview(); fetchSelected(selectedId) }, 1500)
+      }
+    } catch (e) {
+      setBusyMsg({ tone: 'error', text: e?.message || String(e) })
+    } finally {
+      setBusy(null)
+    }
+  }, [selectedId, fetchOverview, fetchSelected])
+
+  const handleCopy = useCallback(async (key, text) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(key)
+      setTimeout(() => setCopied(null), 1500)
+    } catch { /* ignore */ }
+  }, [])
+
+  // ── render ────────────────────────────────────────────────────────────
+  if (loading && !games.length) {
+    return (
+      <div className="p-8">
+        <div className="animate-pulse">
+          <div className="h-8 bg-theme-card rounded w-1/3 mb-8" />
+          <div className="h-32 bg-theme-card rounded-xl mb-6" />
+          <div className="h-64 bg-theme-card rounded-xl" />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-8">
+      {/* Header */}
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-theme-text flex items-center gap-2">
+            <Ticket size={26} className="text-theme-accent" />
+            Lotto Oracle
+          </h1>
+          <p className="text-theme-text-muted mt-1 max-w-2xl">
+            Sammelt Ziehungen (Lotto 6 aus 49, Eurojackpot, Spiel 77, Super 6)
+            und generiert nach jeder Ziehung neue Tipps via mehrerer Strategien.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { fetchOverview(); fetchSelected(selectedId) }}
+            className="p-2 text-theme-text-muted hover:text-theme-text hover:bg-theme-surface-hover rounded-lg transition-colors"
+            title="Refresh"
+          >
+            <RefreshCw size={20} />
+          </button>
+          <button
+            type="button"
+            onClick={() => doAction('refresh')}
+            disabled={!!busy || !status?.available}
+            className="px-3 py-2 text-sm font-medium border border-theme-border rounded-lg hover:border-theme-accent disabled:opacity-50 flex items-center gap-2"
+            title="Inkrementell neue Ziehungen abholen"
+          >
+            {busy === 'refresh' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+            Fetch
+          </button>
+          <button
+            type="button"
+            onClick={() => doAction('backfill')}
+            disabled={!!busy || !status?.available}
+            className="px-3 py-2 text-sm font-medium border border-theme-border rounded-lg hover:border-theme-accent disabled:opacity-50 flex items-center gap-2"
+            title="Komplette Historie nachladen (kann Minuten dauern)"
+          >
+            {busy === 'backfill' ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+            Backfill
+          </button>
+          <button
+            type="button"
+            onClick={() => doAction('generate')}
+            disabled={!!busy || !status?.available || !selectedId}
+            className="px-3 py-2 text-sm font-medium bg-theme-accent text-theme-bg rounded-lg hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+            title="Neue Tipps für die ausgewählte Spielart generieren"
+          >
+            {busy === 'generate' ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            Tipps generieren
+          </button>
+        </div>
+      </div>
+
+      {/* Submission-API hinweis */}
+      <SubmissionNotice notice={status?.submission_api} />
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-start gap-2">
+          <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <div>
+            <div className="font-medium mb-1">lotto-oracle nicht erreichbar</div>
+            <div className="opacity-80">{error}</div>
+            <div className="opacity-60 mt-1 text-xs">
+              Prüfe <code className="font-mono">dream status lotto-oracle</code> auf dem Host.
+            </div>
+          </div>
+        </div>
+      )}
+      {busyMsg && (
+        <div
+          className={`mb-6 p-3 rounded-lg text-sm ${
+            busyMsg.tone === 'ok'
+              ? 'bg-green-500/10 border border-green-500/30 text-green-400'
+              : 'bg-red-500/10 border border-red-500/30 text-red-400'
+          }`}
+        >
+          {busyMsg.text}
+        </div>
+      )}
+
+      {/* Game selector cards */}
+      <div className="mb-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {games.map((g) => {
+          const active = g.id === selectedId
+          return (
+            <button
+              type="button"
+              key={g.id}
+              onClick={() => setSelectedId(g.id)}
+              className={`p-4 rounded-xl text-left border transition-colors ${
+                active
+                  ? 'bg-theme-card border-theme-accent'
+                  : 'bg-theme-card border-theme-border hover:border-theme-accent/50'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-medium text-theme-text">{g.label}</span>
+                <span className="text-xs text-theme-text-muted">{g.n_draws} Ziehungen</span>
+              </div>
+              <div className="text-xs text-theme-text-muted">
+                {g.kind === 'digit'
+                  ? `${g.digits}-stellige Losnummer`
+                  : g.pools?.map((p) => `${p.pick}/${p.high}`).join(' + ')}
+              </div>
+              <div className="text-xs text-theme-text-muted mt-1 flex items-center gap-1">
+                <Calendar size={11} /> {(g.draw_days || []).join(' · ').toUpperCase()}
+              </div>
+              <div className="text-xs text-theme-text-muted mt-1">
+                Letzte: <span className="font-mono">{formatDate(g.last_in_db)}</span>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Schedule strip */}
+      {status?.schedule && (
+        <div className="mb-6 p-3 bg-theme-card border border-theme-border rounded-lg flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-theme-text-muted">
+          <span className="flex items-center gap-1">
+            <Clock size={12} /> Auto-Update Cron <code className="font-mono">{status.schedule.cron}</code> ({status.schedule.tz})
+          </span>
+          <span>• Tipps werden nach jedem Fetch automatisch neu generiert</span>
+          <span>• Quelle: lotto-oracle</span>
+        </div>
+      )}
+
+      {/* Two-column detail */}
+      {selectedGame && (
+        <div className="grid lg:grid-cols-3 gap-6">
+          {/* Left: tips */}
+          <div className="lg:col-span-2 space-y-6">
+            <TipsCard
+              game={selectedGame}
+              run={tipsRun}
+              strategies={strategies}
+              copied={copied}
+              onCopy={handleCopy}
+            />
+            <DrawsCard game={selectedGame} draws={draws} />
+          </div>
+
+          {/* Right: stats */}
+          <div className="lg:col-span-1">
+            <StatsCard game={selectedGame} stats={stats} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function SubmissionNotice({ notice }) {
+  if (!notice) return null
+  return (
+    <div className="mb-6 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-xs flex items-start gap-2">
+      <Info size={14} className="shrink-0 mt-0.5" />
+      <div>
+        <span className="font-medium">Keine reale Tippabgabe via API möglich.</span>
+        {' '}{notice.note}
+      </div>
+    </div>
+  )
+}
+
+
+function TipsCard({ game, run, strategies, copied, onCopy }) {
+  const tips = run?.tips || []
+  const strategyMap = useMemo(() => {
+    const m = new Map()
+    for (const s of strategies) m.set(s.name, s)
+    return m
+  }, [strategies])
+
+  return (
+    <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-theme-border flex items-center gap-2">
+        <Sparkles size={14} className="text-theme-text-muted" />
+        <h4 className="text-sm font-semibold text-theme-text">
+          Vorschläge ({tips.length})
+        </h4>
+        <span className="ml-auto text-xs text-theme-text-muted">
+          {run
+            ? `generiert ${relTime(run.generated_at)} · basierend auf ${run.based_on_draw || '—'}`
+            : 'Noch keine Tipps generiert — auf "Tipps generieren" klicken.'}
+        </span>
+      </div>
+      {tips.length ? (
+        <ul className="divide-y divide-theme-border">
+          {tips.map((t, i) => {
+            const meta = strategyMap.get(t.strategy)
+            const copyKey = `tip-${i}`
+            return (
+              <li key={i} className="px-5 py-4">
+                <div className="flex items-start justify-between gap-3 mb-2">
+                  <div>
+                    <div className="text-xs font-mono uppercase tracking-wider text-theme-accent">
+                      {meta?.label || t.strategy}
+                    </div>
+                    {(meta?.description || t.rationale) && (
+                      <div className="text-xs text-theme-text-muted mt-0.5 max-w-xl">
+                        {meta?.description}
+                        {meta?.description && t.rationale && ' · '}
+                        {t.rationale && <span className="italic">{t.rationale}</span>}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onCopy(copyKey, t.display)}
+                    className="text-xs text-theme-text-muted hover:text-theme-text flex items-center gap-1"
+                    title="Tipp in die Zwischenablage kopieren"
+                  >
+                    {copied === copyKey
+                      ? <><Check size={12} /> kopiert</>
+                      : <><Copy size={12} /> kopieren</>}
+                  </button>
+                </div>
+                <TipDisplay game={game} tip={t} />
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <div className="px-5 py-8 text-sm text-theme-text-muted text-center">
+          Noch keine Vorschläge. Klicke oben auf <strong>Tipps generieren</strong>.
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function TipDisplay({ game, tip }) {
+  if (game.kind === 'digit') {
+    return (
+      <div className="flex items-center gap-1 font-mono text-2xl tracking-widest text-theme-text">
+        {(tip.digits || '').split('').map((d, i) => (
+          <span
+            key={i}
+            className="inline-flex items-center justify-center w-9 h-11 rounded bg-theme-surface-hover border border-theme-border"
+          >
+            {d}
+          </span>
+        ))}
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      {game.pools.map((p) => {
+        const nums = tip[p.name] || []
+        return (
+          <div key={p.name} className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-theme-text-muted w-28 shrink-0">{p.name}</span>
+            {nums.map((n, i) => (
+              <NumberBall key={i} value={n} pad={p.high >= 10} accent={p.name !== 'Hauptzahlen'} />
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+
+function NumberBall({ value, pad, accent }) {
+  const cls = accent
+    ? 'bg-theme-accent text-theme-bg'
+    : 'bg-theme-surface-hover text-theme-text border border-theme-border'
+  return (
+    <span
+      className={`inline-flex items-center justify-center w-9 h-9 rounded-full text-sm font-mono font-semibold ${cls}`}
+    >
+      {pad ? String(value).padStart(2, '0') : value}
+    </span>
+  )
+}
+
+
+function DrawsCard({ game, draws }) {
+  return (
+    <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-theme-border flex items-center gap-2">
+        <Calendar size={14} className="text-theme-text-muted" />
+        <h4 className="text-sm font-semibold text-theme-text">
+          Letzte Ziehungen ({draws.length})
+        </h4>
+      </div>
+      {draws.length ? (
+        <ul className="divide-y divide-theme-border">
+          {draws.map((d, i) => (
+            <li key={i} className="px-5 py-3 flex items-start gap-4">
+              <div className="text-xs font-mono text-theme-text-muted w-24 shrink-0 mt-1">
+                {formatDate(d.draw_date)}
+              </div>
+              <div className="flex-1">
+                <TipDisplay game={game} tip={d} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="px-5 py-6 text-sm text-theme-text-muted">
+          Keine Ziehungen geladen — bitte zuerst <strong>Backfill</strong> klicken.
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function StatsCard({ game, stats }) {
+  if (!stats || stats.n === 0) {
+    return (
+      <div className="bg-theme-card border border-theme-border rounded-xl p-5 text-sm text-theme-text-muted">
+        Keine Statistik verfügbar (noch keine Ziehungen).
+      </div>
+    )
+  }
+
+  if (game.kind === 'digit') {
+    return (
+      <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-theme-border">
+          <h4 className="text-sm font-semibold text-theme-text">
+            Häufigkeit pro Position
+          </h4>
+          <div className="text-xs text-theme-text-muted">
+            über {stats.n} Ziehung(en)
+          </div>
+        </div>
+        <div className="p-5 space-y-3">
+          {(stats.per_position || []).map((pp) => {
+            const max = Math.max(1, ...pp.frequency.map((f) => f.count))
+            return (
+              <div key={pp.position}>
+                <div className="text-xs text-theme-text-muted mb-1">Position {pp.position + 1}</div>
+                <div className="flex items-end gap-1 h-12">
+                  {pp.frequency.map((f) => (
+                    <div key={f.digit} className="flex-1 flex flex-col items-center gap-0.5">
+                      <div
+                        className="w-full bg-theme-accent/60 rounded-sm"
+                        style={{ height: `${(f.count / max) * 100}%`, minHeight: '2px' }}
+                        title={`Ziffer ${f.digit}: ${f.count}×`}
+                      />
+                      <span className="text-[10px] text-theme-text-muted font-mono">{f.digit}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // Combinatorial: show frequency for the main pool only.
+  const mainPool = game.pools[0]
+  const data = stats[mainPool.name]?.frequency || []
+  const max = Math.max(1, ...data.map((d) => d.count))
+
+  return (
+    <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-theme-border">
+        <h4 className="text-sm font-semibold text-theme-text">
+          Frequenz: {mainPool.name}
+        </h4>
+        <div className="text-xs text-theme-text-muted">
+          über {stats.n} Ziehung(en) · Erwartet pro Zahl: ~{Math.round(stats.n * mainPool.pick / (mainPool.high - mainPool.low + 1))}×
+        </div>
+      </div>
+      <div className="p-5">
+        <div className="grid grid-cols-7 gap-1">
+          {data.map((row) => {
+            const heat = row.count / max
+            const bg = `rgba(56, 189, 248, ${0.15 + heat * 0.7})`
+            return (
+              <div
+                key={row.number}
+                className="text-center text-xs font-mono py-1 rounded"
+                style={{ background: bg, color: heat > 0.6 ? '#0b1220' : undefined }}
+                title={`${row.number}: ${row.count}× (Gap ${row.gap})`}
+              >
+                {String(row.number).padStart(2, '0')}
+              </div>
+            )
+          })}
+        </div>
+        <div className="mt-3 text-xs text-theme-text-muted">
+          Helle Felder = häufiger gezogen. Hover für genaue Zählung + aktuelle
+          Pause (Gap) seit letzter Ziehung.
+        </div>
+      </div>
+    </div>
+  )
+}
+

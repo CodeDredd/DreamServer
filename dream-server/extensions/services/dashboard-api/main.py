@@ -662,6 +662,7 @@ app.include_router(auth_router.router)
 app.include_router(magic_link.router)
 app.include_router(tailscale.router)
 app.include_router(finance_guru.router)
+app.include_router(lotto.router)
 
 
 # ================================================================

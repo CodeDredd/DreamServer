@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   TrendingUp, RefreshCw, AlertCircle, Play, Loader2,
   Wallet, Activity, Target, Clock, Info,
+  LineChart, Ticket,
 } from 'lucide-react'
+import LottoTab from './LottoTab'
 
 // ---------------------------------------------------------------------------
 // Finance Guru — paper-trade strategy engine dashboard tab.
@@ -52,6 +54,70 @@ function pnlColorClass(pct) {
 }
 
 export default function FinanceGuru() {
+  // Tab navigation — § 13 of AGENT-OPERATIONS.md added the Lotto tab.
+  // Strategies tab (default) keeps the original paper-trade UI 1:1;
+  // Lotto tab is fully self-contained in <LottoTab/> and talks to
+  // /api/lotto/* on dashboard-api (proxy → lotto-oracle).
+  const [tab, setTab] = useState(() => {
+    if (typeof window === 'undefined') return 'strategies'
+    const fromHash = (window.location.hash || '').replace('#', '').trim()
+    return fromHash === 'lotto' ? 'lotto' : 'strategies'
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (tab === 'strategies') {
+      if (window.location.hash) {
+        history.replaceState(null, '', window.location.pathname + window.location.search)
+      }
+    } else {
+      window.location.hash = tab
+    }
+  }, [tab])
+
+  return (
+    <div>
+      <FinanceGuruTabs current={tab} onChange={setTab} />
+      {tab === 'strategies' && <StrategiesTab />}
+      {tab === 'lotto' && <LottoTab />}
+    </div>
+  )
+}
+
+function FinanceGuruTabs({ current, onChange }) {
+  const tabs = [
+    { id: 'strategies', label: 'Paper-Trade Strategien', icon: LineChart },
+    { id: 'lotto',      label: 'Lotto Oracle',           icon: Ticket },
+  ]
+  return (
+    <div className="px-8 pt-6 border-b border-theme-border">
+      <div className="flex items-center gap-1">
+        {tabs.map((t) => {
+          const Icon = t.icon
+          const active = current === t.id
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onChange(t.id)}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 transition-colors ${
+                active
+                  ? 'border-theme-accent text-theme-text'
+                  : 'border-transparent text-theme-text-muted hover:text-theme-text hover:border-theme-border'
+              }`}
+            >
+              <Icon size={16} />
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+
+function StrategiesTab() {
   const [status, setStatus] = useState(null)
   const [strategies, setStrategies] = useState([])
   const [scheduleInfo, setScheduleInfo] = useState(null)

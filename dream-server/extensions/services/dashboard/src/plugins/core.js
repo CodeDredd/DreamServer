@@ -100,11 +100,11 @@ export const coreRoutes = [
     order: 4,
   },
   {
-    // Finance Guru — paper-trade strategy engine. Sidebar entry only
-    // appears when the upstream finance-guru-api service is registered
-    // in the dashboard's service inventory; route stays reachable so
-    // first-time setup can land here directly via URL.
-    // See AGENT-OPERATIONS.md §11.
+    // Finance Guru — paper-trade strategy engine + Lotto Oracle tab.
+    // Sidebar entry appears when *either* finance-guru-api or
+    // lotto-oracle is registered in the dashboard's service inventory;
+    // route stays reachable so first-time setup can land here directly
+    // via URL. See AGENT-OPERATIONS.md §11 + §13.
     id: 'finance-guru',
     path: '/finance-guru',
     label: 'Finance Guru',
@@ -114,10 +114,13 @@ export const coreRoutes = [
     sidebar: ({ status }) =>
       (status?.services || []).some((s) => {
         // Service inventory exposes the human-readable name (e.g.
-        // "Finance Guru API (Strategy Engine)"), not the service id.
-        // Match either spelling defensively.
+        // "Finance Guru API (Strategy Engine)" / "Lotto Oracle (Tip Engine)"),
+        // not the service id. Match either spelling defensively.
         const n = (s.name || '').toLowerCase()
-        return n.includes('finance guru') || n.includes('finance-guru')
+        return n.includes('finance guru')
+            || n.includes('finance-guru')
+            || n.includes('lotto oracle')
+            || n.includes('lotto-oracle')
       }),
     order: 4.5,
   },

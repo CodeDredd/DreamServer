@@ -234,6 +234,22 @@ FINANCE_GURU_URL = os.environ.get("FINANCE_GURU_URL", _default_finance_guru_url(
 FINANCE_GURU_TOKEN = os.environ.get("FINANCE_GURU_TOKEN", "") or _read_env_from_file("FINANCE_GURU_TOKEN")
 
 
+# --- Lotto Oracle (tip engine, see extensions/services/lotto-oracle/README.md) ---
+
+def _default_lotto_oracle_url() -> str:
+    cfg = SERVICES.get("lotto-oracle", {})
+    host = cfg.get("host", "lotto-oracle")
+    port = cfg.get("port", 8099)
+    return f"http://{host}:{port}"
+
+
+LOTTO_ORACLE_URL = os.environ.get("LOTTO_ORACLE_URL", _default_lotto_oracle_url())
+# Bearer token guarding write endpoints on lotto-oracle. Read endpoints
+# are public on the dream-network so the dashboard proxy can call them
+# without a secret.
+LOTTO_ORACLE_TOKEN = os.environ.get("LOTTO_ORACLE_TOKEN", "") or _read_env_from_file("LOTTO_ORACLE_TOKEN")
+
+
 # --- Setup / Personas ---
 
 SETUP_CONFIG_DIR = Path(DATA_DIR) / "config"

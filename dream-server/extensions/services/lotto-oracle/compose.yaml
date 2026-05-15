@@ -1,0 +1,59 @@
+services:
+  lotto-oracle:
+    build:
+      context: ./extensions/services/lotto-oracle
+      dockerfile: Dockerfile
+    image: dream-server/lotto-oracle:0.1.0
+    container_name: dream-lotto-oracle
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - LOTTO_ORACLE_PORT=8099
+      # ── SQLite store (draws + generated tips) ─────────────────────────
+      - LOTTO_ORACLE_DB_PATH=/data/lotto.sqlite
+      # ── Cron for incremental fetch ────────────────────────────────────
+      # Default: every Mon/Thu 03:30 (after Wed/Sat draws are published
+      # and after Tue/Fri Eurojackpot is published). Override per-service
+      # with LOTTO_ORACLE_FETCH_CRON. The seed script (one-off, on first
+      # boot) fetches the full archive — see README.
+      - LOTTO_ORACLE_FETCH_CRON=${LOTTO_ORACLE_FETCH_CRON:-30 3 * * 1,4}
+      - LOTTO_ORACLE_TZ=${TIMEZONE:-Europe/Berlin}
+      # ── Auto-generate tip suggestions after each fetch ────────────────
+      - LOTTO_ORACLE_AUTO_GENERATE=${LOTTO_ORACLE_AUTO_GENERATE:-1}
+      # ── Auth for write endpoints (POST /refresh, POST /tips/generate) ─
+      - LOTTO_ORACLE_TOKEN=${LOTTO_ORACLE_TOKEN:-}
+      # ── Source URL templates (override only if the defaults break) ────
+      # The fetcher tries multiple sources; see app/fetchers.py.
+      - LOTTO_FETCH_TIMEOUT_SEC=${LOTTO_FETCH_TIMEOUT_SEC:-20}
+      - LOTTO_FETCH_USER_AGENT=${LOTTO_FETCH_USER_AGENT:-DreamServerLottoOracle/0.1 (+https://github.com/Light-Heart-Labs/DreamServer)}
+      # ── How many years of history to keep on disk ─────────────────────
+      - LOTTO_RETENTION_YEARS=${LOTTO_RETENTION_YEARS:-30}
+    volumes:
+      - ./data/lotto-oracle:/data
+      # Bundled bootstrap CSVs (committed to repo — see seed_data/) so a
+      # fresh install has at least the recent year's history without any
+      # outbound HTTP. The fetcher backfills the rest.
+      - ./extensions/services/lotto-oracle/seed_data:/seed:ro
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${LOTTO_ORACLE_PORT:-8099}:8099"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
