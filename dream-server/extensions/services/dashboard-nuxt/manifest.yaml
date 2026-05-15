@@ -1,0 +1,26 @@
+schema_version: dream.services.v1
+
+compatibility:
+  dream_min: "2.0.0"
+
+service:
+  id: dashboard-nuxt
+  name: Dashboard NG (Nuxt — experimental, parallel to dashboard)
+  aliases: []
+  container_name: dream-dashboard-nuxt
+  default_host: dashboard-nuxt
+  port: 3011
+  external_port_env: DASHBOARD_NUXT_PORT
+  external_port_default: 3011
+  health: /api/health
+  ui_path: /
+  type: docker
+  gpu_backends: [amd, nvidia]
+  category: experimental
+  depends_on: [dashboard-api]
+  notes: |
+    Parallelbetrieb zur React-Dashboard-Variante (`dashboard`, Port 3001).
+    Migrationsplan + Phasen siehe `dream-server/docs/DASHBOARD-NUXT-MIGRATION.md`.
+    Service ist standardmäßig disabled — `dream enable dashboard-nuxt`
+    erst nachdem `dream build dashboard-nuxt` einmal erfolgreich war.
+

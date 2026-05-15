@@ -550,3 +550,33 @@ service directly (`http://lotto-oracle:8100/refresh`) with
    last draw for every game) — see `dream-server/extensions/services/lotto-oracle/`
    smoke test in commit history.
 
+## 14. Dashboard NG — Nuxt-Migration (`dashboard-nuxt`)
+
+Parallelbetrieb-Service zur React-Variante. Grundgerüst liegt in
+`dream-server/extensions/services/dashboard-nuxt/` (Phase 0,
+disabled-by-default), Vollplan in
+[`dream-server/docs/DASHBOARD-NUXT-MIGRATION.md`](dream-server/docs/DASHBOARD-NUXT-MIGRATION.md).
+
+| Punkt | Wert |
+|---|---|
+| Service-ID | `dashboard-nuxt` |
+| Port | `3011` (parallel zu `dashboard:3001`) |
+| Stack | Nuxt 4 (SPA), Nuxt UI v3, Pinia + Pinia ORM, VueUse, Nitro `/api/`-Proxy |
+| API | unverändert `dashboard-api:3002` — keine Änderungen am FastAPI-Backend |
+| Status | Phase 0 (Skelett); Phase 1–7 siehe Migrationsplan |
+| Cutover | nach 14 Tagen Soak → Port-Swap (`dashboard-nuxt` zieht auf `:3001`) |
+
+Operator-Workflow nach Phase 1:
+
+```bash
+# einmalig nach Build-bereit-Stand
+ssh sky-net@192.168.178.110 'dream build dashboard-nuxt && dream enable dashboard-nuxt && dream restart dashboard-nuxt'
+# wieder abschalten
+ssh sky-net@192.168.178.110 'dream disable dashboard-nuxt'
+```
+
+Disabled-by-default-Liste (siehe §3) wird um `dashboard-nuxt`
+ergänzt — der Service darf in Phase 0 nicht versehentlich
+hochgezogen werden, da `package.json`/`nuxt.config.ts` erst in
+Phase 1 hinzukommen.
+

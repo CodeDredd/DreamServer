@@ -1,0 +1,51 @@
+# Disabled by default — siehe README.md.
+# `dream enable dashboard-nuxt` flippt diese Datei zu `compose.yaml`.
+#
+# Lebt parallel zum produktiven `dashboard`-Service (Port 3001) auf
+# Port 3011. Spricht dieselbe `dashboard-api` (interner DNS-Name
+# `dashboard-api:3002`).
+
+services:
+  dashboard-nuxt:
+    build:
+      context: ./extensions/services/dashboard-nuxt
+      dockerfile: Dockerfile
+    image: dream-server/dashboard-nuxt:0.1.0
+    container_name: dream-dashboard-nuxt
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Bearer wird im Nitro-Server-Middleware injiziert; gleicher
+      # Mechanismus wie bei der React-Variante (dort über nginx).
+      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY:-}
+      - NUXT_API_BASE_INTERNAL=http://dashboard-api:3002
+      - NITRO_PORT=3011
+      - NITRO_HOST=0.0.0.0
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_NUXT_PORT:-3011}:3011"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+    depends_on:
+      dashboard-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3011/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - default
+
+networks:
+  default:
+    name: dream-network
+    external: true
+
