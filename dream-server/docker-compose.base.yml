@@ -228,6 +228,10 @@ services:
       # write endpoints (/decide, /backtest).
       - FINANCE_GURU_URL=${FINANCE_GURU_URL:-http://finance-guru-api:8098}
       - FINANCE_GURU_TOKEN=${FINANCE_GURU_TOKEN:-}
+      # Lotto Oracle proxy (see AGENT-OPERATIONS.md §13). Bearer
+      # injected server-side so the browser never sees the secret.
+      - LOTTO_ORACLE_URL=${LOTTO_ORACLE_URL:-http://lotto-oracle:8100}
+      - LOTTO_ORACLE_TOKEN=${LOTTO_ORACLE_TOKEN:-}
     volumes:
       - ./scripts:/dream-server/scripts:ro
       - ./config:/dream-server/config:ro
