@@ -55,6 +55,11 @@ export default function LottoTab() {
   // K when a game is opened (instead of being stuck on whatever K the
   // bootstrap happened to use, which is always 1).
   const userPickedKRef = useRef(false)
+  // One-shot trigger: when fetchSelected detects that the persisted
+  // tip-run was generated with a K that doesn't match the empirical
+  // sweet-spot, it parks the desired K here so a follow-up effect can
+  // kick off a regenerate exactly once. Cleared by the effect.
+  const autoRegenRef = useRef(null)
   const [activeStrategy, setActiveStrategy] = useState(null)
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
@@ -115,6 +120,17 @@ export default function LottoTab() {
                     : typeof usedK === 'number' ? usedK
                     : 1)
         setRecencyK(next)
+        // If the persisted tip run used a *different* K than what we
+        // just auto-picked, the rationale lines on screen would still
+        // read e.g. "letzte 1 Ziehung(en)" while the selector shows 3.
+        // Trigger a one-shot regenerate so the displayed tips match
+        // the selector. Only fires when the run is actually stale
+        // (different K) — not on every poll.
+        if (typeof recommended === 'number'
+            && typeof usedK === 'number'
+            && usedK !== recommended) {
+          autoRegenRef.current = { gameId, k: recommended }
+        }
       }
     } catch (e) {
       setError(e?.message || String(e))
@@ -190,10 +206,23 @@ export default function LottoTab() {
   // user has to click "Tipps generieren" afterwards, which is what
   // confused the operator.
   const handleKChange = useCallback((newK) => {
+    if (newK === recencyK) return
     userPickedKRef.current = true
     setRecencyK(newK)
     if (selectedId) doAction('generate', { recencyK: newK })
-  }, [selectedId, doAction])
+  }, [recencyK, selectedId, doAction])
+
+  // Drain the auto-regen request queued by fetchSelected (when the
+  // persisted tip-run's K differs from the recommended one). Fires
+  // exactly once per game-load and keeps the rationale text consistent
+  // with whatever the selector shows.
+  useEffect(() => {
+    const pending = autoRegenRef.current
+    if (!pending || pending.gameId !== selectedId) return
+    if (busy) return  // wait for any in-flight action
+    autoRegenRef.current = null
+    doAction('generate', { recencyK: pending.k })
+  }, [selectedId, tipsRun, busy, doAction])
 
   const handleCopy = useCallback(async (key, text) => {
     try {
@@ -679,25 +708,48 @@ function RecencyKSelector({ value, onChange, sweetSpot, disabled, busy }) {
   const recommended = sweetSpot?.recommended_k
   const options = [1, 2, 3, 4, 5]
   return (
-    <label
+    <div
       className="flex items-center gap-2 text-xs text-theme-text-muted px-2 py-1.5 rounded-lg border border-theme-border bg-theme-card"
-      title="Wie viele der jüngsten Ziehungen soll die recency_exclude-Strategie ausschließen? Eine Änderung generiert sofort neue Tipps mit dem gewählten K."
+      title="Wie viele der jüngsten Ziehungen soll die recency_exclude-Strategie ausschließen? Ein Klick generiert sofort neue Tipps mit dem gewählten K."
     >
       <span className="font-medium">Recency K</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        disabled={disabled}
-        className="bg-transparent text-theme-text font-mono text-sm focus:outline-none disabled:opacity-50 cursor-pointer"
-      >
-        {options.map((k) => (
-          <option key={k} value={k}>
-            {k}{recommended === k ? '  ✓ empfohlen' : ''}
-          </option>
-        ))}
-      </select>
-      {busy && <Loader2 size={12} className="animate-spin text-theme-accent" />}
-    </label>
+      <div className="flex items-center gap-0.5" role="group" aria-label="Recency K wählen">
+        {options.map((k) => {
+          const isActive = k === value
+          const isRec    = k === recommended
+          let cls = 'border border-transparent text-theme-text-muted hover:bg-theme-surface-hover hover:text-theme-text'
+          if (isActive) {
+            cls = 'border border-theme-accent bg-theme-accent text-theme-bg font-semibold'
+          } else if (isRec) {
+            cls = 'border border-emerald-500/50 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+          }
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => onChange(k)}
+              disabled={disabled}
+              className={`w-7 h-7 rounded-md font-mono text-sm flex items-center justify-center transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${cls}`}
+              title={
+                isRec
+                  ? `K=${k} — empirisch empfohlener Wert (Sweet-Spot)`
+                  : `K=${k} — recency_exclude wird die letzten ${k} Ziehung(en) ausschließen`
+              }
+            >
+              {k}
+            </button>
+          )
+        })}
+      </div>
+      {busy
+        ? <Loader2 size={12} className="animate-spin text-theme-accent" />
+        : recommended && recommended !== value && (
+            <span className="text-[10px] text-emerald-400 ml-1">
+              Empfohlen: {recommended}
+            </span>
+          )
+      }
+    </div>
   )
 }
 
