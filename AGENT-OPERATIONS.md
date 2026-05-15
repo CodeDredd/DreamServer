@@ -213,6 +213,22 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
   its own UID/GID.  One-off fix:
   `sudo chgrp -R sky-net ~/dream-server/config/searxng/`.  Not blocking.
 
+* **`dream <cmd> --rebuild-images` skipped new services.**
+  `_dream_cli_rebuild_images()` had a hardcoded service list
+  (`dashboard dashboard-api ape token-spy privacy-shield` + a few
+  conditionals) and silently passed over every newer locally-built
+  service (dashboard-nuxt, finance-vector, lotto-oracle, finance-*).
+  Replaced with auto-discovery (`_service_has_build()` mirrors
+  `service_needs_build()` from sync-from-repo.sh; scans
+  `extensions/services/<sid>/compose.yaml`, user-extensions, and
+  every `docker-compose.*.yml` overlay). Scoped runs use the new
+  `--service <sid>` flag.
+
+* **`rsync --exclude='models/'` ate Pinia-ORM models.** The unanchored
+  pattern matched any directory named `models` at any depth, including
+  `dashboard-nuxt/store/models/`. Anchored to `/models/` so only the
+  top-level LLM weights dir (`~/dream-server/models/`) is excluded.
+
 ## 8. Repo invariants — keep these true
 
 * `extensions/services/<sid>/compose.yaml` and the matching
@@ -561,10 +577,20 @@ disabled-by-default), Vollplan in
 |---|---|
 | Service-ID | `dashboard-nuxt` |
 | Port | `3011` (parallel zu `dashboard:3001`) |
-| Stack | Nuxt 4 (SPA), Nuxt UI v3, Pinia + Pinia ORM, VueUse, Nitro `/api/`-Proxy |
+| Stack | Nuxt 4 (SPA), **Nuxt UI v4** (UDashboardGroup/UDashboardSidebar/UNavigationMenu), Pinia + Pinia ORM (`store/`-Layout), VueUse v13, Nitro `/api/`-Proxy |
 | API | unverändert `dashboard-api:3002` — keine Änderungen am FastAPI-Backend |
-| Status | **Phase 1 + 2 + 3 done** (App-Shell, Sidebar, GSAP-Splash, BootstrapBanner, InstallPromptBanner, alle 10 Stub-Pages, reaktive Sidebar-Predikate). Phase 4 (echte Page-Inhalte, 4 Wellen) folgt. |
+| Status | **Phase 1 + 2 + 3 + 3.5 done** (App-Shell auf Nuxt UI v4 Dashboard-Pattern, Sidebar in AppLogo/SidebarMenu/SidebarStatus zerlegt, Pinia-ORM auf `store/{BaseModel,BaseRepository,models,repositories}` umgestellt, alle Stub-Pages mit UDashboardPanel + Navbar + Sidebar-Toggle). Phase 4 (echte Page-Inhalte, 4 Wellen) als nächstes. |
 | Cutover | nach 14 Tagen Soak → Port-Swap (`dashboard-nuxt` zieht auf `:3001`) |
+
+**Pinia-ORM-Konvention** (Best-Practice aus
+`futtertieraerztin/website` adaptiert): Models und Repositories
+liegen unter `store/` (NICHT `app/`). Models nutzen
+Decorator-Syntax (`@Str`, `@Num`, `@HasMany`, …); Repositories
+exponieren `api()` mit `dreamFetch`-Aufrufen und Domain-Helper
+(`hasHealthy(needle)`). Pinia-Stores sind dünne UI-Schichten,
+die per `useRepo(Model).all()` / `useRepo(Repository).api()`
+delegieren. `experimentalDecorators: true` ist in
+`tsconfig.json` Pflicht.
 
 Operator-Workflow nach Phase 1:
 
