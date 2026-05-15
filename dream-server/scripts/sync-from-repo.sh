@@ -242,7 +242,10 @@ EXCLUDES=(
   --exclude='**/cache/'
   --exclude='tmp/'
   --exclude='**/tmp/'
-  --exclude='models/'
+  # `models/` = LLM weights at install root (~/dream-server/models/).
+  # Anchor to top-level so nested `*/store/models/` (e.g. dashboard-nuxt
+  # pinia-orm models) is NOT excluded.
+  --exclude='/models/'
   --exclude='workspace/'
   --exclude='images/'
   --exclude='.compose-flags'
