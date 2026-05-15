@@ -42,7 +42,7 @@ Easiest path:
 # On the host, after the service is up:
 TOKEN=$(grep ^LOTTO_ORACLE_TOKEN= ~/dream-server/.env | cut -d= -f2-)
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8099/refresh/full
+  http://127.0.0.1:8100/refresh/full
 ```
 
 This walks every year archive page (`history_from` → today, capped by

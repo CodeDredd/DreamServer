@@ -444,7 +444,7 @@ behaviour). No new ops surface for the operator.
 
 ## 13. Lotto Oracle — second tab inside Finance Guru
 
-A separate FastAPI service `lotto-oracle` (port `:8099`, locally built
+A separate FastAPI service `lotto-oracle` (port `:8100`, locally built
 image `dream-server/lotto-oracle:0.1.0`) collects German lottery draws
 and generates suggested tips. Surfaced in the dashboard as a **second
 tab** inside the existing Finance Guru page (next to "Paper-Trade
@@ -514,7 +514,7 @@ external mirror(s) ──▶ lotto-oracle ──▶ /api/lotto/* (dashboard-api 
 
 `LOTTO_ORACLE_TOKEN` is bridged into `extensions/services/n8n/compose.yaml`
 (same pattern as `FINANCE_*_TOKEN`). Workflows can call the upstream
-service directly (`http://lotto-oracle:8099/refresh`) with
+service directly (`http://lotto-oracle:8100/refresh`) with
 `{{ $env.LOTTO_ORACLE_TOKEN }}` as the bearer.
 
 ### Build order completed

@@ -10,9 +10,9 @@ service:
   container_name: dream-lotto-oracle
   host_env: LOTTO_ORACLE_HOST
   default_host: lotto-oracle
-  port: 8099
+  port: 8100
   external_port_env: LOTTO_ORACLE_PORT
-  external_port_default: 8099
+  external_port_default: 8100
   health: /health
   type: docker
   gpu_backends: [all]

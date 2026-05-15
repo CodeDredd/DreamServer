@@ -44,7 +44,7 @@ RUN useradd -m -u 1000 dreamer && mkdir -p /data && chown -R dreamer:dreamer /ap
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-ENV LOTTO_ORACLE_PORT=8099 \
+ENV LOTTO_ORACLE_PORT=8100 \
     LOTTO_ORACLE_DB_PATH=/data/lotto.sqlite \
     LOTTO_ORACLE_FETCH_CRON="30 3 * * 1,4" \
     LOTTO_ORACLE_TZ=Europe/Berlin \
@@ -53,7 +53,7 @@ ENV LOTTO_ORACLE_PORT=8099 \
     LOTTO_FETCH_TIMEOUT_SEC=20 \
     PYTHONUNBUFFERED=1
 
-EXPOSE 8099
+EXPOSE 8100
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:${LOTTO_ORACLE_PORT}/health || exit 1

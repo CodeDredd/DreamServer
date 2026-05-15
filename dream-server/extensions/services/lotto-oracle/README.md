@@ -77,7 +77,7 @@ Direkt nach dem ersten Start (oder nach Erweiterung der Retention):
 ```bash
 TOKEN=$(grep ^LOTTO_ORACLE_TOKEN= ~/dream-server/.env | cut -d= -f2-)
 curl -fsS -X POST -H "Authorization: Bearer $TOKEN" \
-  http://127.0.0.1:8099/refresh/full
+  http://127.0.0.1:8100/refresh/full
 ```
 
 Das iteriert ab `Game.history_from` (gekappt durch
@@ -181,6 +181,6 @@ unter `environment:` gebridged.
 
 ```bash
 ssh sky-net@192.168.178.110 'dream logs lotto-oracle | tail -80'
-ssh sky-net@192.168.178.110 'curl -fsS http://127.0.0.1:8099/state | jq'
+ssh sky-net@192.168.178.110 'curl -fsS http://127.0.0.1:8100/state | jq'
 ```
 

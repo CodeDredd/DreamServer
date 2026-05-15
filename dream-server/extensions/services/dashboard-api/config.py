@@ -239,7 +239,7 @@ FINANCE_GURU_TOKEN = os.environ.get("FINANCE_GURU_TOKEN", "") or _read_env_from_
 def _default_lotto_oracle_url() -> str:
     cfg = SERVICES.get("lotto-oracle", {})
     host = cfg.get("host", "lotto-oracle")
-    port = cfg.get("port", 8099)
+    port = cfg.get("port", 8100)
     return f"http://{host}:{port}"
 
 

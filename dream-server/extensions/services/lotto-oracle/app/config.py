@@ -34,7 +34,7 @@ class Config:
 
 
 CFG = Config(
-    port=_env_int("LOTTO_ORACLE_PORT", 8099),
+    port=_env_int("LOTTO_ORACLE_PORT", 8100),
     db_path=os.environ.get("LOTTO_ORACLE_DB_PATH", "/data/lotto.sqlite").strip(),
     fetch_cron=os.environ.get("LOTTO_ORACLE_FETCH_CRON", "30 3 * * 1,4").strip(),
     tz=os.environ.get("LOTTO_ORACLE_TZ", "Europe/Berlin").strip() or "Europe/Berlin",
