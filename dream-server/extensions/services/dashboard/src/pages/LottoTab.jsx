@@ -510,6 +510,11 @@ function RecencyOverlapCard({ game, run }) {
   const isCombo = stats.kind === 'combinatorial'
   const lookbacks = ['1', '2', '3'].filter((k) => stats.lookbacks[k])
   if (!lookbacks.length) return null
+  // Don't render at all if NO lookback has any samples — happens on a
+  // cold install with only the bundled seed draw (n_history=1).  No
+  // point showing a card full of "—" placeholders.
+  const hasSamples = lookbacks.some((N) => (stats.lookbacks[N]?.samples || 0) > 0)
+  if (!hasSamples) return null
 
   const unitLabel = isCombo
     ? `Zahlen aus ${stats.main_pool || 'Hauptpool'}`
