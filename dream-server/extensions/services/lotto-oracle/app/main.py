@@ -118,7 +118,25 @@ def _do_generate(game_id: str, rows_per_strategy: int = 3) -> dict:
     if not tips:
         return {"game_id": game_id, "n_tips": 0}
     based_on = history[0]["draw_date"] if history else None
-    run_id = store.save_tip_run(game_id, based_on, tips)
+
+    # Empirical analytics: empirical recency-overlap distribution + per-
+    # strategy backtest score.  Both are persisted with the tip_run so the
+    # dashboard can sort cards by edge and surface the "wie oft kamen
+    # noch Zahlen aus den letzten N Ziehungen?" histogram.  See
+    # analytics.py for the maths.
+    g = get_game(game_id)
+    strategy_meta: dict = {}
+    recency_stats: dict | None = None
+    try:
+        recency_stats = recency_overlap_distribution(g, history)
+        strategy_meta = score_all_strategies(g, history, strategies_for(game_id),
+                                             rows=rows_per_strategy)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[%s] analytics computation failed: %s", game_id, exc)
+
+    run_id = store.save_tip_run(game_id, based_on, tips,
+                                strategy_meta=strategy_meta,
+                                recency_stats=recency_stats)
     store.cleanup_old_tip_runs()
     info = {
         "game_id":      game_id,

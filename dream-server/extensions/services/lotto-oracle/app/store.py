@@ -64,6 +64,14 @@ def conn() -> sqlite3.Connection:
     return _CONN
 
 
+def _ensure_column(c: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    """Add a column to an existing table if it isn't there yet (sqlite
+    lacks IF NOT EXISTS for ALTER TABLE)."""
+    cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def _create_schema(c: sqlite3.Connection) -> None:
     c.executescript(
         """
@@ -107,6 +115,10 @@ def _create_schema(c: sqlite3.Connection) -> None:
             ON tips(game_id, strategy);
         """
     )
+    # Idempotent ALTER for upgrades from older deployments where the
+    # tip_runs schema didn't carry the strategy backtest metrics yet.
+    _ensure_column(c, "tip_runs", "strategy_meta", "TEXT")
+    _ensure_column(c, "tip_runs", "recency_stats", "TEXT")
 
 
 # --------------------------------------------------------------------------- #
@@ -211,17 +223,31 @@ def save_tip_run(
     game_id: str,
     based_on_draw: str | None,
     tips: list[dict],
+    *,
+    strategy_meta: dict | None = None,
+    recency_stats: dict | None = None,
 ) -> int:
-    """Persist one tip-generation run. Returns the run_id."""
+    """Persist one tip-generation run. Returns the run_id.
+
+    ``strategy_meta`` — optional dict of ``{strategy_name: backtest_dict}``
+    populated by ``analytics.score_all_strategies()``.  Surfaced in
+    ``latest_tip_run`` so the dashboard can sort cards by edge.
+    ``recency_stats`` — optional dict from
+    ``analytics.recency_overlap_distribution()`` with the empirical
+    "P(k overlapping numbers with last N draws)" histogram.
+    """
     with _LOCK:
         cur = conn().execute(
-            "INSERT INTO tip_runs(game_id, based_on_draw, n_strategies, n_tips) "
-            "VALUES (?, ?, ?, ?)",
+            "INSERT INTO tip_runs(game_id, based_on_draw, n_strategies, n_tips, "
+            "strategy_meta, recency_stats) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 game_id,
                 based_on_draw,
                 len({t['strategy'] for t in tips}),
                 len(tips),
+                json.dumps(strategy_meta, separators=(",", ":")) if strategy_meta else None,
+                json.dumps(recency_stats, separators=(",", ":")) if recency_stats else None,
             ),
         )
         run_id = cur.lastrowid
@@ -243,7 +269,8 @@ def save_tip_run(
 
 def latest_tip_run(game_id: str) -> dict | None:
     row = conn().execute(
-        "SELECT id, generated_at, based_on_draw, n_strategies, n_tips "
+        "SELECT id, generated_at, based_on_draw, n_strategies, n_tips, "
+        "strategy_meta, recency_stats "
         "FROM tip_runs WHERE game_id=? ORDER BY id DESC LIMIT 1",
         (game_id,),
     ).fetchone()
@@ -254,12 +281,16 @@ def latest_tip_run(game_id: str) -> dict | None:
         "WHERE run_id=? ORDER BY id ASC",
         (row["id"],),
     ).fetchall()
+    meta = json.loads(row["strategy_meta"]) if row["strategy_meta"] else {}
+    recency = json.loads(row["recency_stats"]) if row["recency_stats"] else None
     return {
         "run_id":         row["id"],
         "generated_at":   row["generated_at"],
         "based_on_draw":  row["based_on_draw"],
         "n_strategies":   row["n_strategies"],
         "n_tips":         row["n_tips"],
+        "strategy_meta":  meta,
+        "recency_stats":  recency,
         "tips": [
             {
                 "strategy":  t["strategy"],

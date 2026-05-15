@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Ticket, RefreshCw, Loader2, Play, Database, AlertCircle,
-  Calendar, Clock, Sparkles, Copy, Check, Info,
+  Calendar, Clock, Sparkles, Copy, Check, Info, TrendingUp, BarChart3,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -298,8 +298,9 @@ export default function LottoTab() {
       {/* Two-column detail */}
       {selectedGame && (
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Left: tips */}
+          {/* Left: tips + recency overlap + draws */}
           <div className="lg:col-span-2 space-y-6">
+            <RecencyOverlapCard game={selectedGame} run={tipsRun} />
             <TipsCard
               game={selectedGame}
               run={tipsRun}
@@ -341,11 +342,37 @@ function SubmissionNotice({ notice }) {
 
 function TipsCard({ game, run, strategies, copied, onCopy }) {
   const tips = run?.tips || []
+  const meta = run?.strategy_meta || {}
   const strategyMap = useMemo(() => {
     const m = new Map()
     for (const s of strategies) m.set(s.name, s)
     return m
   }, [strategies])
+
+  // Group tips by strategy, then sort the groups by backtested edge
+  // (best first). Strategies without a backtest score (e.g. on a fresh
+  // install with too little history) drop to the bottom while keeping
+  // their relative order from the engine.
+  const groups = useMemo(() => {
+    const byStrat = new Map()
+    tips.forEach((t, idx) => {
+      if (!byStrat.has(t.strategy)) byStrat.set(t.strategy, [])
+      byStrat.get(t.strategy).push({ ...t, _idx: idx })
+    })
+    const arr = Array.from(byStrat.entries()).map(([name, items]) => {
+      const m = meta[name] || {}
+      const edge = (typeof m.edge === 'number') ? m.edge : null
+      return {
+        name,
+        items,
+        meta:  m,
+        edge,
+        sortKey: edge === null ? -Infinity : edge,
+      }
+    })
+    arr.sort((a, b) => b.sortKey - a.sortKey)
+    return arr
+  }, [tips, meta])
 
   return (
     <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
@@ -356,51 +383,206 @@ function TipsCard({ game, run, strategies, copied, onCopy }) {
         </h4>
         <span className="ml-auto text-xs text-theme-text-muted">
           {run
-            ? `generiert ${relTime(run.generated_at)} · basierend auf ${run.based_on_draw || '—'}`
+            ? <>generiert {relTime(run.generated_at)} · basierend auf {run.based_on_draw || '—'} · sortiert nach Backtest-Edge</>
             : 'Noch keine Tipps generiert — auf "Tipps generieren" klicken.'}
         </span>
       </div>
-      {tips.length ? (
+      {groups.length ? (
         <ul className="divide-y divide-theme-border">
-          {tips.map((t, i) => {
-            const meta = strategyMap.get(t.strategy)
-            const copyKey = `tip-${i}`
-            return (
-              <li key={i} className="px-5 py-4">
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div>
-                    <div className="text-xs font-mono uppercase tracking-wider text-theme-accent">
-                      {meta?.label || t.strategy}
-                    </div>
-                    {(meta?.description || t.rationale) && (
-                      <div className="text-xs text-theme-text-muted mt-0.5 max-w-xl">
-                        {meta?.description}
-                        {meta?.description && t.rationale && ' · '}
-                        {t.rationale && <span className="italic">{t.rationale}</span>}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onCopy(copyKey, t.display)}
-                    className="text-xs text-theme-text-muted hover:text-theme-text flex items-center gap-1"
-                    title="Tipp in die Zwischenablage kopieren"
-                  >
-                    {copied === copyKey
-                      ? <><Check size={12} /> kopiert</>
-                      : <><Copy size={12} /> kopieren</>}
-                  </button>
-                </div>
-                <TipDisplay game={game} tip={t} />
-              </li>
-            )
-          })}
+          {groups.map((group) => (
+            <StrategyGroupCard
+              key={group.name}
+              game={game}
+              group={group}
+              strategyMap={strategyMap}
+              copied={copied}
+              onCopy={onCopy}
+            />
+          ))}
         </ul>
       ) : (
         <div className="px-5 py-8 text-sm text-theme-text-muted text-center">
           Noch keine Vorschläge. Klicke oben auf <strong>Tipps generieren</strong>.
         </div>
       )}
+    </div>
+  )
+}
+
+
+function StrategyGroupCard({ game, group, strategyMap, copied, onCopy }) {
+  const desc = strategyMap.get(group.name)
+  const m = group.meta || {}
+  const hasScore = typeof m.edge === 'number' && (m.n_trials || 0) > 0
+  // Map edge to a tone: positive edge → green, ~0 → neutral, negative → orange
+  let tone = 'neutral'
+  if (hasScore) {
+    if (m.edge > 0.05) tone = 'good'
+    else if (m.edge < -0.05) tone = 'warn'
+  }
+  const toneCls = {
+    good:    'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
+    warn:    'text-amber-300   bg-amber-500/10   border-amber-500/30',
+    neutral: 'text-theme-text-muted bg-theme-surface-hover border-theme-border',
+  }[tone]
+
+  // P(>=1) = first p_at_least entry (prob of at least 1 hit in main pool / digit pos)
+  const pAtLeast1 = m.hit_rates?.[0]?.prob ?? null
+
+  return (
+    <li className="px-5 py-4">
+      {/* Strategy header strip */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-mono uppercase tracking-wider text-theme-accent">
+              {desc?.label || group.name}
+            </span>
+            <span className="text-[10px] text-theme-text-muted">
+              {group.items.length}× generiert
+            </span>
+          </div>
+          {desc?.description && (
+            <div className="text-xs text-theme-text-muted mt-0.5 max-w-xl">
+              {desc.description}
+            </div>
+          )}
+        </div>
+        {/* Edge badge */}
+        {hasScore ? (
+          <div
+            className={`shrink-0 text-[10px] font-mono px-2 py-1 rounded border flex items-center gap-1 ${toneCls}`}
+            title={
+              `Backtest über ${m.n_trials} Tipps gegen ${m.window} echte Ziehungen.\n` +
+              `⌀ Treffer: ${m.avg_match} (random: ${m.expected_random})\n` +
+              `Edge = avg − random = ${m.edge >= 0 ? '+' : ''}${m.edge}\n` +
+              `P(≥1 Treffer) = ${pAtLeast1 != null ? Math.round(pAtLeast1 * 100) + ' %' : '—'}`
+            }
+          >
+            <TrendingUp size={11} />
+            <span>
+              ⌀ {m.avg_match} {m.edge >= 0 ? '+' : ''}{m.edge}
+            </span>
+          </div>
+        ) : (
+          <div className="shrink-0 text-[10px] text-theme-text-muted px-2 py-1 rounded border border-theme-border">
+            Backtest n/a
+          </div>
+        )}
+      </div>
+
+      {/* All tips for this strategy, stacked compactly inside the same card. */}
+      <div className="space-y-3">
+        {group.items.map((t) => (
+          <div
+            key={t._idx}
+            className="rounded-lg bg-theme-surface-hover/40 border border-theme-border/60 p-3"
+          >
+            <div className="flex items-start justify-between gap-3 mb-2">
+              {t.rationale && (
+                <div className="text-[11px] text-theme-text-muted italic max-w-xl">
+                  {t.rationale}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => onCopy(`tip-${t._idx}`, t.display)}
+                className="shrink-0 text-xs text-theme-text-muted hover:text-theme-text flex items-center gap-1"
+                title="Tipp in die Zwischenablage kopieren"
+              >
+                {copied === `tip-${t._idx}`
+                  ? <><Check size={12} /> kopiert</>
+                  : <><Copy size={12} /> kopieren</>}
+              </button>
+            </div>
+            <TipDisplay game={game} tip={t} />
+          </div>
+        ))}
+      </div>
+    </li>
+  )
+}
+
+
+function RecencyOverlapCard({ game, run }) {
+  const stats = run?.recency_stats
+  if (!stats || !stats.lookbacks) return null
+  const isCombo = stats.kind === 'combinatorial'
+  const lookbacks = ['1', '2', '3'].filter((k) => stats.lookbacks[k])
+  if (!lookbacks.length) return null
+
+  const unitLabel = isCombo
+    ? `Zahlen aus ${stats.main_pool || 'Hauptpool'}`
+    : 'Positionen mit gleicher Ziffer'
+
+  return (
+    <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-theme-border flex items-center gap-2">
+        <BarChart3 size={14} className="text-theme-text-muted" />
+        <h4 className="text-sm font-semibold text-theme-text">
+          Wiederholungs-Wahrscheinlichkeiten
+        </h4>
+        <span className="ml-auto text-[11px] text-theme-text-muted">
+          empirisch über {stats.n_history} Ziehung(en) · Vergleich: {unitLabel}
+        </span>
+      </div>
+      <div className="p-5 grid sm:grid-cols-3 gap-4">
+        {lookbacks.map((N) => {
+          const b = stats.lookbacks[N]
+          if (!b || b.samples === 0) return null
+          // Build the "P(>= k)" strip — typically 1, 2, 3 are interesting.
+          const tail = (b.p_at_least || []).slice(0, 4)
+          return (
+            <div
+              key={N}
+              className="border border-theme-border rounded-lg p-3 bg-theme-surface-hover/40"
+            >
+              <div className="text-xs text-theme-text-muted mb-1">
+                Letzte {N} Ziehung{N === '1' ? '' : 'en'}
+              </div>
+              <div className="text-2xl font-mono text-theme-text">
+                {b.mean != null ? b.mean.toFixed(2) : '—'}
+              </div>
+              <div className="text-[11px] text-theme-text-muted mb-2">
+                ⌀ wieder gezogen (random ≈ {b.expected_random})
+              </div>
+              <ul className="space-y-1">
+                {tail.map((row) => (
+                  <li
+                    key={row.k}
+                    className="flex items-center justify-between gap-2 text-[11px]"
+                  >
+                    <span className="text-theme-text-muted">P(≥ {row.k} Treffer)</span>
+                    <ProbBar prob={row.prob} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        })}
+      </div>
+      <div className="px-5 pb-3 text-[11px] text-theme-text-muted">
+        {isCombo
+          ? <>Lies dies als: „Wie oft kamen aus den letzten <em>N</em> Ziehungen noch <em>k</em> Hauptzahlen wieder?". Werte ≈ Random-Erwartung sind das Lehrbuch (Ziehungen sind unabhängig).</>
+          : <>Lies dies als: „Wie oft hatte die nächste Ziehung an gleicher Position dieselbe Ziffer wie eine der letzten <em>N</em>?". P(≥1) liegt für N=3 nahe 100 % — die ‚letzte-Ziehung-ausschließen'-Strategie verschenkt also bewusst diese Treffer.</>
+        }
+      </div>
+    </div>
+  )
+}
+
+
+function ProbBar({ prob }) {
+  const pct = Math.round((prob || 0) * 100)
+  return (
+    <div className="flex items-center gap-2 w-32">
+      <div className="flex-1 h-2 bg-theme-border/60 rounded-sm overflow-hidden">
+        <div
+          className="h-full bg-theme-accent/70"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="font-mono text-theme-text-muted w-9 text-right">{pct}%</span>
     </div>
   )
 }
