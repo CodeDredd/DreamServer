@@ -58,6 +58,7 @@ from routers import (
     magic_link,
     tailscale,
     finance_guru,
+    lotto,
     repo_map,
 )
 from settings import (
