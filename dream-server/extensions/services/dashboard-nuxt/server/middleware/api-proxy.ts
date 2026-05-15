@@ -21,7 +21,16 @@ export default defineEventHandler(async (event) => {
   if (url.pathname === '/api/health') return
 
   const config = useRuntimeConfig(event)
-  const target = joinURL(config.apiBaseInternal, url.pathname.replace(/^\/api/, '/api')) + url.search
+  // runtimeConfig wird zur Build-Zeit aufgelöst (siehe nuxt.config.ts);
+  // wir lesen die ENV-Vars zusätzlich zur Laufzeit, damit DASHBOARD_API_KEY
+  // / NUXT_API_BASE_INTERNAL jederzeit aus dem Container-Env nachgezogen
+  // werden, ohne Re-Build.
+  const apiKey = config.apiKey || process.env.DASHBOARD_API_KEY || process.env.NUXT_API_KEY || ''
+  const apiBase = config.apiBaseInternal
+    || process.env.NUXT_API_BASE_INTERNAL
+    || 'http://dashboard-api:3002'
+
+  const target = joinURL(apiBase, url.pathname.replace(/^\/api/, '/api')) + url.search
 
   const headers = new Headers()
   // Forward Header außer Hop-by-Hop / Auth (wir setzen unsere eigene).
@@ -31,8 +40,8 @@ export default defineEventHandler(async (event) => {
     if (['host', 'connection', 'content-length', 'authorization'].includes(key)) continue
     headers.set(k, Array.isArray(v) ? v.join(',') : String(v))
   }
-  if (config.apiKey) {
-    headers.set('Authorization', `Bearer ${config.apiKey}`)
+  if (apiKey) {
+    headers.set('Authorization', `Bearer ${apiKey}`)
   }
 
   const method = event.method

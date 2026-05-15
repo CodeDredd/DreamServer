@@ -41,11 +41,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
-    networks:
-      - default
-
-networks:
-  default:
-    name: dream-network
-    external: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 

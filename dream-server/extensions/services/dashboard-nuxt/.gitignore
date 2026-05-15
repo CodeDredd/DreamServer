@@ -12,4 +12,10 @@ coverage
 # pnpm store metadata wird global geteilt, hier nur lokale Reste:
 .pnpm-store
 
-
+# dream-server/.gitignore ignoriert global `models/` (llama.cpp-Konvention).
+# Unsere Pinia-ORM-Models in app/models/ sind aber Quellcode und gehoeren
+# ins Repo — explizit re-includen. Re-Include muss `models/` heissen, weil
+# der Parent-Pattern auch `models/` lautet (gitignore-Negation matched
+# auf gleichen Pattern, nicht auf vollen Pfad).
+!models/
+!models/**

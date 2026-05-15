@@ -27,13 +27,10 @@ FROM node:24-alpine
 
 WORKDIR /app
 
-# Non-root.
-RUN addgroup -g 1000 dreamer && \
-    adduser -D -u 1000 -G dreamer dreamer
+# node:24-alpine ships with the `node` user (uid 1000) — reuse it.
+COPY --from=builder --chown=node:node /app/.output ./.output
 
-COPY --from=builder --chown=dreamer:dreamer /app/.output ./.output
-
-USER dreamer
+USER node
 
 ENV NODE_ENV=production \
     NITRO_PORT=3011 \
