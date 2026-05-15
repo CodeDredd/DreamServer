@@ -31,21 +31,26 @@ test.describe('dashboard-nuxt smoke', () => {
     expect(unhead).toBeGreaterThanOrEqual(1)
   })
 
-  test('CSP-Header enthaelt sha256-Script-Hashes (server/middleware/csp.ts)', async ({ request }) => {
+  test('CSP-Header ist via nuxt-security gesetzt', async ({ request }) => {
     const res = await request.get('/')
     const csp = res.headers()['content-security-policy']
     expect(csp).toBeDefined()
     expect(csp).toContain('default-src \'self\'')
-    expect(csp).toMatch(/script-src 'self'( 'sha256-[A-Za-z0-9+/=]+')+/)
+    expect(csp).toContain('script-src \'self\'')
     expect(csp).toContain('frame-ancestors \'none\'')
+    expect(csp).toContain('object-src \'none\'')
   })
 
-  test('Security-Headers sind auf jeder Hauptdokument-Response gesetzt', async ({ request }) => {
+  test('Security-Headers sind auf jeder Hauptdokument-Response gesetzt (nuxt-security)', async ({ request }) => {
     const res = await request.get('/')
     const h = res.headers()
     expect(h['x-content-type-options']).toBe('nosniff')
+    expect(h['x-frame-options']).toBe('DENY')
     expect(h['referrer-policy']).toBe('strict-origin-when-cross-origin')
     expect(h['permissions-policy']).toContain('microphone=(self)')
+    expect(h['cross-origin-resource-policy']).toBeDefined()
+    expect(h['cross-origin-opener-policy']).toBeDefined()
+    expect(h['origin-agent-cluster']).toBeDefined()
   })
 
   test('PWA-Manifest ist gueltig und enthaelt die erwarteten Felder', async ({ request }) => {

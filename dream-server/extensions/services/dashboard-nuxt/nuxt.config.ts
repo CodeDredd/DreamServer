@@ -25,6 +25,7 @@ export default defineNuxtConfig({
     '@vueuse/motion/nuxt',
     '@nuxtjs/i18n',
     '@vite-pwa/nuxt',
+    'nuxt-security',
   ],
 
   css: ['~/assets/css/main.css'],
@@ -139,12 +140,84 @@ export default defineNuxtConfig({
     },
   },
 
-  // CSP wird per `server/middleware/csp.ts` Response-Hook gesetzt
-  // (sha256-Hashes der Inline-`<script>`-Bloecke werden pro HTML-Antwort
-  // berechnet). Hier nur cache-relevante routeRules fuer PWA-Assets.
+  // CSP + Security-Header werden vom `nuxt-security`-Modul gesetzt
+  // (siehe security-Block weiter unten). Hier nur cache-relevante
+  // routeRules fuer PWA-Assets.
   routeRules: {
     '/sw.js': { headers: { 'Cache-Control': 'public, max-age=0, must-revalidate' } },
     '/manifest.webmanifest': { headers: { 'Cache-Control': 'public, max-age=3600' } },
+  },
+
+  // nuxt-security: Helmet-aehnliche Security-Header inkl. CSP. Ersetzt
+  // unsere fruehere selbstgebaute server/middleware/csp.ts. Begruendung:
+  // Maintainer-betreut, breiter Test-Footprint, deckt Headers ab, die
+  // wir manuell nachpflegen muessten (CSP, Permissions-Policy, COEP/
+  // COOP/CORP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+  // Origin-Agent-Cluster).
+  //
+  // Configured via top-level `security`-Key (Nuxt-Security 2.x).
+  // contentSecurityPolicy explizit konfiguriert, alles andere
+  // benutzt nuxt-security-Defaults.
+  security: {
+    headers: {
+      contentSecurityPolicy: {
+        'default-src': ['\'self\''],
+        // Nuxt UI emittiert dynamische Inline-Scripts (Color-Mode IIFE,
+        // __NUXT__-Config, unhead-payload, NUXT_DATA-JSON). Deren Hash
+        // aendert sich pro Build, daher 'unsafe-inline' in script-src.
+        // SPA-Mode hat kein nonce; Build-Zeit-Hashes funktionieren nur
+        // mit `ssg.hashScripts: true` und nuxt generate (nicht unser Setup).
+        'script-src': ['\'self\'', '\'unsafe-inline\''],
+        // Tailwind/Nuxt UI emittiert Inline-Styles fuer Theme-Variablen.
+        'style-src': ['\'self\'', '\'unsafe-inline\''],
+        'img-src': ['\'self\'', 'data:', 'blob:'],
+        'font-src': ['\'self\'', 'data:'],
+        'connect-src': ['\'self\''],
+        'media-src': ['\'self\'', 'blob:'],
+        'frame-ancestors': ['\'none\''],
+        'base-uri': ['\'self\''],
+        'form-action': ['\'self\''],
+        'object-src': ['\'none\''],
+        // Halo Strix laeuft per Default auf http://, daher kein
+        // upgrade-insecure-requests (sonst koennen interne Calls brechen).
+        'upgrade-insecure-requests': false,
+      },
+      // COEP=require-corp bricht LiveKit/WebRTC, daher ausschalten.
+      crossOriginEmbedderPolicy: 'unsafe-none',
+      // HSTS deaktiviert: Halo Strix oft ohne TLS, sonst werden alle
+      // HTTP-Requests zukuenftiger 6 Monate gewaltsam HTTPS-redirected.
+      strictTransportSecurity: false,
+      // Default ist 'no-referrer' (zu strikt fuer interne Navigation —
+      // /api-Aufrufe verlieren ihren Origin-Header und das Backend
+      // kann CSRF-Header-Pruefung nicht mehr durchziehen).
+      referrerPolicy: 'strict-origin-when-cross-origin',
+      // Permissions-Policy default verbietet Mikrofon - das brauchen
+      // wir aber fuer die Voice-Page (LiveKit). Self erlauben.
+      permissionsPolicy: {
+        camera: [],
+        microphone: ['self'],
+        geolocation: [],
+        'display-capture': [],
+        fullscreen: ['self'],
+      },
+      // X-Frame-Options DENY (default ist SAMEORIGIN) - der Dashboard
+      // soll nirgends iframed werden, auch nicht von uns selbst.
+      xFrameOptions: 'DENY',
+    },
+    // Rate-Limit fuer den /api-Proxy bewusst aus — Backend handhabt das.
+    rateLimiter: false,
+    // CORS: SPA + Same-Origin, kein Cross-Origin geplant.
+    corsHandler: {
+      origin: '*',
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    },
+    // /api/** ist transparent zum Backend gereicht — wir wollen nicht
+    // doppelt validieren, das macht das Backend.
+    xssValidator: false,
+    requestSizeLimiter: {
+      maxRequestSizeInBytes: 2_000_000, // 2 MB
+      maxUploadFileRequestInBytes: 8_000_000, // 8 MB
+    },
   },
 
 

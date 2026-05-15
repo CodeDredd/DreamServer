@@ -29,11 +29,6 @@ WORKDIR /app
 
 # node:24-alpine ships with the `node` user (uid 1000) — reuse it.
 COPY --from=builder --chown=node:node /app/.output ./.output
-# CSP-Hash-Skript fuer Dev-Tools / externe Reverse-Proxies mitnehmen
-# (Runtime-CSP wird via server/middleware/csp.ts pro Response gesetzt;
-# scripts/csp-hash.mjs ist nur fuer Builds, die Hashes vorab brauchen,
-# z. B. fuer einen vorgelagerten nginx mit statischer CSP-Kette).
-COPY --from=builder --chown=node:node /app/scripts ./scripts
 
 USER node
 
