@@ -277,10 +277,10 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 **Welle B — Operative Pages**
 
 - [ ] `pages/extensions/index.vue` ← `Extensions.jsx` (1 254 LoC)
-- [ ] `pages/extensions/integrations.vue` ← `ServiceMap.jsx`
-- [ ] `pages/projects.vue` ← `Projects.jsx`
-- [ ] `pages/repo-map.vue` ← `RepoProjectMap.jsx`
-- [ ] `pages/invites.vue` ← `Invites.jsx`
+- [x] `pages/extensions/integrations.vue` ← `ServiceMap.jsx`
+- [x] `pages/projects.vue` ← `Projects.jsx`
+- [x] `pages/repo-map.vue` ← `RepoProjectMap.jsx`
+- [x] `pages/invites.vue` ← `Invites.jsx`
 
 **Welle C — Finance-Stack** (siehe AGENT-OPERATIONS §11/§13)
 
