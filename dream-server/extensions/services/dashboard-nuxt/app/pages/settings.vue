@@ -1,13 +1,13 @@
 <!--
-  Settings (Phase 4 Welle A.4 — Skinny Port). Pendant zu
-  dashboard/src/pages/Settings.jsx (291 LoC + EnvEditor 1000+ LoC).
+  Settings (Phase 4 Welle A.4 + A.5). Pendant zu
+  dashboard/src/pages/Settings.jsx (291 LoC + EnvEditor 312 LoC).
 
-  Welle A liefert die Status-Seite mit:
+  Inhalte:
   * Version-Card (current/latest, Update-Badge, dismiss/apply)
   * Storage-Snapshot (gesamt + per-Service)
   * Service-Restart-Buttons
-  Der vollwertige Env-Editor bleibt fuer Welle A.5 reserviert — er ist
-  allein groesser als alle anderen Welle-A-Pages zusammen.
+  * Environment-Editor (Welle A.5) — eigene Komponente
+    components/settings/EnvEditor.vue, gespeist aus useEnvEditor.
 -->
 <script setup lang="ts">
 import { computed, ref } from 'vue'
@@ -16,6 +16,7 @@ import { useSystemStore } from '~/stores/system'
 import { useVersion, triggerUpdate } from '~/composables/useVersion'
 import { useServiceResources } from '~/composables/useServiceResources'
 import { useApi } from '~/composables/useApi'
+import EnvEditor from '~/components/settings/EnvEditor.vue'
 
 definePageMeta({ layout: 'default' })
 
@@ -199,9 +200,10 @@ function diskColor(p: number): 'success' | 'warning' | 'error' {
           color="primary"
           variant="subtle"
           icon="i-lucide-info"
-          title="Environment-Editor folgt in Welle A.5"
-          description="Der vollwertige .env-Editor (Sektionen, Reveal-Secrets, Apply-Plan, Routes-Map) wird separat migriert — er ist groesser als alle anderen Welle-A-Pages zusammen."
+          title="Environment-Editor"
+          description="Vollwertige .env-Bearbeitung inkl. Sektionen, Reveal-Secrets, Validation und Apply-Plan."
         />
+        <EnvEditor />
       </div>
     </template>
   </UDashboardPanel>

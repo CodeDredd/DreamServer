@@ -267,12 +267,12 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 **Welle A — Statusflächen** (geringes Risiko)
 
-- [ ] `pages/index.vue` ← `Dashboard.jsx` (1 480 LoC; aufteilen in
+- [x] `pages/index.vue` ← `Dashboard.jsx` (1 480 LoC; aufteilen in
       `<KpiStrip>`, `<ServicesGrid>`, `<RecentActivity>` Komponenten)
-- [ ] `pages/gpu.vue` ← `GPUMonitor.jsx` + `GPUCard`, `GPUChart`,
+- [x] `pages/gpu.vue` ← `GPUMonitor.jsx` + `GPUCard`, `GPUChart`,
       `TopologyView`
-- [ ] `pages/models.vue` ← `Models.jsx`
-- [ ] `pages/settings.vue` ← `Settings.jsx` + `EnvEditor.jsx`
+- [x] `pages/models.vue` ← `Models.jsx`
+- [x] `pages/settings.vue` ← `Settings.jsx` + `EnvEditor.jsx`
 
 **Welle B — Operative Pages**
 

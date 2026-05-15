@@ -667,3 +667,63 @@ export interface LottoStats {
 export interface LottoActionResponse {
   detail?: string
 }
+
+// ---------------------------------------------------------------------------
+// /api/settings/env (Welle A.5). Pendant zur React-Variante in
+// dashboard/src/components/settings/EnvEditor.jsx + Settings.jsx.
+// Server liefert Sections, Field-Definitionen und aktuelle Values.
+// ---------------------------------------------------------------------------
+
+export type EnvFieldType = 'string' | 'integer' | 'boolean' | string
+
+export interface EnvFieldDef {
+  key: string
+  label?: string
+  description?: string
+  type?: EnvFieldType
+  required?: boolean
+  secret?: boolean
+  hasValue?: boolean
+  default?: string | number | boolean | null
+  enum?: string[]
+}
+
+export interface EnvSection {
+  id: string
+  title: string
+  keys: string[]
+}
+
+export interface EnvValidationIssue {
+  key?: string
+  message: string
+}
+
+export interface EnvApplyPlan {
+  supported: boolean
+  status?: 'none' | 'pending' | string
+  summary?: string
+  services?: string[]
+}
+
+export interface EnvEditorPayload {
+  path?: string
+  agentAvailable?: boolean
+  saveHint?: string
+  restartHint?: string
+  backupPath?: string | null
+  fields?: Record<string, EnvFieldDef>
+  sections?: EnvSection[]
+  values?: Record<string, string>
+  issues?: EnvValidationIssue[]
+  applyPlan?: EnvApplyPlan | null
+}
+
+export interface EnvSaveResponse extends EnvEditorPayload {
+  // identical envelope; the PUT /api/settings/env returns a fresh editor.
+}
+
+export interface EnvApplyResponse {
+  message?: string
+  detail?: string
+}
