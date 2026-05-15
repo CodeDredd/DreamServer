@@ -291,12 +291,12 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 **Welle D — Onboarding**
 
-- [ ] `pages/first-boot.vue` ← `FirstBoot.jsx` (581 LoC) +
+- [x] `pages/first-boot.vue` ← `FirstBoot.jsx` (581 LoC) +
       `SetupWizard`, `PreFlightChecks`, `TemplatePicker`,
       `AssignmentTable`, `DependencyBadges`, `SuccessValidation`,
       `TroubleshootingAssistant`, `FeatureDiscovery`. Sub-Seiten
       über `<NuxtPage>` im Wizard-Layout.
-- [ ] Middleware `middleware/first-run.global.ts`: leitet auf
+- [x] Middleware `middleware/first-run.global.ts`: leitet auf
       `/first-boot` um, wenn `useFirstRun().firstRun.value === true`.
 
 ### Phase 5 — PWA, Theming, i18n
