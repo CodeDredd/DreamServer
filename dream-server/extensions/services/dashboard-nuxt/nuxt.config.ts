@@ -20,6 +20,7 @@ export default defineNuxtConfig({
     '@nuxt/eslint',
     '@pinia/nuxt',
     '@pinia-orm/nuxt',
+    'pinia-plugin-persistedstate/nuxt',
     '@vueuse/nuxt',
     '@vueuse/motion/nuxt',
     '@nuxtjs/i18n',
@@ -27,6 +28,30 @@ export default defineNuxtConfig({
   ],
 
   css: ['~/assets/css/main.css'],
+
+  // Pinia ORM erwartet die Models/Repos unter `~~/store/{models,repositories}`
+  // (Best-Practice-Layout: store/BaseModel.ts, store/BaseRepository.ts,
+  // store/models/<Name>.ts, store/repositories/<Name>Repository.ts).
+  // Models/Repos werden manuell importiert, kein Auto-Import — das erzwingt
+  // expliziten Daten-Flow und ist der gleiche Stil wie im Referenz-Projekt.
+  imports: {
+    dirs: ['composables/**'],
+  },
+
+  colorMode: {
+    // SPA: keine Hydration, daher kein Flash — aber Transition stoert
+    // ohnehin (Theme-Switch ist instant, nicht animiert).
+    disableTransition: true,
+    classSuffix: '',
+  },
+
+  ui: {
+    // Nuxt UI 4 — App-Config (app.config.ts) liefert das Theme.
+    // Hier nur, was modul-global gilt:
+    fonts: false, // Wir verwenden System-Fonts (JetBrains Mono).
+  },
+
+
 
   // Server-only secrets via runtimeConfig (Bearer wird in
   // server/middleware/api-proxy.ts injiziert, nie zum Client geschickt).
@@ -95,9 +120,6 @@ export default defineNuxtConfig({
     devOptions: { enabled: false },
   },
 
-  ui: {
-    // Nuxt UI v3 generiert die Tailwind-Variablen aus app.config.ts.
-  },
 
   typescript: {
     strict: true,

@@ -1,9 +1,11 @@
 <!--
-  Placeholder fuer Phase-4-Stub-Pages. Jede Page setzt nur Title + Icon
-  + Phase-Welle, der visuelle Aufbau ist hier zentral.
+  Placeholder fuer Phase-4-Stub-Pages. Eingebettet in
+  UDashboardPanel + UDashboardNavbar (Nuxt UI v4-Pattern), damit auf
+  Mobile der Sidebar-Toggle ueber die Navbar verfuegbar ist und alle
+  Stub-Pages konsistent in den Dashboard-Shell passen.
 -->
 <script setup lang="ts">
-const props = defineProps<{
+defineProps<{
   title: string
   icon: string
   phase?: string
@@ -12,49 +14,51 @@ const props = defineProps<{
 </script>
 
 <template>
-  <div class="mx-auto max-w-4xl p-6 md:p-10">
-    <div class="mb-6 flex items-center gap-4">
-      <div class="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-        <UIcon :name="icon" class="size-7" />
-      </div>
-      <div>
-        <h1 class="text-2xl font-bold tracking-tight text-default">
-          {{ title }}
-        </h1>
-        <p class="text-sm text-muted">
-          {{ description ?? 'Wird in Phase 4 der Nuxt-Migration implementiert.' }}
-        </p>
-      </div>
-    </div>
-
-    <UCard>
-      <template #header>
-        <div class="flex items-center justify-between">
-          <h2 class="text-base font-semibold text-default">
-            Status: in Migration
-          </h2>
+  <UDashboardPanel id="page-placeholder">
+    <template #header>
+      <UDashboardNavbar :title="title" :icon="icon">
+        <template #leading>
+          <UDashboardSidebarCollapse />
+        </template>
+        <template #right>
           <UBadge color="warning" variant="subtle" size="sm">
             {{ phase ?? 'Phase 4' }}
           </UBadge>
-        </div>
-      </template>
-      <p class="text-sm text-muted">
-        Diese Seite ist ein Phase-3-Stub. Die React-Variante laeuft
-        weiter auf <code>:3001</code> und liefert die produktive
-        Funktionalitaet, bis die jeweilige Phase-4-Welle des
-        Migrationsplans erledigt ist.
-      </p>
-      <template #footer>
-        <div class="flex items-center justify-between text-xs text-muted">
-          <span>
-            Plan: <code>dream-server/docs/DASHBOARD-NUXT-MIGRATION.md</code>
-          </span>
-          <NuxtLink to="/" class="text-primary hover:underline">
-            Zurueck zum Dashboard
-          </NuxtLink>
-        </div>
-      </template>
-    </UCard>
-  </div>
+        </template>
+      </UDashboardNavbar>
+    </template>
+
+    <template #body>
+      <UPageCard
+        :title="title"
+        :description="description ?? 'Wird in Phase 4 der Nuxt-Migration implementiert.'"
+        :icon="icon"
+        variant="subtle"
+      >
+        <p class="text-sm text-muted">
+          Diese Seite ist ein Phase-3-Stub. Die React-Variante laeuft
+          weiter auf <code>:3001</code> und liefert die produktive
+          Funktionalitaet, bis die jeweilige Phase-4-Welle des
+          Migrationsplans erledigt ist.
+        </p>
+
+        <template #footer>
+          <div class="flex w-full items-center justify-between text-xs text-muted">
+            <span>
+              Plan: <code>dream-server/docs/DASHBOARD-NUXT-MIGRATION.md</code>
+            </span>
+            <UButton
+              to="/"
+              icon="i-lucide-arrow-left"
+              color="neutral"
+              variant="ghost"
+              size="xs"
+              label="Zurueck zum Dashboard"
+            />
+          </div>
+        </template>
+      </UPageCard>
+    </template>
+  </UDashboardPanel>
 </template>
 

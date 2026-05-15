@@ -1,8 +1,18 @@
-// System-Store — `/api/status` (alle 5 s) + `/api/version` (alle 30 min).
-// Single source of truth für Sidebar-Predicates, BootstrapBanner, KPI-Strip.
+// System-Store — duenne UI-Schicht ueber dem SystemRepository.
+//
+// Service-Inventar lebt im Pinia-ORM-Store (Service-Model + SystemRepository,
+// `useRepo(Service).all()` / `useRepo(SystemRepository).hasHealthy(...)`).
+// Hier verbleiben nur Dinge, die NICHT relational sind:
+//   * gpu/ram/bootstrap-Snapshot vom letzten /api/status-Aufruf
+//   * Polling-Status (loading/error/lastUpdated)
+//   * Versionsinfo + dismissedUpdate (User-Praeferenz)
+//
+// Das `services`-Getter delegiert ans ORM-Repo — single source of truth.
 
 import { defineStore } from 'pinia'
-import { useApi } from '~/composables/useApi'
+import { useRepo } from 'pinia-orm'
+import Service from '~~/store/models/Service'
+import SystemRepository from '~~/store/repositories/SystemRepository'
 import type { SystemStatus, VersionInfo } from '~/types/api'
 
 interface SystemState {
@@ -27,26 +37,16 @@ export const useSystemStore = defineStore('system', {
   }),
 
   getters: {
-    services: state => state.status?.services ?? [],
+    /** Service-Liste aus dem ORM-Store. */
+    services: () => useRepo(Service).orderBy('name').get(),
     gpu: state => state.status?.gpu ?? null,
+    ram: state => state.status?.ram ?? null,
     bootstrap: state => state.status?.bootstrap ?? null,
-    /** Stable, comparable hash of the service inventory — for sidebar
-     *  predicates that need to react to "did service X appear?". */
-    serviceIds: (state) => {
-      return (state.status?.services ?? [])
-        .map(s => (s.id || s.name || '').toLowerCase())
-        .filter(Boolean)
-    },
-    hasService: (state) => {
-      return (needle: string) => {
-        const n = needle.toLowerCase()
-        return (state.status?.services ?? []).some((s) => {
-          const id = (s.id || '').toLowerCase()
-          const name = (s.name || '').toLowerCase()
-          return id.includes(n) || name.includes(n)
-        })
-      }
-    },
+    serviceIds: () =>
+      useRepo(Service).all().map(s => (s.id || s.name || '').toLowerCase()).filter(Boolean),
+    /** Sidebar-Predikat — nutzt den Repo-Helper. */
+    hasService: () => (needle: string) => useRepo(SystemRepository).has(needle),
+    hasHealthyService: () => (needle: string) => useRepo(SystemRepository).hasHealthy(needle),
     updateAvailable: state => Boolean(
       state.version?.update_available
       && state.version.latest
@@ -56,10 +56,8 @@ export const useSystemStore = defineStore('system', {
 
   actions: {
     async fetchStatus() {
-      const api = useApi()
       try {
-        const data = await api.get<SystemStatus>('/api/status')
-        this.status = data
+        this.status = await useRepo(SystemRepository).api().fetchStatus()
         this.error = null
         this.lastUpdated = Date.now()
       }
@@ -72,9 +70,8 @@ export const useSystemStore = defineStore('system', {
     },
 
     async fetchVersion() {
-      const api = useApi()
       try {
-        this.version = await api.get<VersionInfo>('/api/version')
+        this.version = await useRepo(SystemRepository).api().fetchVersion()
         this.versionError = null
       }
       catch (err: unknown) {
@@ -86,8 +83,6 @@ export const useSystemStore = defineStore('system', {
     dismissUpdate() {
       if (this.version?.latest) {
         this.dismissedUpdate = this.version.latest
-        // Persist between sessions — VueUse `useStorage` would deeply
-        // bind; here a one-line write is enough.
         try {
           localStorage.setItem('dream-dismissed-update', this.version.latest)
         }

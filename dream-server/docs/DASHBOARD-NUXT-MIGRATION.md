@@ -167,10 +167,29 @@ Zentral hinzu: `useApi()` (gemeinsamer typed `$fetch`-Wrapper) +
 
 #### 2.3 Pinia ORM Modelle
 
-Geliefert in `app/models/index.ts` — Skeleton mit Feldern + Relationen
-ist fertig; die jeweiligen Pages der Phase 4 verdrahten die
-Repositories (`useRepo(Service).save(payload)`), sobald sie migriert
-sind. Modelle:
+Layout (Best-Practice-Konvention, 1:1 aus dem Referenz-Projekt
+`futtertieraerztin/website` uebernommen):
+
+```
+store/
+  BaseModel.ts                  # extends pinia-orm Model
+  BaseRepository.ts             # extends pinia-orm Repository
+  models/<Name>.ts              # ein Model pro Datei, decorator-syntax
+  repositories/<Name>Repository.ts  # use = Model + api() + Domain-Helper
+```
+
+Konventionen:
+
+* Models nutzen Decorator-Syntax (`@Str`, `@Num`, `@HasMany`, …) statt
+  `static fields()`. Importpfad: `import BaseModel from '~~/store/BaseModel'`.
+* Repositories haben `use = ModelClass` + `api()`-Methode (wraps
+  `dreamFetch`, persistiert Antwort via `repo.save(...)` /
+  `repo.fresh(...)`). Domain-Helper (z. B. `hasHealthy(needle)`)
+  leben am Repo, nicht im Pinia-Store.
+* Pinia-Stores werden zur duennen UI-Schicht: getter delegiert via
+  `useRepo(Model).all()`, action via `useRepo(Repository).api().…`.
+* Persistenz fuer rein lokale Praeferenzen via
+  `pinia-plugin-persistedstate/nuxt` (z. B. `dismissedUpdate`).
 
 | Model | Relationen | Status |
 |---|---|---|
@@ -187,6 +206,10 @@ sind. Modelle:
 | `Workflow` | `belongsTo(RepoMapEntry)` | ✅ |
 | `RepoMapEntry` | `belongsTo(Project)`, `hasMany(Workflow)` | ✅ |
 
+Repositories: `SystemRepository` (Service), `StrategyRepository`
+(Strategy/Position/Trade), `GameRepository` (Game/Draw/TipSet).
+Weitere folgen pro Phase-4-Welle.
+
 UI-only State (`sidebarCollapsed`, `splashShown`, `theme`,
 `activeTab`) → klassische Pinia-Stores ohne ORM (`stores/ui.ts`).
 
@@ -198,15 +221,17 @@ Devtools-Snapshot folgt nach erstem Page-Wiring in Phase 4.
 
 - [x] `app.vue` injiziert `<UApp>`, `<NuxtLayout>` und überlagert
       `AppSplash` + `InstallPromptBanner` per `<ClientOnly>`.
-- [x] `layouts/default.vue` mit Sidebar + Main-Bereich;
+- [x] `layouts/default.vue` — **Nuxt UI v4 Dashboard-Pattern**
+      (`UDashboardGroup` + `UDashboardSidebar` mit header/default/
+      footer-Slots, `UDashboardSearch` integriert).
       System-/Version-Polling wird hier global angestossen
       (Composables sind idempotent).
-- [x] `components/AppSidebar.vue` — Nuxt-UI-v3 Variante des
-      React-`Sidebar.jsx`. Logo (DS-Block / Mini-DS), Navigation
-      (NuxtLink + UIcon), Quick Links mit Healthy-Filter,
-      Status-Footer (Online/Total + degraded), Memory-Bar
-      (RAM auf Halo-Strix-Unified, sonst VRAM). Collapsed-State per
-      `useUiStore` → `useStorage('dream-sidebar-collapsed')`.
+- [x] Sidebar in 3 Komponenten zerlegt:
+      `AppLogo.vue` (Header-Slot, Tier-Badge),
+      `SidebarMenu.vue` (Default-Slot, `UNavigationMenu` getrieben
+      aus `useDashboardRoutes` + `useExternalLinks`),
+      `SidebarStatus.vue` (Footer-Slot, `UProgress` Memory-Bar mit
+      Unified-/VRAM-Toggle, Update-Alert, ColorMode-Toggle).
 - [x] `components/BootstrapBanner.vue` (1:1 React-Logik aus `App.jsx`,
       angetrieben aus `useSystemStore().status.bootstrap`).
 - [x] `components/AppSplash.vue` — GSAP-Timeline 1:1 portiert

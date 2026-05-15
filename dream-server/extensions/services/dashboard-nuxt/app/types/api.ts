@@ -42,8 +42,15 @@ export interface BootstrapStatus {
   eta?: number
 }
 
+export interface RamInfo {
+  used_gb: number
+  total_gb: number
+  percent?: number
+}
+
 export interface SystemStatus {
   gpu: GpuSummary | null
+  ram?: RamInfo | null
   services: ServiceSummary[]
   model?: ModelSummary | null
   bootstrap?: BootstrapStatus | null
