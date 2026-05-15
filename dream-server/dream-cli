@@ -114,6 +114,22 @@ _env_get_raw() {
     grep -m1 "^${key}=" "$file" 2>/dev/null | cut -d= -f2- | tr -d '\r' || true
 }
 
+# ──────────────────────────────────────────────────────────────────────────
+# Hydrate hardware-profile env-vars from the install's .env so every
+# subprocess (sync-from-repo.sh, resolve-compose-stack.sh, lifecycle hooks)
+# sees the operator's actual GPU_BACKEND / TIER instead of the historical
+# `nvidia` default. Without this, any AMD / Apple Silicon / Intel Arc /
+# pure-CPU host had every `dream sync` regenerate `.compose-flags` with
+# docker-compose.nvidia.yml, breaking the next `dream restart` on hosts
+# that have no NVIDIA driver. See AGENT-OPERATIONS.md §1.
+for _hw_var in GPU_BACKEND TIER; do
+    if [[ -z "${!_hw_var:-}" ]]; then
+        _hw_val="$(_env_get_raw "$_hw_var")"
+        [[ -n "$_hw_val" ]] && export "$_hw_var=$_hw_val"
+    fi
+done
+unset _hw_var _hw_val
+
 _get_host_logical_cpus() {
     local cores
     cores=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "1")
