@@ -660,28 +660,121 @@ _check_docker_access() {
 }
 
 #=============================================================================
+# _service_has_build <sid>
+#   → 0 if extensions/services/<sid>/compose.yaml or any docker-compose.*.yml
+#     overlay defines a `build:` directive for the service. Mirrors
+#     scripts/sync-from-repo.sh::service_needs_build (single source of
+#     truth for "is this image built locally").
+#
+# This replaces the previously hardcoded service list which silently
+# missed every new locally-built service (dashboard-nuxt, finance-vector,
+# lotto-oracle, …) until somebody noticed and added it manually.
+#=============================================================================
+_service_has_build() {
+    local sid="$1"
+    # Per-extension compose fragment.
+    local cf="${INSTALL_DIR%/}/extensions/services/${sid}/compose.yaml"
+    [[ -f "$cf" ]] || cf="${INSTALL_DIR%/}/data/user-extensions/${sid}/compose.yaml"
+    if [[ -f "$cf" ]] && grep -Eq '^[[:space:]]+build:([[:space:]]|$)' "$cf"; then
+        return 0
+    fi
+    # "Core" services defined in docker-compose.*.yml overlays. Locate the
+    # service block by its `^  <sid>:` header and check for a `build:`
+    # directive before the next sibling header.
+    local f
+    for f in "${INSTALL_DIR%/}"/docker-compose.*.yml; do
+        [[ -f "$f" ]] || continue
+        if awk -v sid="$sid" '
+            $0 ~ "^  " sid ":[[:space:]]*$" { in_block=1; next }
+            in_block && $0 ~ "^  [a-zA-Z0-9_-]+:[[:space:]]*$" { exit }
+            in_block && $0 ~ "^[[:space:]]+build:" { found=1; exit }
+            END { exit found ? 0 : 1 }
+        ' "$f"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+#=============================================================================
+# _list_buildable_services
+#   → echoes one service id per line for every service that
+#     _service_has_build classifies as locally-built. Sourced from the
+#     extension dirs (extensions/services/* + data/user-extensions/*) and
+#     from any service header in docker-compose.*.yml overlays.
+#=============================================================================
+_list_buildable_services() {
+    local seen=()
+    local d sid
+    # Extensions.
+    for d in "${INSTALL_DIR%/}"/extensions/services/*/ \
+             "${INSTALL_DIR%/}"/data/user-extensions/*/; do
+        [[ -d "$d" ]] || continue
+        sid=$(basename "$d")
+        _service_has_build "$sid" || continue
+        seen+=("$sid")
+    done
+    # Core services (top-level overlays).
+    local f
+    for f in "${INSTALL_DIR%/}"/docker-compose.*.yml; do
+        [[ -f "$f" ]] || continue
+        while IFS= read -r sid; do
+            [[ -z "$sid" ]] && continue
+            local already=0
+            local s
+            for s in "${seen[@]}"; do
+                [[ "$s" == "$sid" ]] && already=1 && break
+            done
+            [[ "$already" -eq 1 ]] && continue
+            _service_has_build "$sid" && seen+=("$sid")
+        done < <(awk '/^  [a-zA-Z0-9_-]+:[[:space:]]*$/ { gsub(/^  |:[[:space:]]*$/,""); print }' "$f")
+    done
+    printf '%s\n' "${seen[@]}"
+}
+
+#=============================================================================
 # Rebuild local-built images (opt-in via --rebuild-images on restart/start/update).
-# Always rebuilds: dashboard, dashboard-api, ape, token-spy, privacy-shield.
-# Conditionally rebuilds based on .env state:
-#   - comfyui     (ENABLE_COMFYUI=true)
-#   - llama-server (GPU_BACKEND=amd, e.g. AMD Lemonade)
-#   - dreamforge   (ENABLE_DREAMFORGE=true)
-# Mirrors the conditional logic in installers/phases/11-services.sh. Unlike that
-# phase's image-inspect fast-path, --rebuild-images is an explicit opt-in so we
-# always rebuild every applicable service from source.
+#
+# Auto-discovers the rebuild list from compose files instead of carrying a
+# hardcoded service list (which inevitably went stale — bug fixed for
+# dashboard-nuxt + finance-vector + lotto-oracle which all silently
+# refused to rebuild).
+#
+# Behaviour:
+#   _dream_cli_rebuild_images <compose-flags...>           → all locally-built
+#   _dream_cli_rebuild_images --service <sid> <flags...>   → only that one
 #=============================================================================
 _dream_cli_rebuild_images() {
-    local flags=("$@")
-    local svcs=(dashboard dashboard-api ape token-spy privacy-shield)
-    # Mirror phases/11-services.sh conditional builds: ComfyUI when enabled,
-    # llama-server on AMD (Lemonade builds the binary in the container), and
-    # dreamforge when enabled (Rust source build). Other GPU backends pull
-    # pre-built images.
-    [[ "${ENABLE_COMFYUI:-}" == "true" ]] && svcs+=(comfyui)
-    [[ "${GPU_BACKEND:-}" == "amd" ]] && svcs+=(llama-server)
-    [[ "${ENABLE_DREAMFORGE:-}" == "true" ]] && svcs+=(dreamforge)
+    local target=""
+    local -a flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --service) target="$2"; shift 2 ;;
+            *) flags+=("$1"); shift ;;
+        esac
+    done
+
+    local -a svcs=()
+    if [[ -n "$target" ]]; then
+        if _service_has_build "$target"; then
+            svcs=("$target")
+        else
+            log "Skipping --rebuild-images: $target has no 'build:' block (pulled image)."
+            return 0
+        fi
+    else
+        while IFS= read -r s; do
+            [[ -n "$s" ]] && svcs+=("$s")
+        done < <(_list_buildable_services)
+    fi
+
+    if [[ ${#svcs[@]} -eq 0 ]]; then
+        log "No locally-built services found — nothing to rebuild."
+        return 0
+    fi
+
     _check_docker_access
-    log "Rebuilding local-built images (--rebuild-images)..."
+    log "Rebuilding ${#svcs[@]} locally-built image(s): ${svcs[*]}"
     if ! docker compose "${flags[@]}" build --no-cache "${svcs[@]}"; then
         warn "One or more images failed to rebuild (continuing — see compose output above)"
     fi
@@ -982,7 +1075,13 @@ cmd_restart() {
     local -a flags
     read -ra flags <<< "$flags_str"
 
-    [[ "$rebuild_images" == "true" ]] && _dream_cli_rebuild_images "${flags[@]}"
+    [[ "$rebuild_images" == "true" ]] && {
+        if [[ -n "$service" ]]; then
+            _dream_cli_rebuild_images --service "$service" "${flags[@]}"
+        else
+            _dream_cli_rebuild_images "${flags[@]}"
+        fi
+    }
 
     if [[ -z "$service" ]]; then
         _compose_run_with_summary "Restarting all services" "${flags[@]}" up -d
@@ -1035,7 +1134,13 @@ cmd_start() {
     local -a flags
     read -ra flags <<< "$flags_str"
 
-    [[ "$rebuild_images" == "true" ]] && _dream_cli_rebuild_images "${flags[@]}"
+    [[ "$rebuild_images" == "true" ]] && {
+        if [[ -n "$service" ]]; then
+            _dream_cli_rebuild_images --service "$service" "${flags[@]}"
+        else
+            _dream_cli_rebuild_images "${flags[@]}"
+        fi
+    }
 
     if [[ -z "$service" ]]; then
         _compose_run_with_summary "Starting all services" "${flags[@]}" up -d
