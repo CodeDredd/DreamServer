@@ -326,7 +326,7 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 ### Phase 7 — Cutover
 
-- [ ] `docker-compose.base.yml`: `dashboard-nuxt` neben `dashboard`
+- [x] `docker-compose.base.yml`: `dashboard-nuxt` neben `dashboard`
       eintragen (gleiche Volumes nicht nötig, kein Read-State).
 - [ ] `dream check-image-updates`-Datenbank um den Build-Tag
       ergänzen.
