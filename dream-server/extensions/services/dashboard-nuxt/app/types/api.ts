@@ -344,3 +344,95 @@ export interface RepoMapLookupResponse {
   project_id: number | string | null
   fallback: boolean
 }
+
+// ---------- /api/extensions/* (Extensions, Welle B.5) -------------------
+
+export type ExtensionStatus =
+  | 'enabled'
+  | 'cli_installed'
+  | 'stopped'
+  | 'unhealthy'
+  | 'disabled'
+  | 'not_installed'
+  | 'incompatible'
+  | 'installing'
+  | 'setting_up'
+  | 'error'
+
+export type ExtensionSource = 'core' | 'user' | 'library'
+
+export interface ExtensionFeature {
+  name: string
+  category?: string
+  icon?: string
+}
+
+export interface ExtensionEnvVar {
+  key?: string
+  name?: string
+  description?: string
+  default?: string
+  required?: boolean
+}
+
+export type DependencyStatus = 'enabled' | 'disabled' | 'not_installed' | 'incompatible' | 'unknown' | string
+
+export interface ExtensionEntry {
+  id: string
+  name: string
+  description?: string
+  category?: string
+  status: ExtensionStatus
+  source: ExtensionSource
+  installable?: boolean
+  has_data?: boolean
+  port?: number
+  external_port_default?: number
+  health_endpoint?: string
+  gpu_backends?: string[]
+  features?: ExtensionFeature[]
+  env_vars?: ExtensionEnvVar[]
+  depends_on?: string[]
+  dependents?: string[]
+  dependency_status?: Record<string, DependencyStatus>
+}
+
+export interface ExtensionsCatalogSummary {
+  total?: number
+  installed?: number
+  enabled?: number
+  cli_installed?: number
+  stopped?: number
+  unhealthy?: number
+  disabled?: number
+  not_installed?: number
+  installing?: number
+  error?: number
+  incompatible?: number
+}
+
+export interface ExtensionsCatalogResponse {
+  extensions: ExtensionEntry[]
+  summary?: ExtensionsCatalogSummary
+  gpu_backend?: string
+  agent_available?: boolean
+}
+
+export interface ExtensionProgress {
+  status: 'idle' | 'installing' | 'setting_up' | 'started' | 'error' | string
+  phase_label?: string
+  error?: string
+  started_at?: string
+}
+
+export interface ExtensionMutationResult {
+  message?: string
+  restart_required?: boolean
+  size_gb_freed?: number
+  data_info?: { size_gb: number }
+  detail?: unknown
+}
+
+export interface ExtensionLogsResponse {
+  logs: string
+}
