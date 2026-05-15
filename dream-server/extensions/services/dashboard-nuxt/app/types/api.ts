@@ -269,3 +269,78 @@ export interface DownloadProgressView {
   error?: string
 }
 
+// ---------- /api/projects/* (Vikunja proxy, Welle B.1) -------------------
+
+export interface VikunjaStatus {
+  available: boolean
+  configured: boolean
+  version?: string
+  url?: string
+  message?: string
+}
+
+export interface VikunjaProject {
+  id: number | string
+  title: string
+  description?: string
+}
+
+export interface VikunjaTask {
+  id: number | string
+  title: string
+  description?: string
+  done: boolean
+}
+
+// ---------- /api/auth/magic-link/* (Invites, Welle B.2) ------------------
+
+export type InviteScope = 'chat' | string
+
+export interface MagicLinkToken {
+  token_hash_prefix: string
+  target_username: string
+  scope: InviteScope
+  reusable: boolean
+  note?: string | null
+  expires_at: string
+  redemption_count: number
+  last_redeemed_at?: string | null
+  revoked_at?: string | null
+}
+
+export interface MagicLinkListResponse {
+  tokens: MagicLinkToken[]
+}
+
+export interface GeneratedMagicLink {
+  url: string
+  target_username: string
+  scope: InviteScope
+  reusable: boolean
+  expires_at: string
+  token_hash_prefix?: string
+}
+
+export interface MagicLinkQrResponse {
+  data_url: string
+}
+
+// ---------- /api/repo-map/* (Welle B.3) ----------------------------------
+
+export interface RepoMapEntry {
+  repo: string
+  project_id: number | string
+  label?: string
+  updated_at?: string | null
+}
+
+export interface RepoMap {
+  default_project_id: number | string | null
+  mappings: RepoMapEntry[]
+}
+
+export interface RepoMapLookupResponse {
+  repo: string
+  project_id: number | string | null
+  fallback: boolean
+}
