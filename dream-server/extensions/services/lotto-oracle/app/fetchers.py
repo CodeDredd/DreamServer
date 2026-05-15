@@ -84,6 +84,7 @@ def _client() -> httpx.Client:
 class BaseParser:
     game_id: str
     name: str
+    offline: bool = False  # True ⇒ usable as cold-start bootstrap (no network)
 
     def fetch_recent(self) -> list[DrawTuple]:
         """Return the most recent ~N draws (since-last-update fetch)."""
@@ -141,7 +142,7 @@ class CsvSeedParser(BaseParser):
     """
 
     def __init__(self, game_id: str):
-        super().__init__(game_id=game_id, name="csv-seed")
+        super().__init__(game_id=game_id, name="csv-seed", offline=True)
         self.game = GAMES[game_id]
         self.path = Path(CFG.seed_dir) / f"{game_id}.csv"
 
@@ -185,6 +186,173 @@ class CsvSeedParser(BaseParser):
                     continue
                 payload, display = _payload_combinatorial(self.game, pool_values)
                 yield (date_iso, payload, display)
+
+
+# --------------------------------------------------------------------------- #
+# Parser: official semicolon-separated archives shipped by lotto.de /
+# eurojackpot.de operators (and re-distributed by community trackers).
+#
+# Two file shapes are recognised, both ISO-8859-1 with CRLF and a quote
+# table appended after the draw rows:
+#
+#   LOTTO_*.csv  →  Lotto 6aus49 + Spiel 77 + Super 6 (one row per Mi/Sa)
+#       columns: Datum;;Z1;Z2;Z3;Z4;Z5;Z6;Zusatz;Zusatz2;Superzahl;Spiel77;Super6;…quotes…
+#       (Zusatz columns are always "--" since the Zusatzzahl was abolished
+#        in mid-2013, but the column itself is still emitted by the archive.)
+#
+#   EJ_*.csv     →  Eurojackpot (one row per Di/Fr)
+#       columns: Datum;H1;H2;H3;H4;H5;EZ1;EZ2;…quotes…
+#
+# The archive is matched by glob (LOTTO_*.csv / EJ_*.csv) so the operator
+# can drop multiple files (e.g. one per year) into seed_data/ without
+# touching the code. Anything that doesn't parse as a valid draw row is
+# silently skipped (header rows, trailing "Spieleinsätze und Quoten in
+# EUR" boilerplate, blank lines, …).
+# --------------------------------------------------------------------------- #
+_DATE_DDMMYYYY_LINE = re.compile(r"^\s*(\d{2})\.(\d{2})\.(\d{4})\s*;")
+
+
+class OfficialArchiveParser(BaseParser):
+    """Multi-game archive parser. One instance per ``game_id``; each
+    instance scans the seed dir for the matching archive(s) and yields
+    only the rows for its own game.
+
+    Mapping ``game_id → glob``::
+
+        lotto-6aus49 / spiel77 / super6  →  LOTTO_*.csv
+        eurojackpot                       →  EJ_*.csv
+    """
+
+    _GLOBS = {
+        "lotto-6aus49": "LOTTO_*.csv",
+        "spiel77":      "LOTTO_*.csv",
+        "super6":       "LOTTO_*.csv",
+        "eurojackpot":  "EJ_*.csv",
+    }
+
+    def __init__(self, game_id: str):
+        super().__init__(game_id=game_id, name="csv-archive", offline=True)
+        self.game = GAMES[game_id]
+        self.seed_dir = Path(CFG.seed_dir)
+
+    def fetch_archive(self, since: str | None = None) -> list[DrawTuple]:
+        glob = self._GLOBS.get(self.game_id)
+        if not glob or not self.seed_dir.is_dir():
+            return []
+        out: list[DrawTuple] = []
+        seen_dates: set[str] = set()
+        # Sort for deterministic order when multiple archive shards exist.
+        for fp in sorted(self.seed_dir.glob(glob)):
+            try:
+                # The DLTB / lottoreport archives are emitted as ISO-8859-1.
+                # Fall back to utf-8 just in case an operator pre-converted
+                # one of the files.
+                try:
+                    text = fp.read_text(encoding="cp1252")
+                except UnicodeDecodeError:
+                    text = fp.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                log.warning("[%s] failed to read archive %s: %s",
+                            self.game_id, fp, exc)
+                continue
+            for draw in self._parse_text(text):
+                if draw[0] in seen_dates:
+                    continue
+                seen_dates.add(draw[0])
+                out.append(draw)
+        if out:
+            log.info("[%s] csv-archive: %d draws across %d file(s)",
+                     self.game_id, len(out), len(list(self.seed_dir.glob(glob))))
+        return out
+
+    def fetch_recent(self) -> list[DrawTuple]:
+        # The whole archive is cheap to re-parse (<1 MB total); a "recent"
+        # call returns everything and the upsert layer dedupes.
+        return self.fetch_archive()
+
+    # ── per-line parsing ──────────────────────────────────────────────
+    def _parse_text(self, text: str) -> Iterable[DrawTuple]:
+        for line in text.splitlines():
+            if not _DATE_DDMMYYYY_LINE.match(line):
+                continue
+            cols = [c.strip() for c in line.split(";")]
+            try:
+                draw = self._parse_row(cols)
+            except (ValueError, IndexError):
+                continue
+            if draw is not None:
+                yield draw
+
+    def _parse_row(self, cols: list[str]) -> DrawTuple | None:
+        date_iso = _parse_date(cols[0])
+        if not date_iso:
+            return None
+
+        if self.game_id == "eurojackpot":
+            # cols: 0=date, 1..5=Hauptzahlen, 6..7=Eurozahlen, 8+=quotes
+            main = [int(cols[i]) for i in range(1, 6)]
+            euro = [int(cols[i]) for i in range(6, 8)]
+            if not (all(1 <= n <= 50 for n in main)
+                    and all(1 <= n <= 12 for n in euro)
+                    and len(set(main)) == 5
+                    and len(set(euro)) == 2):
+                return None
+            payload, display = _payload_combinatorial(
+                self.game,
+                {"Hauptzahlen": sorted(main), "Eurozahlen": sorted(euro)},
+            )
+            return (date_iso, payload, display)
+
+        # All three LOTTO_* games share the same row layout:
+        # cols: 0=date, 1=" "(empty marker), 2..7=Z1..Z6, 8/9=Zusatz markers
+        # ("--" since 2013), 10=Superzahl, 11=Spiel77, 12=Super6, 13+=quotes.
+        # Some archive variants drop the empty 2nd column → detect by
+        # checking whether cols[1] is empty (legacy) or already a number
+        # (compact variant).
+        first_num_idx = 2 if cols[1] == "" else 1
+        try:
+            main = [int(cols[first_num_idx + i]) for i in range(6)]
+        except ValueError:
+            return None
+        if not (all(1 <= n <= 49 for n in main) and len(set(main)) == 6):
+            return None
+        # Skip the two "--" Zusatz columns; the next numeric column is
+        # the Superzahl, then Spiel77, then Super6.
+        tail = cols[first_num_idx + 6:]
+        # Drop leading "--" placeholders (Zusatzzahl).
+        while tail and tail[0] in {"--", ""}:
+            tail.pop(0)
+        if len(tail) < 3:
+            return None
+        try:
+            superzahl = int(tail[0])
+            spiel77   = re.sub(r"\D", "", tail[1])
+            super6    = re.sub(r"\D", "", tail[2])
+        except ValueError:
+            return None
+
+        if self.game_id == "lotto-6aus49":
+            if not 0 <= superzahl <= 9:
+                return None
+            payload, display = _payload_combinatorial(
+                self.game,
+                {"Hauptzahlen": sorted(main), "Superzahl": [superzahl]},
+            )
+            return (date_iso, payload, display)
+
+        if self.game_id == "spiel77":
+            if len(spiel77) != self.game.digits:
+                return None
+            payload, display = _payload_digits(spiel77)
+            return (date_iso, payload, display)
+
+        if self.game_id == "super6":
+            if len(super6) != self.game.digits:
+                return None
+            payload, display = _payload_digits(super6)
+            return (date_iso, payload, display)
+
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -293,16 +461,25 @@ class LottoReportLatestParser(BaseParser):
 PARSERS: dict[str, list[BaseParser]] = {
     "lotto-6aus49": [
         CsvSeedParser("lotto-6aus49"),
+        OfficialArchiveParser("lotto-6aus49"),
         LottoReportLatestParser("lotto-6aus49"),
     ],
     "eurojackpot": [
         CsvSeedParser("eurojackpot"),
+        OfficialArchiveParser("eurojackpot"),
         LottoReportLatestParser("eurojackpot"),
     ],
-    # spiel77 / super6 have no public server-side source. Operator-supplied
-    # CSV (via the seed file or POST /admin/import) is the only path.
-    "spiel77": [CsvSeedParser("spiel77")],
-    "super6": [CsvSeedParser("super6")],
+    # spiel77 / super6 inherit their history from the LOTTO_*.csv archive
+    # (one row produces draws for all three games). lotto.de itself is a
+    # SPA, so without an operator-supplied archive these stay empty.
+    "spiel77": [
+        CsvSeedParser("spiel77"),
+        OfficialArchiveParser("spiel77"),
+    ],
+    "super6": [
+        CsvSeedParser("super6"),
+        OfficialArchiveParser("super6"),
+    ],
 }
 
 

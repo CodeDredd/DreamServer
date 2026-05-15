@@ -63,21 +63,30 @@ _state: dict = {
 # Bootstrap
 # --------------------------------------------------------------------------- #
 def _bootstrap_seed_if_empty() -> None:
-    """If the SQLite DB is brand-new (no draws), import bundled CSVs."""
+    """If the SQLite DB is brand-new (no draws), import bundled CSVs.
+
+    Iterates every offline-capable parser (``CsvSeedParser`` +
+    ``OfficialArchiveParser``) so an operator can drop a multi-year
+    ``LOTTO_*.csv`` / ``EJ_*.csv`` archive into ``seed_data/`` and have
+    it picked up on the first start without needing a manual
+    ``POST /admin/import``.
+    """
     for gid in GAMES:
-        if store.draw_count(gid) == 0:
-            log.info("[%s] db empty — attempting CSV seed import", gid)
-            n = 0
-            for parser in fetchers.PARSERS.get(gid, []):
-                if parser.__class__.__name__ == "CsvSeedParser":
-                    try:
-                        draws = parser.fetch_archive()
-                    except Exception as exc:  # noqa: BLE001
-                        log.warning("[%s] seed parser failed: %s", gid, exc)
-                        continue
-                    n = store.bulk_upsert(gid, draws)
-                    log.info("[%s] seed imported %d draw(s)", gid, n)
-                    break
+        if store.draw_count(gid) > 0:
+            continue
+        log.info("[%s] db empty — attempting offline seed import", gid)
+        for parser in fetchers.PARSERS.get(gid, []):
+            if not getattr(parser, "offline", False):
+                continue
+            try:
+                draws = parser.fetch_archive()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[%s] %s parser failed: %s", gid, parser.name, exc)
+                continue
+            if not draws:
+                continue
+            n = store.bulk_upsert(gid, draws)
+            log.info("[%s] %s imported %d draw(s)", gid, parser.name, n)
 
 
 def _bootstrap_tips_if_missing() -> None:
