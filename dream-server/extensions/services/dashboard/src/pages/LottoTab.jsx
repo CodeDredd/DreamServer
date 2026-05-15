@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Ticket, RefreshCw, Loader2, Play, Database, AlertCircle,
   Calendar, Clock, Sparkles, Copy, Check, Info, TrendingUp, BarChart3,
@@ -47,7 +47,14 @@ export default function LottoTab() {
   const [stats, setStats]       = useState(null)
   const [strategies, setStrategies] = useState([])
   const [sweetSpot, setSweetSpot] = useState(null)
-  const [recencyK, setRecencyK] = useState(1)         // user-selected K for next /generate
+  const [recencyK, setRecencyK] = useState(1)         // K for the next /generate
+  // Tracks whether the user has manually picked a K for the currently
+  // selected game. As long as this is false we keep auto-syncing K to
+  // either the persisted tip-run param or — better — the sweet-spot
+  // recommendation, so the dropdown always lands on the *recommended*
+  // K when a game is opened (instead of being stuck on whatever K the
+  // bootstrap happened to use, which is always 1).
+  const userPickedKRef = useRef(false)
   const [activeStrategy, setActiveStrategy] = useState(null)
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
@@ -94,14 +101,21 @@ export default function LottoTab() {
       const tipsBody = tipsRes.ok ? await tipsRes.json() : null
       const run = tipsBody?.run || null
       setTipsRun(run)
-      // Sync the K selector with what was actually used to generate the
-      // currently displayed tip set, so the dropdown reflects reality
-      // after a page reload / game switch.
-      const usedK = run?.params?.recency_k
-      if (typeof usedK === 'number') setRecencyK(usedK)
       setStats(statsRes.ok ? await statsRes.json() : null)
       setStrategies(stratRes.ok ? (await stratRes.json()).strategies || [] : [])
-      setSweetSpot(sweetRes.ok ? await sweetRes.json() : null)
+      const sweetBody = sweetRes.ok ? await sweetRes.json() : null
+      setSweetSpot(sweetBody)
+      // Auto-pick K for the user *only* until they take over manually:
+      // prefer the empirical sweet-spot, fall back to whatever K was used
+      // for the persisted tip run, fall back to 1.
+      if (!userPickedKRef.current) {
+        const recommended = sweetBody?.recommended_k
+        const usedK = run?.params?.recency_k
+        const next = (typeof recommended === 'number' ? recommended
+                    : typeof usedK === 'number' ? usedK
+                    : 1)
+        setRecencyK(next)
+      }
     } catch (e) {
       setError(e?.message || String(e))
     }
@@ -114,7 +128,12 @@ export default function LottoTab() {
     return () => clearInterval(id)
   }, [fetchOverview])
 
-  useEffect(() => { fetchSelected(selectedId) }, [selectedId, fetchSelected])
+  useEffect(() => {
+    // Reset the manual-K-override flag when switching to a different game,
+    // so each game lands on its own recommended K initially.
+    userPickedKRef.current = false
+    fetchSelected(selectedId)
+  }, [selectedId, fetchSelected])
 
   const selectedGame = useMemo(
     () => games.find((g) => g.id === selectedId) || null,
@@ -122,7 +141,7 @@ export default function LottoTab() {
   )
 
   // ── actions ───────────────────────────────────────────────────────────
-  const doAction = useCallback(async (kind) => {
+  const doAction = useCallback(async (kind, opts = {}) => {
     setBusy(kind)
     setBusyMsg(null)
     try {
@@ -132,9 +151,11 @@ export default function LottoTab() {
       } else if (kind === 'backfill') {
         res = await fetch('/api/lotto/refresh/full', { method: 'POST' })
       } else if (kind === 'generate') {
+        const kForRequest = (typeof opts.recencyK === 'number')
+          ? opts.recencyK : recencyK
         const body = selectedId
-          ? { game: selectedId, recency_k: recencyK }
-          : { recency_k: recencyK }
+          ? { game: selectedId, recency_k: kForRequest }
+          : { recency_k: kForRequest }
         res = await fetch('/api/lotto/tips/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -145,13 +166,15 @@ export default function LottoTab() {
         const body = await res.json().catch(() => ({}))
         setBusyMsg({ tone: 'error', text: body?.detail || `HTTP ${res.status}` })
       } else {
+        const kForRequest = (typeof opts.recencyK === 'number')
+          ? opts.recencyK : recencyK
         setBusyMsg({
           tone: 'ok',
           text: kind === 'backfill'
             ? 'Backfill gestartet — kann 1-3 Minuten dauern.'
             : kind === 'refresh'
               ? 'Inkrementeller Fetch gestartet.'
-              : `Neue Tipps generiert (Recency K=${recencyK}).`,
+              : `Neue Tipps generiert (Recency K=${kForRequest}).`,
         })
         setTimeout(() => { fetchOverview(); fetchSelected(selectedId) }, 1500)
       }
@@ -161,6 +184,16 @@ export default function LottoTab() {
       setBusy(null)
     }
   }, [selectedId, recencyK, fetchOverview, fetchSelected])
+
+  // K-Selector change: update state + immediately re-generate so the
+  // dropdown actually feels like it does something. Without this the
+  // user has to click "Tipps generieren" afterwards, which is what
+  // confused the operator.
+  const handleKChange = useCallback((newK) => {
+    userPickedKRef.current = true
+    setRecencyK(newK)
+    if (selectedId) doAction('generate', { recencyK: newK })
+  }, [selectedId, doAction])
 
   const handleCopy = useCallback(async (key, text) => {
     try {
@@ -200,9 +233,10 @@ export default function LottoTab() {
         <div className="flex items-center gap-2 flex-wrap">
           <RecencyKSelector
             value={recencyK}
-            onChange={setRecencyK}
+            onChange={handleKChange}
             sweetSpot={sweetSpot}
             disabled={!!busy || !status?.available}
+            busy={busy === 'generate'}
           />
           <button
             type="button"
@@ -641,20 +675,20 @@ function SweetSpotPanel({ sweetSpot, recencyK }) {
 }
 
 
-function RecencyKSelector({ value, onChange, sweetSpot, disabled }) {
+function RecencyKSelector({ value, onChange, sweetSpot, disabled, busy }) {
   const recommended = sweetSpot?.recommended_k
   const options = [1, 2, 3, 4, 5]
   return (
     <label
       className="flex items-center gap-2 text-xs text-theme-text-muted px-2 py-1.5 rounded-lg border border-theme-border bg-theme-card"
-      title="Wie viele der jüngsten Ziehungen soll die recency_exclude-Strategie ausschließen? Beim Generieren werden alle Tipps dieser Strategie damit erzeugt."
+      title="Wie viele der jüngsten Ziehungen soll die recency_exclude-Strategie ausschließen? Eine Änderung generiert sofort neue Tipps mit dem gewählten K."
     >
       <span className="font-medium">Recency K</span>
       <select
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
         disabled={disabled}
-        className="bg-transparent text-theme-text font-mono text-sm focus:outline-none disabled:opacity-50"
+        className="bg-transparent text-theme-text font-mono text-sm focus:outline-none disabled:opacity-50 cursor-pointer"
       >
         {options.map((k) => (
           <option key={k} value={k}>
@@ -662,6 +696,7 @@ function RecencyKSelector({ value, onChange, sweetSpot, disabled }) {
           </option>
         ))}
       </select>
+      {busy && <Loader2 size={12} className="animate-spin text-theme-accent" />}
     </label>
   )
 }
