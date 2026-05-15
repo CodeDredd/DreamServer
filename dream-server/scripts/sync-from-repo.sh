@@ -104,6 +104,9 @@ Options:
                         DESTRUCTIVE — discards uncommitted local changes.
   --verbose, -v         Show every file rsync visits (not just changes)
   --auto-restart        Auto-detect changed services and restart them via dream-cli
+                        (also automatically rebuilds locally-built images
+                        — services with a `build:` block in compose.yaml —
+                        so app-code edits actually reach the container)
   --restart svc...      Restart given services after sync via dream-cli
                         (combinable with --auto-restart; explicit names always restart)
   --preserve-state      (default) Snapshot per-service enabled/disabled state in DST
@@ -337,6 +340,31 @@ detect_changed_services() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# service_needs_build <sid>
+#   → returns 0 if the service's compose.yaml under the install dir contains
+#     a `build:` directive (i.e. the image is built locally rather than pulled
+#     from a registry).  We need this because `dream restart <svc>` only
+#     re-creates the container from the EXISTING image — it does not rebuild
+#     it.  So app-code changes (Python, JS bundles, …) under
+#     extensions/services/<sid>/{app,src,…} would never reach the container
+#     unless we explicitly `docker compose build <svc>` first.
+#
+#   Pure-config services (image: pulled from upstream registry) don't need
+#   this and would just waste cycles on `docker compose build` no-ops.
+# ─────────────────────────────────────────────────────────────────────────────
+service_needs_build() {
+  local sid="$1"
+  local cf="${DST}extensions/services/${sid}/compose.yaml"
+  [[ -f "$cf" ]] || cf="${DST}data/user-extensions/${sid}/compose.yaml"
+  [[ -f "$cf" ]] || return 1
+  # A YAML `build:` key under a service definition. Match the common shapes:
+  #   build: ./path
+  #   build:
+  #     context: …
+  grep -Eq '^[[:space:]]+build:([[:space:]]|$)' "$cf"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Per-service enable-state snapshot/reconcile.
 #
 # A service directory is one of:
@@ -539,7 +567,13 @@ if [[ ${#DRY_RUN[@]} -gt 0 ]]; then
     echo
     echo "→ Auto-restart preview (--auto-restart):"
     detect_changed_services "$OUTPUT_BODY" | while read -r svc; do
-      [[ -n "$svc" ]] && echo "    would restart: $svc"
+      if [[ -n "$svc" ]]; then
+        if service_needs_build "$svc"; then
+          echo "    would rebuild + restart: $svc"
+        else
+          echo "    would restart:           $svc"
+        fi
+      fi
     done
   fi
   exit 0
@@ -609,6 +643,45 @@ if [[ ${#ALL_RESTARTS[@]} -gt 0 ]]; then
     echo "WARN: dream-cli not found or not executable at $CLI — skipping restart." >&2
     exit 0
   fi
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Rebuild locally-built images BEFORE restart.
+  #
+  # `dream restart` only re-creates containers from the existing image — it
+  # does NOT rebuild.  So a Python/JS edit under
+  # extensions/services/<sid>/app would silently NOT reach the live
+  # container until the operator manually ran `docker compose build`.
+  # We do that automatically here, but only for services that actually have
+  # a `build:` block (pulled images don't need it).
+  # ───────────────────────────────────────────────────────────────────────────
+  BUILD_TARGETS=()
+  for svc in "${ALL_RESTARTS[@]}"; do
+    if service_needs_build "$svc"; then
+      BUILD_TARGETS+=("$svc")
+    fi
+  done
+
+  if [[ ${#BUILD_TARGETS[@]} -gt 0 ]]; then
+    COMPOSE_FLAGS_FILE="${DST}.compose-flags"
+    if [[ ! -s "$COMPOSE_FLAGS_FILE" ]]; then
+      echo "WARN: ${COMPOSE_FLAGS_FILE} missing — skipping image rebuild." >&2
+      echo "      Run: cd $DST && dream sync to regenerate, then retry." >&2
+    else
+      # shellcheck disable=SC2046
+      COMPOSE_FLAGS=( $(cat "$COMPOSE_FLAGS_FILE") )
+      echo
+      echo "→ Rebuilding ${#BUILD_TARGETS[@]} locally-built image(s): ${BUILD_TARGETS[*]}"
+      (
+        cd "$DST" || exit 1
+        # Single `docker compose build` call with all targets — faster than
+        # per-svc loop because docker can parallelise the BuildKit jobs.
+        if ! docker compose "${COMPOSE_FLAGS[@]}" build "${BUILD_TARGETS[@]}"; then
+          echo "    WARN: image rebuild reported errors (continuing to restart)" >&2
+        fi
+      )
+    fi
+  fi
+
   echo
   echo "→ Restarting ${#ALL_RESTARTS[@]} service(s): ${ALL_RESTARTS[*]}"
   for svc in "${ALL_RESTARTS[@]}"; do
