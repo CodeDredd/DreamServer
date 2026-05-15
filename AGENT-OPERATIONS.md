@@ -563,7 +563,7 @@ disabled-by-default), Vollplan in
 | Port | `3011` (parallel zu `dashboard:3001`) |
 | Stack | Nuxt 4 (SPA), Nuxt UI v3, Pinia + Pinia ORM, VueUse, Nitro `/api/`-Proxy |
 | API | unverändert `dashboard-api:3002` — keine Änderungen am FastAPI-Backend |
-| Status | Phase 0 (Skelett); Phase 1–7 siehe Migrationsplan |
+| Status | **Phase 1 + 2 + 3 done** (App-Shell, Sidebar, GSAP-Splash, BootstrapBanner, InstallPromptBanner, alle 10 Stub-Pages, reaktive Sidebar-Predikate). Phase 4 (echte Page-Inhalte, 4 Wellen) folgt. |
 | Cutover | nach 14 Tagen Soak → Port-Swap (`dashboard-nuxt` zieht auf `:3001`) |
 
 Operator-Workflow nach Phase 1:

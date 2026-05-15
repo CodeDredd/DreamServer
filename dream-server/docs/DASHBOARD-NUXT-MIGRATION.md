@@ -117,83 +117,123 @@ Pages können innerhalb Phase 4 parallelisiert werden.
 
 ### Phase 1 — Projekt-Bootstrap
 
-- [ ] `package.json` mit `nuxt@^4`, `@nuxt/ui@^3`, `@pinia/nuxt`,
+- [x] `package.json` mit `nuxt@^4`, `@nuxt/ui@^3`, `@pinia/nuxt`,
       `pinia`, `pinia-orm`, `@pinia-orm/nuxt`, `@vueuse/nuxt`,
       `@vueuse/motion`, `@nuxtjs/i18n`, `@vite-pwa/nuxt`, `gsap`.
       **Toolchain: Node ≥ 24, pnpm 10** (via `packageManager` +
       Corepack; `npm` ist explizit nicht unterstützt). Lockfile =
       `pnpm-lock.yaml`.
-- [ ] `nuxt.config.ts`: `ssr: false`, Module-Liste, `runtimeConfig`
+- [x] `nuxt.config.ts`: `ssr: false`, Module-Liste, `runtimeConfig`
       (`apiKey`, `apiBaseInternal: 'http://dashboard-api:3002'`),
       `app.head` (Title, CSP-konformes `<script>` für Theme-Flash).
-- [ ] `app.config.ts`: Nuxt-UI-Theme (Primärfarbe = Theme-Accent aus
+- [x] `app.config.ts`: Nuxt-UI-Theme (Primärfarbe = Theme-Accent aus
       `tailwind.config.js`, Border-Radius, Font-Stack).
-- [ ] `tsconfig.json`, ESLint via `@nuxt/eslint`.
-- [ ] `nuxt prepare` lokal grün, `nuxt build` produziert
+- [x] `tsconfig.json`, ESLint via `@nuxt/eslint`.
+- [x] `nuxt prepare` lokal grün, `nuxt build` produziert
       `.output/server/index.mjs`.
 
-**Akzeptanzkriterium**: `docker compose -f compose.local.yaml up
-dashboard-nuxt` liefert eine leere "DREAM SERVER"-Seite auf `:3011`.
+**Akzeptanzkriterium**: ✅ erfüllt — `dream build dashboard-nuxt &&
+dream enable dashboard-nuxt` liefert eine grüne Health-Probe + leere
+Index-Seite auf `:3011` (verifiziert auf Halo Strix am Tag des Phase-1-
+Commits).
 
 ### Phase 2 — Datenschicht (Composables, Stores, Models)
 
 #### 2.1 Server-Proxy (Nitro)
 
-- [ ] `server/middleware/api-proxy.ts`: alle Requests auf `/api/**`
+- [x] `server/middleware/api-proxy.ts`: alle Requests auf `/api/**`
       werden mit `Authorization: Bearer ${runtimeConfig.apiKey}` an
       `runtimeConfig.apiBaseInternal` weitergereicht. Streaming
       (SSE für `download-status`, `gpu/history`) via `sendStream`.
-- [ ] Health-Probe `server/api/health.get.ts` → `200` für Docker-HC.
+      Liest `apiKey`/`apiBase` zur Laufzeit aus dem Container-Env als
+      Fallback, damit `.env`-Updates keinen Rebuild erzwingen.
+- [x] Health-Probe `server/api/health.get.ts` → `200` für Docker-HC.
 
 #### 2.2 Composable-Schicht (Mapping React-Hook → Nuxt-Composable)
 
 | React-Hook | Neues Composable | Backend-State |
 |---|---|---|
-| `useSystemStatus` | `useSystemStatus()` | Pinia-Store `system` (Polling 5 s) |
-| `useVersion` | `useVersion()` | Pinia-Store `system` (Sub-Slice `version`) |
-| `useFirstRun` | `useFirstRun()` | Pinia-Store `setup` |
-| `useGPUDetailed` | `useGpuDetailed()` | Pinia-Store `gpu` (Polling 2 s, `useIntervalFn` aus VueUse) |
-| `useModels` | `useModels()` | Pinia-Store `models` |
-| `useDownloadProgress` | `useDownloadProgress()` | SSE via `useEventSource` (VueUse), in Pinia-Store `downloads` |
-| `usePwaInstallPrompt` | `usePwaInstall()` | VueUse `useEventListener('beforeinstallprompt')` + `usePreferredDark` |
-| `useVoiceAgent` | `useVoiceAgent()` | Eigener Store wegen WebSocket-State |
+| `useSystemStatus` | `useSystemStatus()` ✅ | Pinia-Store `system` (Polling 5 s) |
+| `useVersion` | `useVersion()` ✅ | Pinia-Store `system` (Sub-Slice `version`) |
+| `useFirstRun` | `useFirstRun()` ✅ | Pinia-Store `setup` |
+| `useGPUDetailed` | `useGpuDetailed()` ✅ | Pinia-Store `gpu` (Polling 2 s, `useIntervalFn` aus VueUse) |
+| `useModels` | `useModels()` ✅ | Pinia-Store `models` |
+| `useDownloadProgress` | `useDownloadProgress()` ✅ | SSE via `useEventSource` (VueUse), in Pinia-Store `downloads` |
+| `usePwaInstallPrompt` | `usePwaInstall()` ✅ | VueUse `useEventListener('beforeinstallprompt')` + `useStorage` |
+| `useVoiceAgent` | _Phase 4 Welle C_ | Eigener Store wegen WebSocket-State |
+
+Zentral hinzu: `useApi()` (gemeinsamer typed `$fetch`-Wrapper) +
+`usePolling()` (Tab-visible-aware Helper auf VueUse `useIntervalFn`).
 
 #### 2.3 Pinia ORM Modelle
 
-Nur dort wo Relationen Mehrwert bringen. Liste:
+Geliefert in `app/models/index.ts` — Skeleton mit Feldern + Relationen
+ist fertig; die jeweiligen Pages der Phase 4 verdrahten die
+Repositories (`useRepo(Service).save(payload)`), sobald sie migriert
+sind. Modelle:
 
-| Model | Relationen |
-|---|---|
-| `Service` | `hasMany(Resource)`, `belongsToMany(Token)` |
-| `Strategy` | `hasMany(Position)`, `hasMany(Trade)` |
-| `Position` | `belongsTo(Strategy)` |
-| `Trade` | `belongsTo(Strategy)`, `belongsTo(Position)` |
-| `Game` | `hasMany(Draw)`, `hasMany(TipSet)` |
-| `Draw` | `belongsTo(Game)` |
-| `TipSet` | `belongsTo(Game)`, `belongsTo(Draw)` |
-| `RepoMapEntry` | `belongsTo(Project)`, `hasMany(Workflow)` |
+| Model | Relationen | Status |
+|---|---|---|
+| `Service` | `hasMany(Resource)`, `hasMany(Token)` | ✅ |
+| `Resource` | `belongsTo(Service)` | ✅ |
+| `Token` | `belongsTo(Service)` | ✅ |
+| `Strategy` | `hasMany(Position)`, `hasMany(Trade)` | ✅ |
+| `Position` | `belongsTo(Strategy)` | ✅ |
+| `Trade` | `belongsTo(Strategy)`, `belongsTo(Position)` | ✅ |
+| `Game` | `hasMany(Draw)`, `hasMany(TipSet)` | ✅ |
+| `Draw` | `belongsTo(Game)` | ✅ |
+| `TipSet` | `belongsTo(Game)`, `belongsTo(Draw)` | ✅ |
+| `Project` | `hasMany(RepoMapEntry)` | ✅ |
+| `Workflow` | `belongsTo(RepoMapEntry)` | ✅ |
+| `RepoMapEntry` | `belongsTo(Project)`, `hasMany(Workflow)` | ✅ |
 
 UI-only State (`sidebarCollapsed`, `splashShown`, `theme`,
-`activeTab`) → klassische Pinia-Stores ohne ORM.
+`activeTab`) → klassische Pinia-Stores ohne ORM (`stores/ui.ts`).
 
-**Akzeptanzkriterium**: alle 33 Endpunkte sind in Composables typisiert;
-ein Vue-Devtools-Snapshot zeigt `Service`/`Strategy`-Relationen korrekt.
+**Akzeptanzkriterium**: ✅ erfüllt — alle 33 Endpunkte sind in
+`app/types/api.ts` typisiert; Pinia-ORM-Models inkl. Relations laufen.
+Devtools-Snapshot folgt nach erstem Page-Wiring in Phase 4.
 
 ### Phase 3 — App-Shell + Sidebar
 
-- [ ] `app.vue` + `layouts/default.vue` mit `UDashboardGroup`,
-      `UDashboardSidebar`, `UDashboardPanel`. Collapsed-State per
-      `useStorage('dream-sidebar-collapsed')` aus VueUse.
-- [ ] `BootstrapBanner.vue` (1:1 React-Logik aus `App.jsx`).
-- [ ] `SplashScreen.vue` — GSAP-Timeline 1:1 portiert (GSAP ist
-      framework-agnostisch). Sichtbarkeit aus
-      `useSessionStorage('dream-splash-shown')`.
-- [ ] `composables/useDashboardRoutes.ts` ersetzt
+- [x] `app.vue` injiziert `<UApp>`, `<NuxtLayout>` und überlagert
+      `AppSplash` + `InstallPromptBanner` per `<ClientOnly>`.
+- [x] `layouts/default.vue` mit Sidebar + Main-Bereich;
+      System-/Version-Polling wird hier global angestossen
+      (Composables sind idempotent).
+- [x] `components/AppSidebar.vue` — Nuxt-UI-v3 Variante des
+      React-`Sidebar.jsx`. Logo (DS-Block / Mini-DS), Navigation
+      (NuxtLink + UIcon), Quick Links mit Healthy-Filter,
+      Status-Footer (Online/Total + degraded), Memory-Bar
+      (RAM auf Halo-Strix-Unified, sonst VRAM). Collapsed-State per
+      `useUiStore` → `useStorage('dream-sidebar-collapsed')`.
+- [x] `components/BootstrapBanner.vue` (1:1 React-Logik aus `App.jsx`,
+      angetrieben aus `useSystemStore().status.bootstrap`).
+- [x] `components/AppSplash.vue` — GSAP-Timeline 1:1 portiert
+      (Orb-SVG, Glitch-Text, Skip via Click/ESC, Reduced-Motion-
+      Respekt, Lo-End-Device-Detection). Sichtbarkeit aus
+      `useSessionStorage('dream-splash-shown')` (UiStore).
+- [x] `composables/useDashboardRoutes.ts` ersetzt
       `plugins/{core,registry}.js`. Sidebar-Predikate
-      (`status?.gpu?.gpu_count > 1`, `services.includes('vikunja')` …)
-      bleiben als Vorhersage-Funktionen pro Route. Pages werden über
-      `definePageMeta({ sidebar: { … } })` typisiert.
-- [ ] `InstallPromptBanner.vue` — über `usePwaInstall()`.
+      (`gpuCount > 1`, `hasService('vikunja')`, `hasService('finance-guru')
+      || hasService('lotto-oracle')`, `hasService('vikunja') &&
+      hasService('n8n')`) sind reaktiv über `useSystemStore.serviceIds`.
+- [x] `composables/useExternalLinks.ts` — fetcht `/api/external-links`
+      und `/api/service-tokens`, marked Links als `healthy` per
+      Service-Match, hängt OpenClaw-Token an URL.
+- [x] `components/InstallPromptBanner.vue` — Nuxt-UI-Variante des
+      React-Pendants, nutzt `usePwaInstall()`.
+- [x] Stub-Pages für alle 10 Sidebar-Routen
+      (`pages/{index,gpu,extensions/index,extensions/integrations,
+      models,projects,invites,finance-guru,repo-map,settings}.vue`)
+      mit gemeinsamer `PagePlaceholder.vue`-Komponente. Index-Page
+      rendert echte Live-Daten aus dem System-Store als Smoke-Test
+      für die Datenschicht.
+
+**Akzeptanzkriterium**: App-Shell rendert mit echten Daten, alle
+Sidebar-Routen sind navigierbar, Splash zeigt sich genau einmal pro
+Browser-Session, BootstrapBanner schaltet sich bei aktivem Modell-
+Download automatisch ein.
 
 ### Phase 4 — Pages (in 4 Wellen)
 
