@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
-// Lotto Oracle — second tab inside the Finance Guru page.
+// Lotto Oracle — second tab (v121731) inside the Finance Guru page.
 //
 // Talks to /api/lotto/* on dashboard-api which proxies the lotto-oracle
 // service. Handles all four supported games (lotto-6aus49, eurojackpot,
