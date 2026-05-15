@@ -119,6 +119,7 @@ def _create_schema(c: sqlite3.Connection) -> None:
     # tip_runs schema didn't carry the strategy backtest metrics yet.
     _ensure_column(c, "tip_runs", "strategy_meta", "TEXT")
     _ensure_column(c, "tip_runs", "recency_stats", "TEXT")
+    _ensure_column(c, "tip_runs", "params", "TEXT")
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +227,7 @@ def save_tip_run(
     *,
     strategy_meta: dict | None = None,
     recency_stats: dict | None = None,
+    params: dict | None = None,
 ) -> int:
     """Persist one tip-generation run. Returns the run_id.
 
@@ -235,12 +237,15 @@ def save_tip_run(
     ``recency_stats`` — optional dict from
     ``analytics.recency_overlap_distribution()`` with the empirical
     "P(k overlapping numbers with last N draws)" histogram.
+    ``params`` — optional dict of generation parameters (e.g.
+    ``{"recency_k": 3}``) so the dashboard can show "diese Tipps wurden
+    mit K=3 erzeugt".
     """
     with _LOCK:
         cur = conn().execute(
             "INSERT INTO tip_runs(game_id, based_on_draw, n_strategies, n_tips, "
-            "strategy_meta, recency_stats) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "strategy_meta, recency_stats, params) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 game_id,
                 based_on_draw,
@@ -248,6 +253,7 @@ def save_tip_run(
                 len(tips),
                 json.dumps(strategy_meta, separators=(",", ":")) if strategy_meta else None,
                 json.dumps(recency_stats, separators=(",", ":")) if recency_stats else None,
+                json.dumps(params, separators=(",", ":")) if params else None,
             ),
         )
         run_id = cur.lastrowid
@@ -270,7 +276,7 @@ def save_tip_run(
 def latest_tip_run(game_id: str) -> dict | None:
     row = conn().execute(
         "SELECT id, generated_at, based_on_draw, n_strategies, n_tips, "
-        "strategy_meta, recency_stats "
+        "strategy_meta, recency_stats, params "
         "FROM tip_runs WHERE game_id=? ORDER BY id DESC LIMIT 1",
         (game_id,),
     ).fetchone()
@@ -283,6 +289,7 @@ def latest_tip_run(game_id: str) -> dict | None:
     ).fetchall()
     meta = json.loads(row["strategy_meta"]) if row["strategy_meta"] else {}
     recency = json.loads(row["recency_stats"]) if row["recency_stats"] else None
+    params = json.loads(row["params"]) if row["params"] else {}
     return {
         "run_id":         row["id"],
         "generated_at":   row["generated_at"],
@@ -291,6 +298,7 @@ def latest_tip_run(game_id: str) -> dict | None:
         "n_tips":         row["n_tips"],
         "strategy_meta":  meta,
         "recency_stats":  recency,
+        "params":         params,
         "tips": [
             {
                 "strategy":  t["strategy"],

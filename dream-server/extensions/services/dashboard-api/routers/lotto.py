@@ -109,8 +109,18 @@ async def lotto_games(api_key: str = Depends(verify_api_key)):
 
 
 @router.get("/api/lotto/games/{game_id}/strategies")
-async def lotto_strategies(game_id: str, api_key: str = Depends(verify_api_key)):
-    return await _lotto_request("GET", f"/games/{game_id}/strategies")
+async def lotto_strategies(
+    game_id: str,
+    recency_k: int = Query(1, ge=1, le=5),
+    api_key: str = Depends(verify_api_key),
+):
+    return await _lotto_request("GET", f"/games/{game_id}/strategies",
+                                params={"recency_k": recency_k})
+
+
+@router.get("/api/lotto/games/{game_id}/sweet-spot")
+async def lotto_sweet_spot(game_id: str, api_key: str = Depends(verify_api_key)):
+    return await _lotto_request("GET", f"/games/{game_id}/sweet-spot")
 
 
 @router.get("/api/lotto/draws")

@@ -368,37 +368,14 @@ def _strat_random_uniform(g: Game, history: list[dict], *, rng: random.Random,
 # Digit-game strategies (Spiel 77 / Super 6)
 # --------------------------------------------------------------------------- #
 def _digit_strat_recency_exclude(g: Game, history: list[dict], *, rng: random.Random,
-                                 rows: int) -> list[dict]:
+                                 rows: int, exclude_last_k: int = 1) -> list[dict]:
     """For each digit position, pick a digit different from the previous
-    draw's digit at that position (10 → 9 candidates per position).
+    K draws' digits at that position (10 → up to ``10 - K`` candidates).
+    With K=1 this behaves like the classic "letzte Ziehung ausschließen"
+    rule; higher K rotates digits more aggressively.
     """
     out = []
-    last_digits = (_digit_history(history) or [None])[0]
-    for _ in range(rows):
-        digits = []
-        for pos in range(g.digits):
-            forbidden = {int(last_digits[pos])} if last_digits else set()
-            choices = [d for d in range(10) if d not in forbidden]
-            digits.append(str(rng.choice(choices)))
-        payload, display = _format_digits("".join(digits))
-        out.append({
-            "strategy":  "recency_exclude",
-            "payload":   payload,
-            "display":   display,
-            "rationale": ("Pro Position andere Ziffer als die letzte Ziehung"
-                          if last_digits else "Keine vorherige Ziehung — uniform"),
-        })
-    return out
-
-
-def _digit_strat_recency_exclude_k3(g: Game, history: list[dict], *, rng: random.Random,
-                                    rows: int) -> list[dict]:
-    """Like recency_exclude, but excludes the digits from the **last 3
-    draws** at each position. Keeps tips changing more aggressively
-    even when consecutive draws happen to share a digit at one slot.
-    """
-    out = []
-    history_strs = _digit_history(history)[:3]
+    history_strs = _digit_history(history)[:exclude_last_k]
     for _ in range(rows):
         digits = []
         relax_count = 0
@@ -406,18 +383,20 @@ def _digit_strat_recency_exclude_k3(g: Game, history: list[dict], *, rng: random
             forbidden = {int(s[pos]) for s in history_strs if len(s) > pos}
             choices = [d for d in range(10) if d not in forbidden]
             if not choices:
-                # All 10 digits already used in last 3 draws → relax.
+                # All 10 digits already used in last K draws → relax.
                 choices = list(range(10))
                 relax_count += 1
             digits.append(str(rng.choice(choices)))
         payload, display = _format_digits("".join(digits))
         out.append({
-            "strategy":  "recency_exclude_k3",
+            "strategy":  "recency_exclude",
             "payload":   payload,
             "display":   display,
-            "rationale": (f"Pro Position eine Ziffer ungleich der letzten 3 Ziehungen"
-                          f"{' (' + str(relax_count) + ' Position(en) relaxed)' if relax_count else ''}"
-                          if history_strs else "Keine vorherige Ziehung — uniform"),
+            "rationale": (
+                (f"Pro Position andere Ziffer als die letzten {exclude_last_k} "
+                 f"Ziehung(en)"
+                 f"{' (' + str(relax_count) + ' Position(en) relaxed)' if relax_count else ''}")
+                if history_strs else "Keine vorherige Ziehung — uniform"),
         })
     return out
 
@@ -553,68 +532,115 @@ def _digit_strat_random_uniform(g: Game, history: list[dict], *, rng: random.Ran
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
-COMBINATORIAL_STRATEGIES: list[Strategy] = [
-    Strategy("recency_exclude", "Letzte Ziehung ausgeschlossen",
-             "Garantiert keine Zahl aus den jüngsten Ziehungen — Tipps ändern sich nach jeder Ziehung.",
-             lambda g, h, rng, rows: _strat_recency_exclude(g, h, rng=rng, rows=rows, exclude_last_k=1)),
-    Strategy("frequency_hot", "Hot Numbers",
-             "Häufiger gezogene Zahlen werden bevorzugt (ohne Recency-Filter).",
-             lambda g, h, rng, rows: _strat_frequency_weighted(g, h, rng=rng, rows=rows, hot=True)),
-    Strategy("frequency_cold", "Cold / Due",
-             "Selten gezogene Zahlen werden bevorzugt (Gegenstrategie zu Hot).",
-             lambda g, h, rng, rows: _strat_frequency_weighted(g, h, rng=rng, rows=rows, hot=False)),
-    Strategy("gap_due", "Lange Pause",
-             "Zahlen mit dem aktuell längsten Abstand seit der letzten Ziehung.",
-             lambda g, h, rng, rows: _strat_gap_due(g, h, rng=rng, rows=rows)),
-    Strategy("balanced", "Balanced",
-             "Even/Odd-Mix, plausible Summe, ≥1 Zahl >31, keine 3er-Folge — und ohne letzte Ziehung.",
-             lambda g, h, rng, rows: _strat_balanced(g, h, rng=rng, rows=rows)),
-    Strategy("anti_pattern", "Anti-Massenmuster",
-             "Vermeidet Tipps, die viele Spieler abgeben (Datums-only, arithm. Folgen, Scheinreihen).",
-             lambda g, h, rng, rows: _strat_anti_pattern(g, h, rng=rng, rows=rows)),
-    Strategy("random_uniform", "Zufall (Baseline)",
-             "Reine Gleichverteilung — als Vergleichswert.",
-             lambda g, h, rng, rows: _strat_random_uniform(g, h, rng=rng, rows=rows)),
-]
-
-DIGIT_STRATEGIES: list[Strategy] = [
-    Strategy("recency_exclude", "Letzte Ziehung ausgeschlossen",
-             "Jede Position erhält eine andere Ziffer als die letzte Ziehung.",
-             lambda g, h, rng, rows: _digit_strat_recency_exclude(g, h, rng=rng, rows=rows)),
-    Strategy("recency_exclude_k3", "Letzte 3 Ziehungen ausgeschlossen",
-             "Jede Position vermeidet alle Ziffern der letzten 3 Ziehungen — Tipps ändern sich aggressiver.",
-             lambda g, h, rng, rows: _digit_strat_recency_exclude_k3(g, h, rng=rng, rows=rows)),
-    Strategy("first_digit_recency", "Erste Ziffer rotieren",
-             "Erste Ziffer ungleich der ersten Ziffer der letzten 5 Ziehungen (Spiel 77 Klasse-7-Marker).",
-             lambda g, h, rng, rows: _digit_strat_first_digit_recency(g, h, rng=rng, rows=rows)),
-    Strategy("frequency_hot", "Hot per Position",
-             "Häufigste Ziffer pro Position (gewichtet).",
-             lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=True)),
-    Strategy("frequency_cold", "Cold per Position",
-             "Seltenste Ziffer pro Position (gewichtet).",
-             lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=False)),
-    Strategy("anti_pattern", "Anti-Massenmuster",
-             "Vermeidet beliebte Muster (gleiche Ziffer, 1234567, Datums-Tipps, Palindrome).",
-             lambda g, h, rng, rows: _digit_strat_anti_pattern(g, h, rng=rng, rows=rows)),
-    Strategy("random_uniform", "Zufall (Baseline)",
-             "10⁷ bzw. 10⁶ gleichverteilt.",
-             lambda g, h, rng, rows: _digit_strat_random_uniform(g, h, rng=rng, rows=rows)),
-]
+RECENCY_K_MIN = 1
+RECENCY_K_MAX = 5
+RECENCY_K_DEFAULT = 1
 
 
-def strategies_for(game_id: str) -> list[Strategy]:
+def _recency_label(k: int) -> str:
+    return ("Letzte Ziehung ausgeschlossen"
+            if k == 1 else f"Letzte {k} Ziehungen ausgeschlossen")
+
+
+def _recency_desc_combo(k: int) -> str:
+    if k == 1:
+        return ("Garantiert keine Zahl aus der letzten Ziehung — Tipps "
+                "ändern sich nach jeder neuen Ziehung.")
+    return (f"Garantiert keine Zahl aus den letzten {k} Ziehungen — "
+            "Tipps unterscheiden sich aggressiver, geben aber bewusst "
+            "etwas Trefferwahrscheinlichkeit auf (Lotto ist iid).")
+
+
+def _recency_desc_digit(k: int) -> str:
+    if k == 1:
+        return "Jede Position erhält eine andere Ziffer als die letzte Ziehung."
+    return (f"Jede Position vermeidet alle Ziffern der letzten {k} "
+            "Ziehungen — Tipps ändern sich aggressiver.")
+
+
+def _combinatorial_strategies(recency_k: int) -> list[Strategy]:
+    k = max(RECENCY_K_MIN, min(RECENCY_K_MAX, int(recency_k)))
+    return [
+        Strategy("recency_exclude", _recency_label(k), _recency_desc_combo(k),
+                 lambda g, h, rng, rows, _k=k:
+                     _strat_recency_exclude(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
+        Strategy("frequency_hot", "Hot Numbers",
+                 "Häufiger gezogene Zahlen werden bevorzugt (ohne Recency-Filter).",
+                 lambda g, h, rng, rows: _strat_frequency_weighted(g, h, rng=rng, rows=rows, hot=True)),
+        Strategy("frequency_cold", "Cold / Due",
+                 "Selten gezogene Zahlen werden bevorzugt (Gegenstrategie zu Hot).",
+                 lambda g, h, rng, rows: _strat_frequency_weighted(g, h, rng=rng, rows=rows, hot=False)),
+        Strategy("gap_due", "Lange Pause",
+                 "Zahlen mit dem aktuell längsten Abstand seit der letzten Ziehung.",
+                 lambda g, h, rng, rows: _strat_gap_due(g, h, rng=rng, rows=rows)),
+        Strategy("balanced", "Balanced",
+                 "Even/Odd-Mix, plausible Summe, ≥1 Zahl >31, keine 3er-Folge — und ohne letzte Ziehung.",
+                 lambda g, h, rng, rows: _strat_balanced(g, h, rng=rng, rows=rows)),
+        Strategy("anti_pattern", "Anti-Massenmuster",
+                 "Vermeidet Tipps, die viele Spieler abgeben (Datums-only, arithm. Folgen, Scheinreihen).",
+                 lambda g, h, rng, rows: _strat_anti_pattern(g, h, rng=rng, rows=rows)),
+        Strategy("random_uniform", "Zufall (Baseline)",
+                 "Reine Gleichverteilung — als Vergleichswert.",
+                 lambda g, h, rng, rows: _strat_random_uniform(g, h, rng=rng, rows=rows)),
+    ]
+
+
+def _digit_strategies(recency_k: int) -> list[Strategy]:
+    k = max(RECENCY_K_MIN, min(RECENCY_K_MAX, int(recency_k)))
+    return [
+        Strategy("recency_exclude", _recency_label(k), _recency_desc_digit(k),
+                 lambda g, h, rng, rows, _k=k:
+                     _digit_strat_recency_exclude(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
+        Strategy("first_digit_recency", "Erste Ziffer rotieren",
+                 "Erste Ziffer ungleich der ersten Ziffer der letzten 5 Ziehungen (Spiel 77 Klasse-7-Marker).",
+                 lambda g, h, rng, rows: _digit_strat_first_digit_recency(g, h, rng=rng, rows=rows)),
+        Strategy("frequency_hot", "Hot per Position",
+                 "Häufigste Ziffer pro Position (gewichtet).",
+                 lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=True)),
+        Strategy("frequency_cold", "Cold per Position",
+                 "Seltenste Ziffer pro Position (gewichtet).",
+                 lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=False)),
+        Strategy("anti_pattern", "Anti-Massenmuster",
+                 "Vermeidet beliebte Muster (gleiche Ziffer, 1234567, Datums-Tipps, Palindrome).",
+                 lambda g, h, rng, rows: _digit_strat_anti_pattern(g, h, rng=rng, rows=rows)),
+        Strategy("random_uniform", "Zufall (Baseline)",
+                 "10⁷ bzw. 10⁶ gleichverteilt.",
+                 lambda g, h, rng, rows: _digit_strat_random_uniform(g, h, rng=rng, rows=rows)),
+    ]
+
+
+def strategies_for(game_id: str, *, recency_k: int = RECENCY_K_DEFAULT) -> list[Strategy]:
     g = GAMES[game_id]
-    return DIGIT_STRATEGIES if g.kind == "digit" else COMBINATORIAL_STRATEGIES
+    return (_digit_strategies(recency_k) if g.kind == "digit"
+            else _combinatorial_strategies(recency_k))
+
+
+def make_recency_strategy(game_id: str, k: int) -> Strategy:
+    """Return a single recency_exclude Strategy bound to the given K.
+    Used by the sweet-spot analytics so we don't need to rebuild the
+    whole strategy list for each candidate K.
+    """
+    g = GAMES[game_id]
+    if g.kind == "digit":
+        return Strategy(
+            "recency_exclude", _recency_label(k), _recency_desc_digit(k),
+            lambda g_, h, rng, rows, _k=k:
+                _digit_strat_recency_exclude(g_, h, rng=rng, rows=rows, exclude_last_k=_k))
+    return Strategy(
+        "recency_exclude", _recency_label(k), _recency_desc_combo(k),
+        lambda g_, h, rng, rows, _k=k:
+            _strat_recency_exclude(g_, h, rng=rng, rows=rows, exclude_last_k=_k))
 
 
 def generate_tips(game_id: str, history: list[dict],
                   *, rows_per_strategy: int = 2,
+                  recency_k: int = RECENCY_K_DEFAULT,
                   rng: random.Random | None = None) -> list[dict]:
     """Run every strategy and return a flat list of tip dicts."""
     g = GAMES[game_id]
     rng = rng or random.Random()
     tips: list[dict] = []
-    for s in strategies_for(game_id):
+    for s in strategies_for(game_id, recency_k=recency_k):
         try:
             tips.extend(s.fn(g, history, rng, rows_per_strategy))
         except Exception as exc:  # noqa: BLE001
@@ -622,9 +648,9 @@ def generate_tips(game_id: str, history: list[dict],
     return tips
 
 
-def list_strategies(game_id: str) -> list[dict]:
+def list_strategies(game_id: str, *, recency_k: int = RECENCY_K_DEFAULT) -> list[dict]:
     return [
         {"name": s.name, "label": s.label, "description": s.description}
-        for s in strategies_for(game_id)
+        for s in strategies_for(game_id, recency_k=recency_k)
     ]
 

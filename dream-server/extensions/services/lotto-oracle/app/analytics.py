@@ -328,3 +328,60 @@ def score_all_strategies(
             out[s.name] = _empty_backtest()
     return out
 
+
+# ---------------------------------------------------------------------------
+# Recency sweet-spot search
+# ---------------------------------------------------------------------------
+def recency_sweet_spot(
+    game: Game,
+    history: list[dict],
+    make_strategy_for_k: Callable[[int], object],
+    *,
+    ks: Iterable[int] = (1, 2, 3, 4, 5),
+    window: int = _BACKTEST_WINDOW,
+    rows: int = 3,
+) -> dict:
+    """Backtest the recency_exclude strategy for several values of K and
+    return per-K metrics plus the recommended sweet spot.
+
+    "Sweet spot" = K with the highest backtested ``avg_match`` (ties
+    broken in favour of *smaller* K, because every additional excluded
+    draw needlessly forbids more candidate numbers).  For an i.i.d.
+    lottery the differences are tiny, but the operator gets to see the
+    actual empirical curve and pick consciously.
+
+    ``make_strategy_for_k(k)`` should return a Strategy-like object with
+    a ``.fn`` callable matching the ``backtest_strategy`` contract.
+    """
+    per_k: list[dict] = []
+    best_k: int | None = None
+    best_avg: float | None = None
+    for k in ks:
+        try:
+            strat = make_strategy_for_k(int(k))
+            res = backtest_strategy(game, history, strat.fn,
+                                    window=window, rows=rows, seed=4321 + int(k))
+        except Exception as exc:  # noqa: BLE001
+            log.exception("recency_sweet_spot: K=%s crashed: %s", k, exc)
+            res = _empty_backtest()
+        avg = res.get("avg_match")
+        per_k.append({
+            "k":               int(k),
+            "avg_match":       avg,
+            "expected_random": res.get("expected_random"),
+            "edge":            res.get("edge"),
+            "n_trials":        res.get("n_trials"),
+            "window":          res.get("window"),
+        })
+        if avg is not None and (best_avg is None or avg > best_avg + 1e-9):
+            best_avg = avg
+            best_k = int(k)
+    return {
+        "per_k":             per_k,
+        "recommended_k":     best_k,
+        "recommended_avg":   best_avg,
+        "history_size":      len(history),
+        "window":            min(window, max(0, len(history) - 1)),
+    }
+
+

@@ -46,6 +46,9 @@ export default function LottoTab() {
   const [tipsRun, setTipsRun]   = useState(null)
   const [stats, setStats]       = useState(null)
   const [strategies, setStrategies] = useState([])
+  const [sweetSpot, setSweetSpot] = useState(null)
+  const [recencyK, setRecencyK] = useState(1)         // user-selected K for next /generate
+  const [activeStrategy, setActiveStrategy] = useState(null)
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
   const [busy, setBusy]         = useState(null)   // 'refresh' | 'generate' | 'backfill'
@@ -76,22 +79,33 @@ export default function LottoTab() {
     }
   }, [])
 
-  const fetchSelected = useCallback(async (gameId) => {
+  const fetchSelected = useCallback(async (gameId, kForList) => {
     if (!gameId) return
     try {
-      const [drawRes, tipsRes, statsRes, stratRes] = await Promise.all([
+      const k = kForList ?? recencyK
+      const [drawRes, tipsRes, statsRes, stratRes, sweetRes] = await Promise.all([
         fetch(`/api/lotto/draws?game=${encodeURIComponent(gameId)}&limit=20`),
         fetch(`/api/lotto/tips?game=${encodeURIComponent(gameId)}`),
         fetch(`/api/lotto/stats?game=${encodeURIComponent(gameId)}`),
-        fetch(`/api/lotto/games/${encodeURIComponent(gameId)}/strategies`),
+        fetch(`/api/lotto/games/${encodeURIComponent(gameId)}/strategies?recency_k=${k}`),
+        fetch(`/api/lotto/games/${encodeURIComponent(gameId)}/sweet-spot`),
       ])
       setDraws(drawRes.ok ? (await drawRes.json()).draws || [] : [])
-      setTipsRun(tipsRes.ok ? (await tipsRes.json()).run : null)
+      const tipsBody = tipsRes.ok ? await tipsRes.json() : null
+      const run = tipsBody?.run || null
+      setTipsRun(run)
+      // Sync the K selector with what was actually used to generate the
+      // currently displayed tip set, so the dropdown reflects reality
+      // after a page reload / game switch.
+      const usedK = run?.params?.recency_k
+      if (typeof usedK === 'number') setRecencyK(usedK)
       setStats(statsRes.ok ? await statsRes.json() : null)
       setStrategies(stratRes.ok ? (await stratRes.json()).strategies || [] : [])
+      setSweetSpot(sweetRes.ok ? await sweetRes.json() : null)
     } catch (e) {
       setError(e?.message || String(e))
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -118,10 +132,13 @@ export default function LottoTab() {
       } else if (kind === 'backfill') {
         res = await fetch('/api/lotto/refresh/full', { method: 'POST' })
       } else if (kind === 'generate') {
+        const body = selectedId
+          ? { game: selectedId, recency_k: recencyK }
+          : { recency_k: recencyK }
         res = await fetch('/api/lotto/tips/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(selectedId ? { game: selectedId } : {}),
+          body: JSON.stringify(body),
         })
       }
       if (!res.ok) {
@@ -134,7 +151,7 @@ export default function LottoTab() {
             ? 'Backfill gestartet — kann 1-3 Minuten dauern.'
             : kind === 'refresh'
               ? 'Inkrementeller Fetch gestartet.'
-              : 'Neue Tipps generiert.',
+              : `Neue Tipps generiert (Recency K=${recencyK}).`,
         })
         setTimeout(() => { fetchOverview(); fetchSelected(selectedId) }, 1500)
       }
@@ -143,7 +160,7 @@ export default function LottoTab() {
     } finally {
       setBusy(null)
     }
-  }, [selectedId, fetchOverview, fetchSelected])
+  }, [selectedId, recencyK, fetchOverview, fetchSelected])
 
   const handleCopy = useCallback(async (key, text) => {
     try {
@@ -180,7 +197,13 @@ export default function LottoTab() {
             und generiert nach jeder Ziehung neue Tipps via mehrerer Strategien.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <RecencyKSelector
+            value={recencyK}
+            onChange={setRecencyK}
+            sweetSpot={sweetSpot}
+            disabled={!!busy || !status?.available}
+          />
           <button
             type="button"
             onClick={() => { fetchOverview(); fetchSelected(selectedId) }}
@@ -307,6 +330,10 @@ export default function LottoTab() {
               strategies={strategies}
               copied={copied}
               onCopy={handleCopy}
+              activeStrategy={activeStrategy}
+              setActiveStrategy={setActiveStrategy}
+              sweetSpot={sweetSpot}
+              recencyK={recencyK}
             />
             <DrawsCard game={selectedGame} draws={draws} />
           </div>
@@ -340,7 +367,8 @@ function SubmissionNotice({ notice }) {
 }
 
 
-function TipsCard({ game, run, strategies, copied, onCopy }) {
+function TipsCard({ game, run, strategies, copied, onCopy,
+                   activeStrategy, setActiveStrategy, sweetSpot, recencyK }) {
   const tips = run?.tips || []
   const meta = run?.strategy_meta || {}
   const strategyMap = useMemo(() => {
@@ -349,10 +377,7 @@ function TipsCard({ game, run, strategies, copied, onCopy }) {
     return m
   }, [strategies])
 
-  // Group tips by strategy, then sort the groups by backtested edge
-  // (best first). Strategies without a backtest score (e.g. on a fresh
-  // install with too little history) drop to the bottom while keeping
-  // their relative order from the engine.
+  // Group tips by strategy, then sort by backtested edge (best first).
   const groups = useMemo(() => {
     const byStrat = new Map()
     tips.forEach((t, idx) => {
@@ -374,32 +399,100 @@ function TipsCard({ game, run, strategies, copied, onCopy }) {
     return arr
   }, [tips, meta])
 
+  // Keep the active tab valid as the group set changes (e.g. game switch
+  // or fresh /generate that drops a strategy).
+  const activeName = useMemo(() => {
+    if (!groups.length) return null
+    if (activeStrategy && groups.some((g) => g.name === activeStrategy)) {
+      return activeStrategy
+    }
+    return groups[0].name
+  }, [groups, activeStrategy])
+
+  useEffect(() => {
+    if (activeName && activeName !== activeStrategy) {
+      setActiveStrategy(activeName)
+    }
+  }, [activeName, activeStrategy, setActiveStrategy])
+
+  const activeGroup = groups.find((g) => g.name === activeName) || null
+  const usedK = run?.params?.recency_k
+
   return (
     <div className="bg-theme-card border border-theme-border rounded-xl overflow-hidden">
-      <div className="px-5 py-3 border-b border-theme-border flex items-center gap-2">
+      <div className="px-5 py-3 border-b border-theme-border flex items-center gap-2 flex-wrap">
         <Sparkles size={14} className="text-theme-text-muted" />
         <h4 className="text-sm font-semibold text-theme-text">
           Vorschläge ({tips.length})
         </h4>
         <span className="ml-auto text-xs text-theme-text-muted">
           {run
-            ? <>generiert {relTime(run.generated_at)} · basierend auf {run.based_on_draw || '—'} · sortiert nach Backtest-Edge</>
+            ? <>generiert {relTime(run.generated_at)}
+                {' · basierend auf '}{run.based_on_draw || '—'}
+                {typeof usedK === 'number' && <> · K={usedK}</>}
+                {' · sortiert nach Backtest-Edge'}</>
             : 'Noch keine Tipps generiert — auf "Tipps generieren" klicken.'}
         </span>
       </div>
+
       {groups.length ? (
-        <ul className="divide-y divide-theme-border">
-          {groups.map((group) => (
-            <StrategyGroupCard
-              key={group.name}
+        <>
+          {/* Tab strip — one per strategy */}
+          <div className="flex flex-wrap gap-1 px-3 pt-3 pb-0 border-b border-theme-border bg-theme-surface-hover/20">
+            {groups.map((g) => {
+              const isActive = g.name === activeName
+              const desc = strategyMap.get(g.name)
+              const m = g.meta || {}
+              const hasScore = typeof m.edge === 'number' && (m.n_trials || 0) > 0
+              let tone = 'neutral'
+              if (hasScore) {
+                if (m.edge > 0.05) tone = 'good'
+                else if (m.edge < -0.05) tone = 'warn'
+              }
+              const edgeColor = isActive
+                ? ''
+                : tone === 'good'
+                  ? 'text-emerald-400/70'
+                  : tone === 'warn'
+                    ? 'text-amber-300/70'
+                    : 'text-theme-text-muted'
+              return (
+                <button
+                  key={g.name}
+                  type="button"
+                  onClick={() => setActiveStrategy(g.name)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-t-md border-b-2 transition-colors flex items-center gap-2 ${
+                    isActive
+                      ? 'border-theme-accent text-theme-text bg-theme-card'
+                      : 'border-transparent text-theme-text-muted hover:text-theme-text hover:bg-theme-card/50'
+                  }`}
+                  title={desc?.description || g.name}
+                >
+                  <span>{desc?.label || g.name}</span>
+                  <span className="text-[10px] opacity-70">({g.items.length})</span>
+                  {hasScore && (
+                    <span className={`text-[10px] font-mono ${edgeColor}`}>
+                      {m.edge >= 0 ? '+' : ''}{m.edge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Active tab body */}
+          {activeGroup && (
+            <StrategyTabBody
               game={game}
-              group={group}
+              group={activeGroup}
               strategyMap={strategyMap}
               copied={copied}
               onCopy={onCopy}
+              sweetSpot={sweetSpot}
+              recencyK={recencyK}
             />
-          ))}
-        </ul>
+          )}
+        </>
       ) : (
         <div className="px-5 py-8 text-sm text-theme-text-muted text-center">
           Noch keine Vorschläge. Klicke oben auf <strong>Tipps generieren</strong>.
@@ -410,11 +503,11 @@ function TipsCard({ game, run, strategies, copied, onCopy }) {
 }
 
 
-function StrategyGroupCard({ game, group, strategyMap, copied, onCopy }) {
+function StrategyTabBody({ game, group, strategyMap, copied, onCopy,
+                          sweetSpot, recencyK }) {
   const desc = strategyMap.get(group.name)
   const m = group.meta || {}
   const hasScore = typeof m.edge === 'number' && (m.n_trials || 0) > 0
-  // Map edge to a tone: positive edge → green, ~0 → neutral, negative → orange
   let tone = 'neutral'
   if (hasScore) {
     if (m.edge > 0.05) tone = 'good'
@@ -425,30 +518,18 @@ function StrategyGroupCard({ game, group, strategyMap, copied, onCopy }) {
     warn:    'text-amber-300   bg-amber-500/10   border-amber-500/30',
     neutral: 'text-theme-text-muted bg-theme-surface-hover border-theme-border',
   }[tone]
-
-  // P(>=1) = first p_at_least entry (prob of at least 1 hit in main pool / digit pos)
   const pAtLeast1 = m.hit_rates?.[0]?.prob ?? null
 
   return (
-    <li className="px-5 py-4">
-      {/* Strategy header strip */}
+    <div className="px-5 py-4">
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-mono uppercase tracking-wider text-theme-accent">
-              {desc?.label || group.name}
-            </span>
-            <span className="text-[10px] text-theme-text-muted">
-              {group.items.length}× generiert
-            </span>
-          </div>
           {desc?.description && (
-            <div className="text-xs text-theme-text-muted mt-0.5 max-w-xl">
+            <div className="text-xs text-theme-text-muted max-w-xl">
               {desc.description}
             </div>
           )}
         </div>
-        {/* Edge badge */}
         {hasScore ? (
           <div
             className={`shrink-0 text-[10px] font-mono px-2 py-1 rounded border flex items-center gap-1 ${toneCls}`}
@@ -460,9 +541,7 @@ function StrategyGroupCard({ game, group, strategyMap, copied, onCopy }) {
             }
           >
             <TrendingUp size={11} />
-            <span>
-              ⌀ {m.avg_match} {m.edge >= 0 ? '+' : ''}{m.edge}
-            </span>
+            <span>⌀ {m.avg_match} {m.edge >= 0 ? '+' : ''}{m.edge}</span>
           </div>
         ) : (
           <div className="shrink-0 text-[10px] text-theme-text-muted px-2 py-1 rounded border border-theme-border">
@@ -471,7 +550,11 @@ function StrategyGroupCard({ game, group, strategyMap, copied, onCopy }) {
         )}
       </div>
 
-      {/* All tips for this strategy, stacked compactly inside the same card. */}
+      {/* Sweet-spot panel only on the recency_exclude tab */}
+      {group.name === 'recency_exclude' && sweetSpot?.per_k?.length > 0 && (
+        <SweetSpotPanel sweetSpot={sweetSpot} recencyK={recencyK} />
+      )}
+
       <div className="space-y-3">
         {group.items.map((t) => (
           <div
@@ -499,7 +582,87 @@ function StrategyGroupCard({ game, group, strategyMap, copied, onCopy }) {
           </div>
         ))}
       </div>
-    </li>
+    </div>
+  )
+}
+
+
+function SweetSpotPanel({ sweetSpot, recencyK }) {
+  const recommended = sweetSpot.recommended_k
+  return (
+    <div className="mb-4 p-3 rounded-lg border border-theme-border bg-theme-surface-hover/30">
+      <div className="flex items-center gap-2 mb-2 text-xs text-theme-text-muted">
+        <BarChart3 size={12} />
+        <span>
+          Recency-Backtest pro K (Ø Treffer im Hauptpool über
+          {' '}{sweetSpot.window || 0} historische Ziehungen)
+        </span>
+        {recommended && (
+          <span className="ml-auto text-emerald-400">
+            Empfehlung: K={recommended}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-5 gap-1.5">
+        {sweetSpot.per_k.map((row) => {
+          const isRec = row.k === recommended
+          const isCur = row.k === recencyK
+          const cls = isCur
+            ? 'border-theme-accent bg-theme-accent/10 text-theme-text'
+            : isRec
+              ? 'border-emerald-500/40 bg-emerald-500/5 text-theme-text'
+              : 'border-theme-border bg-theme-card text-theme-text-muted'
+          return (
+            <div
+              key={row.k}
+              className={`text-center text-[11px] py-1.5 rounded border ${cls}`}
+              title={
+                `K=${row.k}: ⌀ Treffer ${row.avg_match ?? '—'} ` +
+                `(random ${row.expected_random ?? '—'}, ` +
+                `Edge ${row.edge ?? '—'}, n=${row.n_trials ?? 0})`
+              }
+            >
+              <div className="font-mono">K={row.k}</div>
+              <div className="font-mono opacity-80">
+                {row.avg_match != null ? row.avg_match.toFixed(2) : '—'}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="mt-2 text-[10px] text-theme-text-muted leading-snug">
+        Lotto ist statistisch unabhängig — Unterschiede zwischen den K-Werten
+        sind klein (≪ ±0.1 Treffer). Empfohlen wird das K mit dem höchsten
+        empirischen Ø-Treffer; bei Gleichstand das kleinere K, weil jedes
+        zusätzlich ausgeschlossene Spiel den Pool unnötig verkleinert.
+      </div>
+    </div>
+  )
+}
+
+
+function RecencyKSelector({ value, onChange, sweetSpot, disabled }) {
+  const recommended = sweetSpot?.recommended_k
+  const options = [1, 2, 3, 4, 5]
+  return (
+    <label
+      className="flex items-center gap-2 text-xs text-theme-text-muted px-2 py-1.5 rounded-lg border border-theme-border bg-theme-card"
+      title="Wie viele der jüngsten Ziehungen soll die recency_exclude-Strategie ausschließen? Beim Generieren werden alle Tipps dieser Strategie damit erzeugt."
+    >
+      <span className="font-medium">Recency K</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
+        className="bg-transparent text-theme-text font-mono text-sm focus:outline-none disabled:opacity-50"
+      >
+        {options.map((k) => (
+          <option key={k} value={k}>
+            {k}{recommended === k ? '  ✓ empfohlen' : ''}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
 

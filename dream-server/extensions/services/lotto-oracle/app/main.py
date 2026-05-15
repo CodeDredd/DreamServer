@@ -32,10 +32,15 @@ from fastapi import (
 from pydantic import BaseModel, Field
 
 from . import fetchers, store
-from .analytics import recency_overlap_distribution, score_all_strategies
+from .analytics import (
+    recency_overlap_distribution, recency_sweet_spot, score_all_strategies,
+)
 from .config import CFG
 from .games import GAMES, get_game
-from .strategies import generate_tips, list_strategies, strategies_for
+from .strategies import (
+    RECENCY_K_DEFAULT, RECENCY_K_MAX, RECENCY_K_MIN,
+    generate_tips, list_strategies, make_recency_strategy, strategies_for,
+)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -113,11 +118,15 @@ def _do_fetch(full_archive: bool = False) -> dict:
         _state["running"] = False
 
 
-def _do_generate(game_id: str, rows_per_strategy: int = 3) -> dict:
+def _do_generate(game_id: str, rows_per_strategy: int = 3,
+                 recency_k: int = RECENCY_K_DEFAULT) -> dict:
+    recency_k = max(RECENCY_K_MIN, min(RECENCY_K_MAX, int(recency_k)))
     history = list(store.all_draws(game_id))
-    tips = generate_tips(game_id, history, rows_per_strategy=rows_per_strategy)
+    tips = generate_tips(game_id, history,
+                         rows_per_strategy=rows_per_strategy,
+                         recency_k=recency_k)
     if not tips:
-        return {"game_id": game_id, "n_tips": 0}
+        return {"game_id": game_id, "n_tips": 0, "recency_k": recency_k}
     based_on = history[0]["draw_date"] if history else None
 
     # Empirical analytics: empirical recency-overlap distribution + per-
@@ -130,20 +139,23 @@ def _do_generate(game_id: str, rows_per_strategy: int = 3) -> dict:
     recency_stats: dict | None = None
     try:
         recency_stats = recency_overlap_distribution(g, history)
-        strategy_meta = score_all_strategies(g, history, strategies_for(game_id),
-                                             rows=rows_per_strategy)
+        strategy_meta = score_all_strategies(
+            g, history, strategies_for(game_id, recency_k=recency_k),
+            rows=rows_per_strategy)
     except Exception as exc:  # noqa: BLE001
         log.warning("[%s] analytics computation failed: %s", game_id, exc)
 
     run_id = store.save_tip_run(game_id, based_on, tips,
                                 strategy_meta=strategy_meta,
-                                recency_stats=recency_stats)
+                                recency_stats=recency_stats,
+                                params={"recency_k": recency_k})
     store.cleanup_old_tip_runs()
     info = {
         "game_id":      game_id,
         "run_id":       run_id,
         "n_tips":       len(tips),
         "based_on":     based_on,
+        "recency_k":    recency_k,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
     _state["last_generate"] = info
@@ -234,10 +246,36 @@ def games_overview() -> dict:
 
 
 @app.get("/games/{game_id}/strategies")
-def strategies_for_game(game_id: str) -> dict:
+def strategies_for_game(
+    game_id: str,
+    recency_k: int = Query(RECENCY_K_DEFAULT, ge=RECENCY_K_MIN, le=RECENCY_K_MAX),
+) -> dict:
     if game_id not in GAMES:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown game {game_id!r}")
-    return {"game_id": game_id, "strategies": list_strategies(game_id)}
+    return {
+        "game_id": game_id,
+        "recency_k": recency_k,
+        "recency_k_range": [RECENCY_K_MIN, RECENCY_K_MAX],
+        "strategies": list_strategies(game_id, recency_k=recency_k),
+    }
+
+
+@app.get("/games/{game_id}/sweet-spot")
+def sweet_spot(game_id: str) -> dict:
+    """Backtest recency_exclude for K = 1..5 and surface the empirical
+    sweet spot.  Used by the dashboard to annotate the K selector with
+    `(empfohlen)`.  Computation is cheap (~1 backtest per K, ~5 calls
+    total) so we don't cache.
+    """
+    if game_id not in GAMES:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown game {game_id!r}")
+    g = get_game(game_id)
+    history = list(store.all_draws(game_id))
+    result = recency_sweet_spot(
+        g, history, lambda k: make_recency_strategy(game_id, k),
+        ks=range(RECENCY_K_MIN, RECENCY_K_MAX + 1),
+    )
+    return {"game_id": game_id, **result}
 
 
 @app.get("/draws")
@@ -310,6 +348,11 @@ def get_tips(game: str = Query(..., min_length=1)) -> dict:
 class GenerateReq(BaseModel):
     game: str | None = Field(None, description="Game id or null/'all'")
     rows_per_strategy: int = Field(2, ge=1, le=10)
+    recency_k: int = Field(
+        RECENCY_K_DEFAULT, ge=RECENCY_K_MIN, le=RECENCY_K_MAX,
+        description="How many of the most recent draws the recency_exclude "
+                    "strategy must avoid (1..5).",
+    )
 
 
 @app.post("/tips/generate", status_code=status.HTTP_202_ACCEPTED)
@@ -325,7 +368,9 @@ def post_generate(req: GenerateReq, background: BackgroundTasks,
     targets = [target] if target else list(GAMES.keys())
     results = []
     for gid in targets:
-        results.append(_do_generate(gid, rows_per_strategy=req.rows_per_strategy))
+        results.append(_do_generate(gid,
+                                    rows_per_strategy=req.rows_per_strategy,
+                                    recency_k=req.recency_k))
     return {"accepted": True, "results": results}
 
 
