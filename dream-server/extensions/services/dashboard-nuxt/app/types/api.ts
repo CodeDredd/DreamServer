@@ -48,15 +48,106 @@ export interface RamInfo {
   percent?: number
 }
 
+export interface CpuInfo {
+  percent: number
+  temp_c?: number
+}
+
+export interface DiskInfo {
+  used_gb: number
+  total_gb: number
+  percent: number
+}
+
+export interface InferenceInfo {
+  tokensPerSecond?: number
+  lifetimeTokens?: number
+  loadedModel?: string
+  contextSize?: number
+}
+
 export interface SystemStatus {
   gpu: GpuSummary | null
   ram?: RamInfo | null
+  cpu?: CpuInfo | null
+  disk?: DiskInfo | null
+  inference?: InferenceInfo | null
   services: ServiceSummary[]
   model?: ModelSummary | null
   bootstrap?: BootstrapStatus | null
   uptime: number
   version?: string
   tier?: string
+}
+
+// ---------- /api/features ------------------------------------------------
+
+export interface FeatureRequirements {
+  vramGb?: number
+  vramOk?: boolean
+  vramFits?: boolean
+  services?: string[]
+  servicesAll?: string[]
+  servicesAny?: string[]
+  servicesAvailable?: string[]
+  servicesMissing?: string[]
+  servicesOk?: boolean
+}
+
+export type FeatureStatus =
+  | 'enabled'
+  | 'available'
+  | 'services_needed'
+  | 'insufficient_vram'
+  | 'unknown'
+  | string
+
+export interface FeatureItem {
+  id: string
+  name: string
+  description: string
+  icon?: string
+  category?: string
+  status: FeatureStatus
+  enabled?: boolean
+  priority?: number
+  setupTime?: string
+  requirements?: FeatureRequirements
+}
+
+export interface FeaturesResponse {
+  features: FeatureItem[]
+}
+
+// ---------- /api/services/resources --------------------------------------
+
+export interface ServiceContainerStats {
+  service_id: string
+  container_name: string
+  cpu_percent: number
+  memory_used_mb: number
+  memory_limit_mb: number
+  memory_percent: number
+  pids: number
+}
+
+export interface ServiceDiskStats {
+  data_gb: number
+  path: string
+}
+
+export interface ServiceResourceEntry {
+  id: string
+  name: string
+  type: string
+  restartable: boolean
+  restart_unavailable_reason: string | null
+  container: ServiceContainerStats | null
+  disk: ServiceDiskStats | null
+}
+
+export interface ServiceResourcesResponse {
+  services: ServiceResourceEntry[]
 }
 
 // ---------- /api/version --------------------------------------------------
