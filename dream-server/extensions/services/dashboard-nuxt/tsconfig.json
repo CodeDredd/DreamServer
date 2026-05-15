@@ -1,4 +1,8 @@
 {
-  "extends": "./.nuxt/tsconfig.json"
+  "extends": "./.nuxt/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "experimentalDecorators": true,
+    "noImplicitOverride": false
+  }
 }
-
