@@ -81,10 +81,14 @@ export default defineNuxtConfig({
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'description', content: 'Dream Server Control Center (Nuxt)' },
-        { name: 'theme-color', content: '#0a0a0a' },
+        { name: 'theme-color', content: '#0f0f13' },
+        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
+        { name: 'apple-mobile-web-app-title', content: 'Dream' },
       ],
       link: [
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'apple-touch-icon', href: '/dream.svg' },
       ],
     },
   },
@@ -99,25 +103,48 @@ export default defineNuxtConfig({
     bundle: { optimizeTranslationDirective: false },
   },
 
+  // PWA-Manifest 1:1 zum React-Stand (dashboard/public/manifest.webmanifest),
+  // damit Installations-Prompt auf installierten PWAs identisch funktioniert
+  // und der Cutover keinen Re-Install erzwingt.
   pwa: {
     registerType: 'autoUpdate',
     manifest: {
       name: 'Dream Server',
       short_name: 'Dream',
-      description: 'Dream Server Dashboard',
-      theme_color: '#0a0a0a',
-      background_color: '#0a0a0a',
+      description: 'Control center for your local Dream Server — chat, agents, models, settings.',
+      theme_color: '#0f0f13',
+      background_color: '#0f0f13',
       display: 'standalone',
+      orientation: 'any',
       start_url: '/',
       scope: '/',
-      icons: [],
+      categories: ['productivity', 'utilities'],
+      icons: [
+        { src: '/dream.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+        { src: '/dream.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
+      ],
     },
     workbox: {
       // /api/** darf NIE gecacht werden — Live-Daten.
       navigateFallbackDenylist: [/^\/api\//],
+      // Auth-Endpoints + SSE-Streams ebenfalls pass-through.
+      navigateFallback: '/',
+      globPatterns: ['**/*.{js,css,html,svg,ico,png,woff2}'],
       runtimeCaching: [],
+      cleanupOutdatedCaches: true,
     },
     devOptions: { enabled: false },
+    client: {
+      installPrompt: true,
+    },
+  },
+
+  // CSP wird per `server/middleware/csp.ts` Response-Hook gesetzt
+  // (sha256-Hashes der Inline-`<script>`-Bloecke werden pro HTML-Antwort
+  // berechnet). Hier nur cache-relevante routeRules fuer PWA-Assets.
+  routeRules: {
+    '/sw.js': { headers: { 'Cache-Control': 'public, max-age=0, must-revalidate' } },
+    '/manifest.webmanifest': { headers: { 'Cache-Control': 'public, max-age=3600' } },
   },
 
 

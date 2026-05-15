@@ -3,11 +3,231 @@
     "loading": "Loading …",
     "error": "Error",
     "ok": "OK",
-    "retry": "Retry"
+    "retry": "Retry",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "refresh": "Refresh",
+    "apply": "Apply",
+    "back": "Back",
+    "next": "Next",
+    "copy": "Copy",
+    "copied": "Copied",
+    "share": "Share",
+    "open": "Open",
+    "select": "Select",
+    "selected": "Selected",
+    "search": "Search",
+    "noData": "No data",
+    "loadingMore": "Loading more …"
   },
   "nav": {
     "dashboard": "Dashboard",
-    "settings": "Settings"
+    "settings": "Settings",
+    "extensions": "Extensions",
+    "models": "Models",
+    "gpu": "GPU",
+    "voice": "Voice",
+    "financeGuru": "Finance Guru",
+    "firstBoot": "Getting started"
+  },
+  "settings": {
+    "title": "Settings",
+    "envEditor": {
+      "title": "Environment editor",
+      "save": "Save",
+      "apply": "Apply",
+      "reload": "Reload",
+      "search": "Search fields …",
+      "fieldsCount": "{count} fields",
+      "issuesCount": "{count} notes",
+      "noIssues": "No notes",
+      "useDefault": "Use default",
+      "true": "true",
+      "false": "false",
+      "default": "default",
+      "showSecret": "Show secret",
+      "hideSecret": "Hide secret",
+      "pendingRuntimeChanges": "There are pending runtime changes.",
+      "hints": {
+        "save": "Save writes to the .env file.",
+        "restart": "Some entries require a service restart.",
+        "applyHelp": "‘Apply’ reloads affected services."
+      }
+    }
+  },
+  "financeGuru": {
+    "title": "Finance Guru",
+    "subtitle": "Strategy overview and backtest KPIs.",
+    "tabs": {
+      "strategies": "Strategies",
+      "lotto": "Lotto"
+    },
+    "buttons": {
+      "refresh": "Refresh",
+      "runDecideCycle": "Run decide cycle",
+      "decide": "Decide"
+    },
+    "kpi": {
+      "seeded": "Seeded",
+      "equity": "Equity",
+      "realised": "Realised",
+      "trades": "Trades",
+      "positions": "Positions"
+    },
+    "sections": {
+      "strategies": "Strategies",
+      "openPositions": "Open positions",
+      "recentTrades": "Recent trades"
+    },
+    "empty": {
+      "noStrategy": "No strategy selected.",
+      "noPositions": "No open positions.",
+      "noTrades": "No trades yet."
+    }
+  },
+  "lotto": {
+    "title": "Lotto Oracle",
+    "subtitle": "Predictive strategies for Lotto, Eurojackpot, Spiel 77 and Super 6.",
+    "buttons": {
+      "refresh": "Refresh",
+      "fetchLatest": "Fetch latest draws",
+      "backfill": "Run backfill",
+      "generate": "Generate tips"
+    },
+    "kSelector": {
+      "label": "Recency-K",
+      "title": "How many of the most recent draws should the recency_exclude strategy ignore?",
+      "sweetSpot": "Sweet spot"
+    },
+    "submission": {
+      "warning": "Note: the official Lotto submission API is disabled."
+    },
+    "schedule": {
+      "title": "Scheduled",
+      "cron": "Cron",
+      "tz": "Time zone"
+    },
+    "tips": {
+      "title": "Tips",
+      "empty": "No suggestions yet. Click {action} above.",
+      "emptyAction": "Generate tips",
+      "emptyShort": "No tips generated yet — click {action}.",
+      "rationale": "Rationale",
+      "backtestEdge": "Backtest edge",
+      "copy": "Copy tip"
+    },
+    "draws": {
+      "title": "Recent draws",
+      "empty": "No draws available."
+    },
+    "stats": {
+      "title": "Statistics",
+      "frequency": "Frequency (main pool)",
+      "positional": "Positional frequency"
+    },
+    "recencyOverlap": {
+      "title": "Recency overlap",
+      "description": "P(≥1) hit for the {n} most recent draws."
+    },
+    "sweetSpot": {
+      "title": "Sweet-spot K",
+      "recommended": "Recommended: K = {k}"
+    },
+    "actions": {
+      "refreshing": "Refreshing …",
+      "fetching": "Fetching draws …",
+      "backfilling": "Backfilling …",
+      "generating": "Generating tips …"
+    }
+  },
+  "extensions": {
+    "title": "Extensions",
+    "search": "Search extensions …",
+    "categories": {
+      "all": "All",
+      "audio": "Audio",
+      "vision": "Vision",
+      "automation": "Automation",
+      "developer": "Developer"
+    },
+    "actions": {
+      "install": "Install",
+      "remove": "Remove",
+      "update": "Update",
+      "configure": "Configure"
+    }
+  },
+  "firstBoot": {
+    "header": "Dream Server",
+    "subheader": "Get started in four clicks.",
+    "steps": {
+      "welcome": {
+        "title": "Welcome",
+        "deviceLabel": "Device name",
+        "devicePlaceholder": "e.g. my-server",
+        "next": "Next"
+      },
+      "user": {
+        "title": "User",
+        "usernameLabel": "Username",
+        "usernamePlaceholder": "e.g. dredd"
+      },
+      "stack": {
+        "title": "Choose a stack",
+        "options": {
+          "chat": "Chat (Llama + UI)",
+          "chatAgents": "Chat + Agents",
+          "everything": "Everything (Voice, Finance, Vision, …)"
+        }
+      },
+      "confirm": {
+        "title": "Confirm",
+        "labelDevice": "Device",
+        "labelUser": "User",
+        "labelStack": "Stack",
+        "finish": "Finish setup"
+      },
+      "done": {
+        "title": "Ready!",
+        "instruction": "Scan the QR code or click the link to log in on a second device.",
+        "openDashboard": "Open dashboard",
+        "qrAlt": "Magic-link QR code"
+      }
+    }
+  },
+  "voice": {
+    "title": "Voice",
+    "subtitle": "LiveKit-based voice agent.",
+    "status": {
+      "ready": "Ready",
+      "connecting": "Connecting …",
+      "connected": "Connected",
+      "error": "Error"
+    },
+    "controls": {
+      "talk": "Talk",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "clear": "Clear history",
+      "interrupt": "Interrupt",
+      "settings": "Settings"
+    },
+    "settings": {
+      "title": "Voice settings",
+      "voice": "Voice",
+      "speed": "Speed",
+      "wakeWord": "Wake word"
+    },
+    "empty": "Press the microphone or hold the spacebar to talk."
+  },
+  "models": {
+    "title": "Models",
+    "search": "Search models …",
+    "noModels": "No models found."
+  },
+  "gpu": {
+    "title": "GPU",
+    "noGpu": "No GPU detected."
   }
 }
-

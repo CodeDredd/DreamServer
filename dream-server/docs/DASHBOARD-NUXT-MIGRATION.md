@@ -301,14 +301,14 @@ prüfen (`docker compose up dashboard dashboard-nuxt` → vergleichen).
 
 ### Phase 5 — PWA, Theming, i18n
 
-- [ ] `@vite-pwa/nuxt` mit Manifest aus `public/manifest.json`
+- [x] `@vite-pwa/nuxt` mit Manifest aus `public/manifest.json`
       (vorhandener Stand).
-- [ ] Theme-Flash-Skript (`<script>` in `app.head`) inline + CSP-Hash
+- [x] Theme-Flash-Skript (`<script>` in `app.head`) inline + CSP-Hash
       neu berechnen (Anleitung aus `nginx.conf` Kommentar
       übernehmen). Hash-Generierung im Build-Step automatisieren
       (`scripts/csp-hash.mjs`), damit künftige Edits nicht stumm
       brechen.
-- [ ] `@nuxtjs/i18n` mit `de`/`en`, Default `de`. React-Dashboard
+- [x] `@nuxtjs/i18n` mit `de`/`en`, Default `de`. React-Dashboard
       hartkodierte deutsche Strings (FinanceGuru, LottoTab) → in
       `i18n/locales/de.json` extrahieren.
 

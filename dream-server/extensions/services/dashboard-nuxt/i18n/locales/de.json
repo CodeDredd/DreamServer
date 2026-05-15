@@ -3,11 +3,231 @@
     "loading": "Lädt …",
     "error": "Fehler",
     "ok": "OK",
-    "retry": "Erneut versuchen"
+    "retry": "Erneut versuchen",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "close": "Schließen",
+    "refresh": "Aktualisieren",
+    "apply": "Übernehmen",
+    "back": "Zurück",
+    "next": "Weiter",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "share": "Teilen",
+    "open": "Öffnen",
+    "select": "Auswählen",
+    "selected": "Ausgewählt",
+    "search": "Suchen",
+    "noData": "Keine Daten",
+    "loadingMore": "Lade weitere Daten …"
   },
   "nav": {
     "dashboard": "Dashboard",
-    "settings": "Einstellungen"
+    "settings": "Einstellungen",
+    "extensions": "Erweiterungen",
+    "models": "Modelle",
+    "gpu": "GPU",
+    "voice": "Voice",
+    "financeGuru": "Finance Guru",
+    "firstBoot": "Erste Schritte"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "envEditor": {
+      "title": "Environment-Editor",
+      "save": "Speichern",
+      "apply": "Anwenden",
+      "reload": "Neu laden",
+      "search": "Felder suchen …",
+      "fieldsCount": "{count} Felder",
+      "issuesCount": "{count} Hinweise",
+      "noIssues": "Keine Hinweise",
+      "useDefault": "Standard verwenden",
+      "true": "true",
+      "false": "false",
+      "default": "Standard",
+      "showSecret": "Geheimnis anzeigen",
+      "hideSecret": "Geheimnis verbergen",
+      "pendingRuntimeChanges": "Es gibt ausstehende Runtime-Änderungen.",
+      "hints": {
+        "save": "Speichern schreibt in die .env-Datei.",
+        "restart": "Manche Einträge erfordern einen Service-Restart.",
+        "applyHelp": "‚Anwenden‘ lädt betroffene Services neu."
+      }
+    }
+  },
+  "financeGuru": {
+    "title": "Finance Guru",
+    "subtitle": "Strategie-Übersicht und Backtest-KPIs.",
+    "tabs": {
+      "strategies": "Strategien",
+      "lotto": "Lotto"
+    },
+    "buttons": {
+      "refresh": "Refresh",
+      "runDecideCycle": "Run decide cycle",
+      "decide": "Decide"
+    },
+    "kpi": {
+      "seeded": "Seeded",
+      "equity": "Equity",
+      "realised": "Realised",
+      "trades": "Trades",
+      "positions": "Positionen"
+    },
+    "sections": {
+      "strategies": "Strategien",
+      "openPositions": "Offene Positionen",
+      "recentTrades": "Letzte Trades"
+    },
+    "empty": {
+      "noStrategy": "Keine Strategie ausgewählt.",
+      "noPositions": "Keine offenen Positionen.",
+      "noTrades": "Noch keine Trades."
+    }
+  },
+  "lotto": {
+    "title": "Lotto-Orakel",
+    "subtitle": "Prädiktive Strategien für Lotto, Eurojackpot, Spiel 77 und Super 6.",
+    "buttons": {
+      "refresh": "Refresh",
+      "fetchLatest": "Neue Ziehungen laden",
+      "backfill": "Backfill ausführen",
+      "generate": "Tipps generieren"
+    },
+    "kSelector": {
+      "label": "Recency-K",
+      "title": "Wie viele der jüngsten Ziehungen soll die recency_exclude-Strategie ausschließen?",
+      "sweetSpot": "Sweet-Spot"
+    },
+    "submission": {
+      "warning": "Hinweis: Die offizielle Lotto-Submission-API ist deaktiviert."
+    },
+    "schedule": {
+      "title": "Geplant",
+      "cron": "Cron",
+      "tz": "Zeitzone"
+    },
+    "tips": {
+      "title": "Tipps",
+      "empty": "Noch keine Vorschläge. Klicke oben auf {action}.",
+      "emptyAction": "Tipps generieren",
+      "emptyShort": "Noch keine Tipps generiert — auf {action} klicken.",
+      "rationale": "Begründung",
+      "backtestEdge": "Backtest-Edge",
+      "copy": "Tipp kopieren"
+    },
+    "draws": {
+      "title": "Letzte Ziehungen",
+      "empty": "Keine Ziehungen verfügbar."
+    },
+    "stats": {
+      "title": "Statistik",
+      "frequency": "Häufigkeit (Hauptpool)",
+      "positional": "Positions-Häufigkeit"
+    },
+    "recencyOverlap": {
+      "title": "Recency-Overlap",
+      "description": "P(≥1) Treffer für {n} jüngste Ziehungen."
+    },
+    "sweetSpot": {
+      "title": "Sweet-Spot K",
+      "recommended": "Empfohlen: K = {k}"
+    },
+    "actions": {
+      "refreshing": "Aktualisiere …",
+      "fetching": "Lade neue Ziehungen …",
+      "backfilling": "Backfill läuft …",
+      "generating": "Generiere Tipps …"
+    }
+  },
+  "extensions": {
+    "title": "Erweiterungen",
+    "search": "Erweiterungen suchen …",
+    "categories": {
+      "all": "Alle",
+      "audio": "Audio",
+      "vision": "Vision",
+      "automation": "Automatisierung",
+      "developer": "Entwicklung"
+    },
+    "actions": {
+      "install": "Installieren",
+      "remove": "Entfernen",
+      "update": "Aktualisieren",
+      "configure": "Konfigurieren"
+    }
+  },
+  "firstBoot": {
+    "header": "Dream Server",
+    "subheader": "Erste Schritte in 4 Klicks.",
+    "steps": {
+      "welcome": {
+        "title": "Willkommen",
+        "deviceLabel": "Gerätename",
+        "devicePlaceholder": "z. B. mein-server",
+        "next": "Weiter"
+      },
+      "user": {
+        "title": "Benutzer",
+        "usernameLabel": "Benutzername",
+        "usernamePlaceholder": "z. B. dredd"
+      },
+      "stack": {
+        "title": "Stack auswählen",
+        "options": {
+          "chat": "Chat (Llama + UI)",
+          "chatAgents": "Chat + Agenten",
+          "everything": "Alles (Voice, Finance, Vision, …)"
+        }
+      },
+      "confirm": {
+        "title": "Bestätigen",
+        "labelDevice": "Gerät",
+        "labelUser": "Benutzer",
+        "labelStack": "Stack",
+        "finish": "Setup abschließen"
+      },
+      "done": {
+        "title": "Bereit!",
+        "instruction": "Scanne den QR-Code oder klicke auf den Link, um auf einem zweiten Gerät einzuloggen.",
+        "openDashboard": "Dashboard öffnen",
+        "qrAlt": "Magic-Link QR-Code"
+      }
+    }
+  },
+  "voice": {
+    "title": "Voice",
+    "subtitle": "LiveKit-basierter Voice-Agent.",
+    "status": {
+      "ready": "Bereit",
+      "connecting": "Verbinde …",
+      "connected": "Verbunden",
+      "error": "Fehler"
+    },
+    "controls": {
+      "talk": "Sprechen",
+      "mute": "Stumm",
+      "unmute": "Stummschaltung aufheben",
+      "clear": "Verlauf löschen",
+      "interrupt": "Unterbrechen",
+      "settings": "Einstellungen"
+    },
+    "settings": {
+      "title": "Voice-Einstellungen",
+      "voice": "Stimme",
+      "speed": "Geschwindigkeit",
+      "wakeWord": "Wake-Word"
+    },
+    "empty": "Drücke das Mikrofon-Symbol oder halte die Leertaste, um zu sprechen."
+  },
+  "models": {
+    "title": "Modelle",
+    "search": "Modelle suchen …",
+    "noModels": "Keine Modelle gefunden."
+  },
+  "gpu": {
+    "title": "GPU",
+    "noGpu": "Keine GPU erkannt."
   }
 }
-
