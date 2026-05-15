@@ -4,6 +4,10 @@
   "private": true,
   "description": "Dream Server Dashboard NG — Nuxt 4 / Nuxt UI v3 reimplementation (parallel to React variant)",
   "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "dev": "nuxt dev --host 0.0.0.0 --port 3011",
     "build": "nuxt build",
@@ -19,15 +23,15 @@
   "dependencies": {
     "@nuxt/ui": "^3.0.0",
     "@nuxtjs/i18n": "^9.0.0",
-    "@pinia/nuxt": "^0.9.0",
-    "@pinia-orm/nuxt": "^1.10.0",
+    "@pinia/nuxt": "^0.11.0",
+    "@pinia-orm/nuxt": "2.0.0-alpha.2",
     "@vite-pwa/nuxt": "^0.10.0",
     "@vueuse/motion": "^2.2.0",
     "@vueuse/nuxt": "^12.0.0",
     "gsap": "^3.12.7",
     "nuxt": "^4.0.0",
-    "pinia": "^2.3.0",
-    "pinia-orm": "^1.10.0",
+    "pinia": "^3.0.0",
+    "pinia-orm": "2.0.0-alpha.2",
     "vue": "^3.5.0",
     "vue-router": "^4.4.0"
   },

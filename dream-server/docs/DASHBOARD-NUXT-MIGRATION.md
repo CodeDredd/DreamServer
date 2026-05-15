@@ -120,6 +120,9 @@ Pages können innerhalb Phase 4 parallelisiert werden.
 - [ ] `package.json` mit `nuxt@^4`, `@nuxt/ui@^3`, `@pinia/nuxt`,
       `pinia`, `pinia-orm`, `@pinia-orm/nuxt`, `@vueuse/nuxt`,
       `@vueuse/motion`, `@nuxtjs/i18n`, `@vite-pwa/nuxt`, `gsap`.
+      **Toolchain: Node ≥ 24, pnpm 10** (via `packageManager` +
+      Corepack; `npm` ist explizit nicht unterstützt). Lockfile =
+      `pnpm-lock.yaml`.
 - [ ] `nuxt.config.ts`: `ssr: false`, Module-Liste, `runtimeConfig`
       (`apiKey`, `apiBaseInternal: 'http://dashboard-api:3002'`),
       `app.head` (Title, CSP-konformes `<script>` für Theme-Flash).

@@ -1,26 +1,30 @@
 # See ../../../docs/DASHBOARD-NUXT-MIGRATION.md
-.PHONY: help dev build typecheck lint test
+.PHONY: help install dev build typecheck lint test
 
 help:
-	@echo "Targets:"
+	@echo "Targets (require Node 24 + pnpm 10):"
+	@echo "  install    pnpm install"
 	@echo "  dev        Nuxt dev-server (Port 3011)"
 	@echo "  build      Production build (.output/)"
 	@echo "  typecheck  vue-tsc"
 	@echo "  lint       eslint"
 	@echo "  test       vitest"
 
+install:
+	pnpm install
+
 dev:
-	npm run dev
+	pnpm run dev
 
 build:
-	npm run build
+	pnpm run build
 
 typecheck:
-	npm run typecheck
+	pnpm run typecheck
 
 lint:
-	npm run lint
+	pnpm run lint
 
 test:
-	npm run test
+	pnpm run test
 

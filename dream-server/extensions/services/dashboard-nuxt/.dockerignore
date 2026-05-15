@@ -11,4 +11,6 @@ dist
 coverage
 .vscode
 .idea
+.pnpm-store
+
 

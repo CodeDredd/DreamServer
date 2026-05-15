@@ -1,27 +1,33 @@
-# Dream Server Dashboard NG (Nuxt)
-# Multi-stage build: Nuxt 4 SPA → Node runtime
+# Dream Server Dashboard NG (Nuxt 4 / Node 24 / pnpm)
+# Multi-stage build: pnpm install → nuxt build → Node-24 runtime.
 #
-# WICHTIG: Bis Phase 1 des Migrationsplans abgeschlossen ist, ist das
-# Image NICHT lauffähig — `package.json` + `nuxt.config.ts` werden in
-# Phase 1 hinzugefügt. Bauen erst danach (siehe ../../../docs/DASHBOARD-NUXT-MIGRATION.md).
+# WICHTIG: Bis Phase 1 grün auf der Halo Strix gebaut hat, bleibt der
+# Service disabled (siehe README + `dream-server/docs/DASHBOARD-NUXT-MIGRATION.md`).
 
 # ---------- Stage 1: Build ----------
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
+
+# pnpm via corepack (in den offiziellen node-Images bereits vorhanden).
+RUN corepack enable && corepack prepare pnpm@10.0.0 --activate
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm ci --no-audit --no-fund
+# Lockfile + manifest separat kopieren -> bessere Layer-Cache-Hits.
+COPY package.json pnpm-lock.yaml* .npmrc ./
+
+# Strikt frozen lockfile in CI/Container-Builds; Build schlägt fehl,
+# wenn die lockfile nicht mit package.json übereinstimmt.
+RUN pnpm install --frozen-lockfile --prefer-offline
 
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 # ---------- Stage 2: Runtime ----------
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
-# Non-root
+# Non-root.
 RUN addgroup -g 1000 dreamer && \
     adduser -D -u 1000 -G dreamer dreamer
 

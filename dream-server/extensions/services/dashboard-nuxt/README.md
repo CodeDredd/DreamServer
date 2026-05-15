@@ -22,14 +22,18 @@ beschrieben.
   React-Variante, injiziert `Authorization: Bearer ${DASHBOARD_API_KEY}`
   und reicht an `dashboard-api:3002` weiter.
 
+**Toolchain**: Node ≥ 24, pnpm 10 (verwaltet via Corepack — siehe
+`packageManager` in `package.json`). `npm` wird **nicht** unterstützt.
+
 ## Dev (lokal)
 
 ```bash
 # Innerhalb des Service-Verzeichnisses
-npm install
+corepack enable                        # einmalig
+pnpm install
 DASHBOARD_API_KEY=... \
   NUXT_API_BASE_INTERNAL=http://127.0.0.1:3002 \
-  npm run dev   # http://127.0.0.1:3011
+  pnpm run dev   # http://127.0.0.1:3011
 ```
 
 Die `dashboard-api` muss separat laufen
