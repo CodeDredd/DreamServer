@@ -5,6 +5,10 @@
   Wichtig: nuxt-charts LineChart liest die zu zeichnenden Reihen aus
   `categories` (keys = Datafeld-Namen). Es gibt KEIN y-axis prop —
   das hatte den Chart vor Phase F leise blank gerendert.
+  Zweite Falle: `curve-type` MUSS ein gültiger d3/unovis-Enum-Wert sein
+  (`monotoneX` / `monotoneY` / `linear` / `step` …). Der intuitive Wert
+  `"monotone"` existiert nicht und lässt unovis still die Line-Pfade
+  weglassen — Achsen + Legende rendern, aber keine Linien.
 -->
 <script setup lang="ts">
 import { computed } from 'vue'
@@ -99,7 +103,7 @@ const lastPnl = computed(() => {
             :x-num-ticks="6"
             :y-num-ticks="4"
             :y-grid-line="true"
-            curve-type="monotone"
+            curve-type="monotoneX"
           />
         </div>
         <template #fallback>
