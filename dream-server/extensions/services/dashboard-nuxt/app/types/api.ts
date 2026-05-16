@@ -615,6 +615,132 @@ export interface FinanceEnrichmentRun {
   note?: string | null
 }
 
+// ---------- Phase C/D/E: Strategy lifecycle + RAG search -----------------
+
+export type FinanceLifecycleStatus = 'proposed' | 'live' | 'retired' | 'archived'
+export type FinanceLifecycleKind   = 'builtin' | 'generated'
+
+export interface FinanceLifecycleRow {
+  name: string
+  kind: FinanceLifecycleKind | string
+  status: FinanceLifecycleStatus | string
+  parent_id?: number | null
+  source_json?: string | null
+  created_at?: string | null
+  live_started_at?: string | null
+  retired_at?: string | null
+  bt_pnl_pct?: number | null
+  bt_n_trades?: number | null
+  last_audit_at?: string | null
+  last_audit_pnl?: number | null
+  last_audit_n?: number | null
+  retire_reason?: string | null
+  lessons_qid?: string | null
+}
+
+export interface FinanceLifecycleResponse {
+  count: number
+  strategies: FinanceLifecycleRow[]
+}
+
+export interface FinanceLeaderboardRow {
+  name: string
+  kind: string
+  status: string
+  window_pnl_pct?: number | null
+  window_cycles?: number | null
+  retire_reason?: string | null
+}
+
+export interface FinanceLeaderboardResponse {
+  window_days: number
+  target_pct: number
+  rows: FinanceLeaderboardRow[]
+}
+
+export interface FinanceAuditRow {
+  id: number
+  ts: string
+  strategy: string
+  transition: 'register' | 'propose' | 'promote' | 'retire' | 'archive' | string
+  from_status?: string | null
+  to_status?: string | null
+  pnl_pct?: number | null
+  n_cycles?: number | null
+  note?: string | null
+  actor?: string | null
+}
+
+export interface FinanceAuditsResponse {
+  audits: FinanceAuditRow[]
+}
+
+export interface FinanceDslCatalog {
+  version: number
+  signals: Record<string, string>
+  ops: string[]
+  actions: string[]
+  sizing: string[]
+  limits: {
+    max_rules: number
+    max_predicates_per_rule: number
+    max_nesting_depth: number
+  }
+  gate: {
+    min_backtest_pct: number
+    min_backtest_trades: number
+    backtest_days: number
+    backtest_step_min: number
+    universe_limit: number
+    quota_per_window: number
+    quota_window_days: number
+    quota_used: number
+  }
+}
+
+// Generic RAG hit shape — concrete payload fields vary per collection.
+export interface FinanceRelationHit {
+  theme: string
+  summary?: string
+  mechanism?: string | null
+  entities?: string[]
+  sectors?: string[]
+  symbols?: string[]
+  evidence_ids?: Array<string | number>
+  confidence?: number
+  model?: string | null
+  ts?: string
+  score?: number
+}
+export interface FinanceRelationsSearchResponse {
+  hits: FinanceRelationHit[]
+}
+
+export interface FinanceLessonHit {
+  strategy: string
+  outcome?: string
+  pnl_pct?: number | null
+  lesson?: string
+  keywords?: string[]
+  ts?: string
+  score?: number
+}
+export interface FinanceLessonsSearchResponse {
+  hits: FinanceLessonHit[]
+}
+
+export interface FinanceAnalysisHit {
+  symbol: string
+  summary?: string
+  keywords?: string[]
+  confidence?: number
+  ts?: string
+  score?: number
+}
+export interface FinanceAnalysesSearchResponse {
+  hits: FinanceAnalysisHit[]
+}
+
 // ---------------------------------------------------------------------------
 // Lotto Oracle (Phase 4 Welle C.1b). Pendant zu /api/lotto/* —
 // dashboard-api proxied lotto-oracle.

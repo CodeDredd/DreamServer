@@ -235,3 +235,76 @@ async def search_analyses(
     return await _guru_request("POST", "/enrichment/asset-analysis/search", json=body)
 
 
+# --- Phase F: Lifecycle / Leaderboard / Audits / RAG search / DSL ---------
+
+@router.get("/api/finance-guru/lifecycle")
+async def list_lifecycle(
+    status: str | None = Query(default=None,
+                               description="proposed | live | retired | archived"),
+    kind: str | None = Query(default=None, description="builtin | generated"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    api_key: str = Depends(verify_api_key),
+):
+    """Strategy lifecycle index (Phase C/D). Returns
+    `{count, strategies:[…]}` from finance-guru-api `/strategies/lifecycle`.
+    Filters mirror upstream."""
+    params: dict = {"limit": limit}
+    if status:
+        params["status"] = status
+    if kind:
+        params["kind"] = kind
+    return await _guru_request("GET", "/strategies/lifecycle", params=params)
+
+
+@router.get("/api/finance-guru/leaderboard")
+async def lifecycle_leaderboard(
+    window: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=50, ge=1, le=200),
+    api_key: str = Depends(verify_api_key),
+):
+    """`{window_days, target_pct, rows:[…]}` rolling-window leaderboard."""
+    return await _guru_request(
+        "GET", "/strategies/leaderboard",
+        params={"window": window, "limit": limit},
+    )
+
+
+@router.get("/api/finance-guru/audits")
+async def lifecycle_audits(
+    strategy: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    api_key: str = Depends(verify_api_key),
+):
+    """Per-strategy or global audit log
+    (propose/promote/retire/archive transitions)."""
+    params: dict = {"limit": limit}
+    if strategy:
+        params["strategy"] = strategy
+    return await _guru_request("GET", "/strategies/audits", params=params)
+
+
+@router.get("/api/finance-guru/dsl/catalog")
+async def dsl_catalog(api_key: str = Depends(verify_api_key)):
+    """DSL signal/op/sizing catalog + promotion gate + genesis quota."""
+    return await _guru_request("GET", "/strategies/dsl/catalog")
+
+
+@router.post("/api/finance-guru/rag/relations/search")
+async def rag_relations_search(
+    body: dict = Body(...),
+    api_key: str = Depends(verify_api_key),
+):
+    """Semantic search over `finance_relations` (Phase E causal chains)."""
+    return await _guru_request("POST", "/rag/relations", json=body)
+
+
+@router.post("/api/finance-guru/rag/strategy-lessons/search")
+async def rag_strategy_lessons_search(
+    body: dict = Body(...),
+    api_key: str = Depends(verify_api_key),
+):
+    """Semantic search over `finance_strategy_lessons` (Phase C lessons)."""
+    return await _guru_request("POST", "/rag/strategy-lessons", json=body)
+
+
+

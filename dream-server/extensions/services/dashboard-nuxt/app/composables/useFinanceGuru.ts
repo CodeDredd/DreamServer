@@ -8,15 +8,25 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useApi } from '~/composables/useApi'
 import { usePolling } from '~/composables/usePolling'
 import type {
+  FinanceAnalysesSearchResponse,
+  FinanceAuditRow,
+  FinanceAuditsResponse,
   FinanceCycleRow,
   FinanceCycleSummary,
   FinanceCyclesResponse,
   FinanceDecideResponse,
+  FinanceDslCatalog,
   FinanceEnrichmentRun,
   FinanceEquityPoint,
   FinanceEquityResponse,
   FinanceHistoryExtent,
+  FinanceLeaderboardResponse,
+  FinanceLeaderboardRow,
   FinanceLedger,
+  FinanceLessonsSearchResponse,
+  FinanceLifecycleResponse,
+  FinanceLifecycleRow,
+  FinanceRelationsSearchResponse,
   FinanceSchedule,
   FinanceStatus,
   FinanceStrategiesResponse,
@@ -40,6 +50,12 @@ const equity: Ref<Record<string, FinanceEquityPoint[]>> = ref({})
 const enrichmentRuns: Ref<FinanceEnrichmentRun[]> = ref([])
 const loading = ref(true)
 const error: Ref<string | null> = ref(null)
+
+// Phase C/D/E lifecycle + leaderboard. Polled together with the rest.
+const lifecycle: Ref<FinanceLifecycleRow[]> = ref([])
+const leaderboard: Ref<FinanceLeaderboardRow[]> = ref([])
+const leaderboardMeta: Ref<{ window_days: number, target_pct: number } | null> = ref(null)
+const dslCatalog: Ref<FinanceDslCatalog | null> = ref(null)
 
 let started = false
 
@@ -136,6 +152,40 @@ export function useFinanceGuru() {
         enrichmentRuns.value = []
       }
 
+      // Phase C/D/E: lifecycle index + 7d leaderboard + DSL catalog.
+      // All three are small JSON, failures here must not blank the page.
+      try {
+        const lc = await api.get<FinanceLifecycleResponse>(
+          '/api/finance-guru/lifecycle?limit=200',
+        )
+        lifecycle.value = lc.strategies || []
+      }
+      catch {
+        lifecycle.value = []
+      }
+      try {
+        const lb = await api.get<FinanceLeaderboardResponse>(
+          '/api/finance-guru/leaderboard?window=7&limit=50',
+        )
+        leaderboard.value = lb.rows || []
+        leaderboardMeta.value = {
+          window_days: lb.window_days, target_pct: lb.target_pct,
+        }
+      }
+      catch {
+        leaderboard.value = []
+        leaderboardMeta.value = null
+      }
+      try {
+        dslCatalog.value = await api.get<FinanceDslCatalog>(
+          '/api/finance-guru/dsl/catalog',
+        )
+      }
+      catch {
+        // Older finance-guru-api without Phase D — leave catalog null.
+        dslCatalog.value = null
+      }
+
       error.value = null
     }
     catch (e: unknown) {
@@ -152,6 +202,56 @@ export function useFinanceGuru() {
     // Re-poll a few seconds later so the user sees the cycle results.
     setTimeout(() => { void fetchAll() }, 3000)
     return res
+  }
+
+  // ----- Phase F: ad-hoc queries (no polling, called on demand) -----------
+
+  async function listAudits(strategy?: string | null, limit = 50): Promise<FinanceAuditRow[]> {
+    const qs = new URLSearchParams({ limit: String(limit) })
+    if (strategy) qs.set('strategy', strategy)
+    try {
+      const res = await api.get<FinanceAuditsResponse>(
+        `/api/finance-guru/audits?${qs.toString()}`,
+      )
+      return res.audits || []
+    }
+    catch { return [] }
+  }
+
+  async function searchRelations(query: string, limit = 8, minConfidence = 0.3) {
+    if (!query.trim()) return []
+    try {
+      const res = await api.post<FinanceRelationsSearchResponse>(
+        '/api/finance-guru/rag/relations/search',
+        { query, limit, min_confidence: minConfidence },
+      )
+      return res.hits || []
+    }
+    catch { return [] }
+  }
+
+  async function searchLessons(query: string, limit = 8) {
+    if (!query.trim()) return []
+    try {
+      const res = await api.post<FinanceLessonsSearchResponse>(
+        '/api/finance-guru/rag/strategy-lessons/search',
+        { query, limit },
+      )
+      return res.hits || []
+    }
+    catch { return [] }
+  }
+
+  async function searchAnalyses(query: string, limit = 8, minConfidence = 0.3) {
+    if (!query.trim()) return []
+    try {
+      const res = await api.post<FinanceAnalysesSearchResponse>(
+        '/api/finance-guru/enrichment/asset-analysis/search',
+        { query, limit, min_confidence: minConfidence },
+      )
+      return res.hits || []
+    }
+    catch { return [] }
   }
 
   if (!started) {
@@ -184,11 +284,19 @@ export function useFinanceGuru() {
     cycleSummary,
     equity,
     enrichmentRuns,
+    lifecycle,
+    leaderboard,
+    leaderboardMeta,
+    dslCatalog,
     loading,
     error,
     aggregate,
     fetchAll,
     decide,
+    listAudits,
+    searchRelations,
+    searchLessons,
+    searchAnalyses,
   }
 }
 
