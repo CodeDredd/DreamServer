@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+import math
 import os
 import threading
 from contextlib import asynccontextmanager
@@ -530,14 +531,20 @@ def history_news(symbol: str | None = Query(default=None),
     df = df.sort_values("ts", ascending=False).head(limit)
     rows = []
     for _, r in df.iterrows():
+        # pandas/numpy use NaN for SQL NULL on numeric columns, which slips past
+        # the `is not None` check — guard with math.isnan() before casting.
+        sent_v = r["sentiment"]
+        urg_v  = r["urgency"]
+        sent = float(sent_v) if sent_v is not None and not (isinstance(sent_v, float) and math.isnan(sent_v)) else None
+        urg  = int(urg_v)    if urg_v  is not None and not (isinstance(urg_v,  float) and math.isnan(urg_v))  else None
         rows.append({
             "id":        r["id"],
             "ts":        r["ts"].isoformat() if r["ts"] is not None else None,
             "source":    r["source"],
             "channel":   r["channel"],
             "symbols":   list(r["symbols"]) if r["symbols"] is not None else [],
-            "sentiment": float(r["sentiment"]) if r["sentiment"] is not None else None,
-            "urgency":   int(r["urgency"]) if r["urgency"] is not None else None,
+            "sentiment": sent,
+            "urgency":   urg,
             "title":     r["title"],
             "url":       r["url"],
         })
