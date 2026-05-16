@@ -152,7 +152,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Anti-hallucination verifier: drop any source the LLM invented and\n// recompute weight deterministically from sample_size to prevent the\n// model from inflating it.\nconst llm = $items()[0].json;\nconst src = $node['Aggregate per source'].json.sources || [];\nconst allowed = new Map(src.map(s => [s.source.toLowerCase(), s]));\nlet parsed = null;\nlet raw = '';\ntry {\n  const c = llm?.choices?.[0]?.message?.content || '';\n  raw = String(c).trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { fatal: true, reason: 'invalid JSON from LLM', raw: raw.slice(0, 500) } }];\n}\nconst scores = Array.isArray(parsed?.scores) ? parsed.scores : [];\nconst out = [];\nconst dropped = [];\nfor (const s of scores) {\n  const key = String(s.source || '').toLowerCase().trim();\n  const meta = allowed.get(key);\n  if (!meta) { dropped.push(key); continue; }\n  const rel = Math.max(0, Math.min(1, Number(s.reliability ?? 0.5)));\n  // Deterministic weight = reliability * sample-size factor.\n  const sizeFactor = Math.min(1, meta.sample_size / 50);\n  const weight = Math.round(rel * sizeFactor * 100) / 100 * 2; // 0..2\n  out.push({\n    source: key,\n    reliability: rel,\n    weight: Math.max(0, Math.min(2, weight)),\n    sample_size: meta.sample_size,\n    methodology: String(s.methodology || '').slice(0, 300),\n  });\n}\nreturn [{ json: { fatal: false, scores: out, dropped, raw: raw.slice(0, 4000) } }];"
+        "jsCode": "// Anti-hallucination verifier: drop any source the LLM invented and\n// recompute weight deterministically from sample_size to prevent the\n// model from inflating it.\nconst llm = $items()[0].json;\nconst src = $('Aggregate per source').first().json.sources || [];\nconst allowed = new Map(src.map(s => [s.source.toLowerCase(), s]));\nlet parsed = null;\nlet raw = '';\ntry {\n  const c = llm?.choices?.[0]?.message?.content || '';\n  raw = String(c).trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { fatal: true, reason: 'invalid JSON from LLM', raw: raw.slice(0, 500) } }];\n}\nconst scores = Array.isArray(parsed?.scores) ? parsed.scores : [];\nconst out = [];\nconst dropped = [];\nfor (const s of scores) {\n  const key = String(s.source || '').toLowerCase().trim();\n  const meta = allowed.get(key);\n  if (!meta) { dropped.push(key); continue; }\n  const rel = Math.max(0, Math.min(1, Number(s.reliability ?? 0.5)));\n  // Deterministic weight = reliability * sample-size factor.\n  const sizeFactor = Math.min(1, meta.sample_size / 50);\n  const weight = Math.round(rel * sizeFactor * 100) / 100 * 2; // 0..2\n  out.push({\n    source: key,\n    reliability: rel,\n    weight: Math.max(0, Math.min(2, weight)),\n    sample_size: meta.sample_size,\n    methodology: String(s.methodology || '').slice(0, 300),\n  });\n}\nreturn [{ json: { fatal: false, scores: out, dropped, raw: raw.slice(0, 4000) } }];"
       },
       "id": "verify_scores",
       "name": "Verify + recompute weight",
@@ -272,7 +272,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: 'batch', status: 'ok', duration_ms: Date.now() - $execution.startedAt.getTime(), note: 'scored=' + ($node['Verify + recompute weight'].json.scores || []).length + ' dropped=' + ($node['Verify + recompute weight'].json.dropped || []).length }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: 'batch', status: 'ok', duration_ms: $now.toMillis() - $execution.startedAt.toMillis(), note: 'scored=' + ($('Verify + recompute weight').first().json.scores || []).length + ' dropped=' + ($('Verify + recompute weight').first().json.dropped || []).length }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -311,7 +311,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: null, status: ($json.fatal ? 'error' : 'skipped'), duration_ms: Date.now() - $execution.startedAt.getTime(), note: $json.reason || 'no sources or verifier rejected' }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: null, status: ($json.fatal ? 'error' : 'skipped'), duration_ms: $now.toMillis() - $execution.startedAt.toMillis(), note: $json.reason || 'no sources or verifier rejected' }) }}",
         "options": {
           "timeout": 5000,
           "response": {
