@@ -1,11 +1,15 @@
 {
+  "id": "FinAssetBehav001",
   "name": "Finance Asset Behaviour Analysis (6mo)",
   "nodes": [
     {
       "parameters": {
         "rule": {
           "interval": [
-            { "field": "cronExpression", "expression": "0 */5 * * * *" }
+            {
+              "field": "cronExpression",
+              "expression": "0 */5 * * * *"
+            }
           ]
         }
       },
@@ -13,7 +17,10 @@
       "name": "Every 5 min",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [200, 320]
+      "position": [
+        200,
+        320
+      ]
     },
     {
       "parameters": {},
@@ -21,7 +28,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [200, 520]
+      "position": [
+        200,
+        520
+      ]
     },
     {
       "parameters": {
@@ -30,20 +40,34 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "asset_type", "value": "stock" },
-            { "name": "hours",      "value": "168" }
+            {
+              "name": "asset_type",
+              "value": "stock"
+            },
+            {
+              "name": "hours",
+              "value": "168"
+            }
           ]
         },
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_universe_stocks",
       "name": "GET universe (stocks)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 320]
+      "position": [
+        460,
+        320
+      ]
     },
     {
       "parameters": {
@@ -52,20 +76,34 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "asset_type", "value": "crypto" },
-            { "name": "hours",      "value": "168" }
+            {
+              "name": "asset_type",
+              "value": "crypto"
+            },
+            {
+              "name": "hours",
+              "value": "168"
+            }
           ]
         },
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_universe_crypto",
       "name": "GET universe (crypto)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 520]
+      "position": [
+        460,
+        520
+      ]
     },
     {
       "parameters": {
@@ -75,7 +113,10 @@
       "name": "Merge universe",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [700, 420]
+      "position": [
+        700,
+        420
+      ]
     },
     {
       "parameters": {
@@ -84,8 +125,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -93,14 +140,22 @@
         "jsonBody": "={{ JSON.stringify({ asset_type: 'stock', stale_after_hours: 168, universe: $json.universes[0].symbols }) }}",
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "next_candidate_stock",
       "name": "Next candidate (stocks)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 320]
+      "position": [
+        960,
+        320
+      ]
     },
     {
       "parameters": {
@@ -109,8 +164,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -118,14 +179,22 @@
         "jsonBody": "={{ JSON.stringify({ asset_type: 'crypto', stale_after_hours: 168, universe: $json.universes[1] ? $json.universes[1].symbols : [] }) }}",
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "next_candidate_crypto",
       "name": "Next candidate (crypto)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [960, 520]
+      "position": [
+        960,
+        520
+      ]
     },
     {
       "parameters": {
@@ -135,17 +204,26 @@
       "name": "Pick candidate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1240, 420]
+      "position": [
+        1240,
+        420
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.skip }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -155,7 +233,10 @@
       "name": "Has candidate?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1480, 420]
+      "position": [
+        1480,
+        420
+      ]
     },
     {
       "parameters": {
@@ -164,8 +245,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -173,14 +260,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'skipped', duration_ms: 0, note: $json.reason }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_skipped",
       "name": "Report skipped",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1720, 580]
+      "position": [
+        1720,
+        580
+      ]
     },
     {
       "parameters": {
@@ -189,21 +284,38 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "symbol", "value": "={{ $json.symbol }}" },
-            { "name": "days",   "value": "={{ $json.days }}" },
-            { "name": "sample", "value": "400" }
+            {
+              "name": "symbol",
+              "value": "={{ $json.symbol }}"
+            },
+            {
+              "name": "days",
+              "value": "={{ $json.days }}"
+            },
+            {
+              "name": "sample",
+              "value": "400"
+            }
           ]
         },
         "options": {
           "timeout": 30000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_prices",
       "name": "GET 6mo prices",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1720, 320]
+      "position": [
+        1720,
+        320
+      ]
     },
     {
       "parameters": {
@@ -212,41 +324,67 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "symbol", "value": "={{ $node['Pick candidate'].json.symbol }}" },
-            { "name": "days",   "value": "={{ $node['Pick candidate'].json.days }}" },
-            { "name": "limit",  "value": "150" }
+            {
+              "name": "symbol",
+              "value": "={{ $node['Pick candidate'].json.symbol }}"
+            },
+            {
+              "name": "days",
+              "value": "={{ $node['Pick candidate'].json.days }}"
+            },
+            {
+              "name": "limit",
+              "value": "150"
+            }
           ]
         },
         "options": {
           "timeout": 30000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_news",
       "name": "GET 6mo news",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1960, 320]
+      "position": [
+        1960,
+        320
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Build a compact LLM payload. We deliberately:\n//   * only send the *biggest* daily moves (top 8) — the LLM is\n//     asked to *explain* them, not invent moves;\n//   * trim news headlines (title + ts + source + sentiment +\n//     news_id) — no body, keeps prompt under ~6k tokens;\n//   * include first/last/min/max stats so the LLM can quote them\n//     verbatim instead of computing (which is hallucination-prone).\nconst pick   = $node['Pick candidate'].json;\nconst prices = $node['GET 6mo prices'].json;\nconst news   = $node['GET 6mo news'].json;\nconst priceErr = prices?.rows === undefined;\nconst newsErr  = news?.rows  === undefined;\nif (priceErr || !prices.rows.length) {\n  return [{ json: { fatal: true, reason: 'no price history', symbol: pick.symbol } }];\n}\nconst trimmedNews = (news?.rows || []).map(n => ({\n  id: n.id,\n  ts: n.ts,\n  source: n.source,\n  sentiment: n.sentiment,\n  urgency: n.urgency,\n  title: (n.title || '').slice(0, 180),\n})).slice(0, 80);\nreturn [{ json: {\n  symbol: pick.symbol,\n  asset_type: pick.asset_type,\n  days: pick.days,\n  period_start: prices.rows[0].ts,\n  period_end:   prices.rows[prices.rows.length - 1].ts,\n  stats: prices.stats,\n  biggest_moves: prices.biggest,\n  news: trimmedNews,\n} }];"
+        "jsCode": "// Build a compact LLM payload. We deliberately:\n//   * only send the *biggest* daily moves (top 8) \u2014 the LLM is\n//     asked to *explain* them, not invent moves;\n//   * trim news headlines (title + ts + source + sentiment +\n//     news_id) \u2014 no body, keeps prompt under ~6k tokens;\n//   * include first/last/min/max stats so the LLM can quote them\n//     verbatim instead of computing (which is hallucination-prone).\nconst pick   = $node['Pick candidate'].json;\nconst prices = $node['GET 6mo prices'].json;\nconst news   = $node['GET 6mo news'].json;\nconst priceErr = prices?.rows === undefined;\nconst newsErr  = news?.rows  === undefined;\nif (priceErr || !prices.rows.length) {\n  return [{ json: { fatal: true, reason: 'no price history', symbol: pick.symbol } }];\n}\nconst trimmedNews = (news?.rows || []).map(n => ({\n  id: n.id,\n  ts: n.ts,\n  source: n.source,\n  sentiment: n.sentiment,\n  urgency: n.urgency,\n  title: (n.title || '').slice(0, 180),\n})).slice(0, 80);\nreturn [{ json: {\n  symbol: pick.symbol,\n  asset_type: pick.asset_type,\n  days: pick.days,\n  period_start: prices.rows[0].ts,\n  period_end:   prices.rows[prices.rows.length - 1].ts,\n  stats: prices.stats,\n  biggest_moves: prices.biggest,\n  news: trimmedNews,\n} }];"
       },
       "id": "build_payload",
       "name": "Build LLM payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2200, 320]
+      "position": [
+        2200,
+        320
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.fatal }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -256,7 +394,10 @@
       "name": "Has data?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2440, 320]
+      "position": [
+        2440,
+        320
+      ]
     },
     {
       "parameters": {
@@ -265,8 +406,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -274,14 +421,22 @@
         "jsonBody": "={{ JSON.stringify({ model: 'default', temperature: 0.1, max_tokens: 900, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You are a careful equity / crypto analyst. You ONLY use data the user gives you. Never invent prices, dates, news items, or news IDs. If the news list does not justify a price move, say so. Output STRICT JSON ONLY with this exact shape: {\"summary\": string<=400, \"keywords\": string[]<=12, \"drivers\": [ { \"date\": \"YYYY-MM-DD\", \"move_pct\": number, \"reason\": string<=200, \"news_ids\": (string|number)[] } ]<=8, \"confidence\": number_in_[0,1] }. Every news_id MUST come from the provided news list. Every date MUST come from biggest_moves. If you cannot explain a move from the news, set its reason to \"unexplained from supplied news\" and news_ids to []. Never wrap in markdown.' }, { role: 'user', content: 'Asset: ' + $json.symbol + ' (' + $json.asset_type + ').\\nWindow: ' + $json.period_start + ' to ' + $json.period_end + ' (' + $json.days + ' days).\\nStats: ' + JSON.stringify($json.stats) + '\\nBiggest daily moves (you may only reference these dates as drivers): ' + JSON.stringify($json.biggest_moves) + '\\nNews items (id, ts, source, sentiment, urgency, title):\\n' + JSON.stringify($json.news) + '\\nReturn the JSON object now.' } ] }) }}",
         "options": {
           "timeout": 240000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "llm_draft",
-      "name": "qwen3.6 — draft analysis",
+      "name": "qwen3.6 \u2014 draft analysis",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2680, 320]
+      "position": [
+        2680,
+        320
+      ]
     },
     {
       "parameters": {
@@ -291,17 +446,26 @@
       "name": "Verifier (anti-hallucination)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2940, 320]
+      "position": [
+        2940,
+        320
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.reject }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -311,7 +475,10 @@
       "name": "Verifier OK?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [3200, 320]
+      "position": [
+        3200,
+        320
+      ]
     },
     {
       "parameters": {
@@ -320,8 +487,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -329,14 +502,22 @@
         "jsonBody": "={{ JSON.stringify({ symbol: $json.symbol, asset_type: $json.asset_type, period_start: $json.period_start, period_end: $json.period_end, summary: $json.summary, keywords: $json.keywords, drivers: $json.drivers, news_ids: $json.news_ids, confidence: $json.confidence, contradictions: $json.contradictions, model: 'default', prompt: $json.prompt_hash_input, raw_response: $json.raw_response }) }}",
         "options": {
           "timeout": 10000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "store",
       "name": "Store analysis",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3460, 200]
+      "position": [
+        3460,
+        200
+      ]
     },
     {
       "parameters": {
@@ -345,8 +526,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -354,14 +541,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: $node['Verifier (anti-hallucination)'].json.symbol, status: 'ok', duration_ms: Date.now() - $execution.startedAt.getTime(), note: 'confidence=' + $node['Verifier (anti-hallucination)'].json.confidence.toFixed(2) + ($node['Verifier (anti-hallucination)'].json.contradictions ? ' contradictions=' + $node['Verifier (anti-hallucination)'].json.contradictions.slice(0,200) : '') }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_ok",
       "name": "Report OK",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3720, 200]
+      "position": [
+        3720,
+        200
+      ]
     },
     {
       "parameters": {
@@ -370,8 +565,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -379,14 +580,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: $node['Pick candidate'].json.symbol || null, status: 'error', duration_ms: Date.now() - $execution.startedAt.getTime(), note: $json.reason || 'verifier rejected draft' }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_error",
       "name": "Report error",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [3460, 440]
+      "position": [
+        3460,
+        440
+      ]
     },
     {
       "parameters": {
@@ -397,39 +606,269 @@
       "name": "Cooldown 5 min",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [3960, 320]
+      "position": [
+        3960,
+        320
+      ]
     }
   ],
   "connections": {
-    "Every 5 min":             { "main": [[{ "node": "GET universe (stocks)", "type": "main", "index": 0 }, { "node": "GET universe (crypto)", "type": "main", "index": 0 }]] },
-    "Manual Trigger":          { "main": [[{ "node": "GET universe (stocks)", "type": "main", "index": 0 }, { "node": "GET universe (crypto)", "type": "main", "index": 0 }]] },
-    "GET universe (stocks)":   { "main": [[{ "node": "Merge universe", "type": "main", "index": 0 }]] },
-    "GET universe (crypto)":   { "main": [[{ "node": "Merge universe", "type": "main", "index": 0 }]] },
-    "Merge universe":          { "main": [[{ "node": "Next candidate (stocks)", "type": "main", "index": 0 }, { "node": "Next candidate (crypto)", "type": "main", "index": 0 }]] },
-    "Next candidate (stocks)": { "main": [[{ "node": "Pick candidate", "type": "main", "index": 0 }]] },
-    "Next candidate (crypto)": { "main": [[{ "node": "Pick candidate", "type": "main", "index": 0 }]] },
-    "Pick candidate":          { "main": [[{ "node": "Has candidate?", "type": "main", "index": 0 }]] },
-    "Has candidate?":          { "main": [
-                                   [{ "node": "GET 6mo prices", "type": "main", "index": 0 }],
-                                   [{ "node": "Report skipped", "type": "main", "index": 0 }]
-                                 ] },
-    "GET 6mo prices":          { "main": [[{ "node": "GET 6mo news",        "type": "main", "index": 0 }]] },
-    "GET 6mo news":            { "main": [[{ "node": "Build LLM payload",   "type": "main", "index": 0 }]] },
-    "Build LLM payload":       { "main": [[{ "node": "Has data?",           "type": "main", "index": 0 }]] },
-    "Has data?":               { "main": [
-                                   [{ "node": "Report error", "type": "main", "index": 0 }],
-                                   [{ "node": "qwen3.6 — draft analysis", "type": "main", "index": 0 }]
-                                 ] },
-    "qwen3.6 — draft analysis": { "main": [[{ "node": "Verifier (anti-hallucination)", "type": "main", "index": 0 }]] },
-    "Verifier (anti-hallucination)": { "main": [[{ "node": "Verifier OK?", "type": "main", "index": 0 }]] },
-    "Verifier OK?":            { "main": [
-                                   [{ "node": "Store analysis", "type": "main", "index": 0 }],
-                                   [{ "node": "Report error",   "type": "main", "index": 0 }]
-                                 ] },
-    "Store analysis":          { "main": [[{ "node": "Report OK", "type": "main", "index": 0 }]] },
-    "Report OK":               { "main": [[{ "node": "Cooldown 5 min", "type": "main", "index": 0 }]] },
-    "Report skipped":          { "main": [[{ "node": "Cooldown 5 min", "type": "main", "index": 0 }]] },
-    "Report error":            { "main": [[{ "node": "Cooldown 5 min", "type": "main", "index": 0 }]] }
+    "Every 5 min": {
+      "main": [
+        [
+          {
+            "node": "GET universe (stocks)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GET universe (crypto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "GET universe (stocks)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GET universe (crypto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET universe (stocks)": {
+      "main": [
+        [
+          {
+            "node": "Merge universe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET universe (crypto)": {
+      "main": [
+        [
+          {
+            "node": "Merge universe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge universe": {
+      "main": [
+        [
+          {
+            "node": "Next candidate (stocks)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Next candidate (crypto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Next candidate (stocks)": {
+      "main": [
+        [
+          {
+            "node": "Pick candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Next candidate (crypto)": {
+      "main": [
+        [
+          {
+            "node": "Pick candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick candidate": {
+      "main": [
+        [
+          {
+            "node": "Has candidate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has candidate?": {
+      "main": [
+        [
+          {
+            "node": "GET 6mo prices",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET 6mo prices": {
+      "main": [
+        [
+          {
+            "node": "GET 6mo news",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET 6mo news": {
+      "main": [
+        [
+          {
+            "node": "Build LLM payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build LLM payload": {
+      "main": [
+        [
+          {
+            "node": "Has data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has data?": {
+      "main": [
+        [
+          {
+            "node": "Report error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "qwen3.6 \u2014 draft analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "qwen3.6 \u2014 draft analysis": {
+      "main": [
+        [
+          {
+            "node": "Verifier (anti-hallucination)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifier (anti-hallucination)": {
+      "main": [
+        [
+          {
+            "node": "Verifier OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifier OK?": {
+      "main": [
+        [
+          {
+            "node": "Store analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store analysis": {
+      "main": [
+        [
+          {
+            "node": "Report OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report OK": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 5 min",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report skipped": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 5 min",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report error": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 5 min",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
   "settings": {
     "executionOrder": "v1",
@@ -437,7 +876,5 @@
     "saveExecutionProgress": true,
     "saveDataSuccessExecution": "all",
     "saveDataErrorExecution": "all"
-  },
-  "tags": ["finance", "enrichment"]
+  }
 }
-
