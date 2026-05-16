@@ -292,47 +292,15 @@ services:
       retries: 3
       start_period: 10s
 
-  # ============================================
-  # Dashboard NG (Nuxt 4) — Parallel-Stand neben dashboard
-  # ============================================
-  # 14-Tage-Soak-Phase laut Migration-Plan (Phase 7). Kein gemeinsames
-  # Volume mit dashboard - der Nuxt-SPA hat keinen On-Disk-State, alle
-  # Daten kommen ueber dashboard-api per /api-Proxy. Port 3011 ist via
-  # ports.json reserviert; nach Erfolg wird im Cutover-Commit dashboard
-  # deaktiviert und 3011 → 3001 geswapped.
-  dashboard-nuxt:
-    build:
-      context: ./extensions/services/dashboard-nuxt
-      dockerfile: Dockerfile
-    container_name: dream-dashboard-nuxt
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    logging: *default-logging
-    environment:
-      # Wird vom Nitro-API-Proxy (server/middleware/api-proxy.ts) als
-      # Bearer-Token an dashboard-api durchgereicht. Nie zum Client.
-      - DASHBOARD_API_KEY=${DASHBOARD_API_KEY:-}
-      - NUXT_API_BASE_INTERNAL=http://dashboard-api:3002
-    ports:
-      - "${BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_NUXT_PORT:-3011}:3011"
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 2G
-        reservations:
-          cpus: '0.25'
-          memory: 384M
-    depends_on:
-      dashboard-api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3011/api/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+  # NOTE: `dashboard-nuxt` is intentionally NOT defined here.
+  # Its full compose block lives in
+  # ``extensions/services/dashboard-nuxt/compose.yaml(.disabled)``
+  # — that is the single source of truth (image tag, env, healthcheck,
+  # resource limits). Declaring it in BOTH files caused Docker Compose
+  # to list-merge identical ``security_opt`` entries into duplicates,
+  # which trips compose v2's strict validator ("items at 0 and 1 are
+  # equal") and blocks every stack operation. See
+  # ``extensions/services/dashboard-nuxt/README.md`` for activation.
 
 networks:
   default:

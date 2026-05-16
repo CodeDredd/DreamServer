@@ -15,6 +15,14 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    logging:
+      # Same caps as ``x-logging: &default-logging`` in
+      # docker-compose.base.yml — YAML anchors don't cross compose
+      # files, so we inline here.
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       # Bearer wird im Nitro-Server-Middleware injiziert; gleicher
       # Mechanismus wie bei der React-Variante (dort über nginx).
