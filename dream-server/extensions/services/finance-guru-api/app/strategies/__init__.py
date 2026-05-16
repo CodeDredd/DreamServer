@@ -45,6 +45,11 @@ class DecisionContext:
     # Optional — only populated when finance-social has been deployed.
     # Strategies should treat an empty DataFrame as "no signal", not error.
     get_social:        Callable[[dt.timedelta, list[str] | None], pd.DataFrame] = field(default=None)  # type: ignore
+    # Enrichment lookups (populated by orchestrator; may return [] / None
+    # if the n8n enrichment workflows haven't run yet — strategies must
+    # degrade gracefully).
+    get_asset_analysis: Callable[[str, int], list[dict]] = field(default=None)  # type: ignore
+    get_source_weight:  Callable[[str], dict | None] = field(default=None)      # type: ignore
 
 
 @dataclass

@@ -35,7 +35,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from . import backtest, cycle_log, data, enrichment, ledger, orchestrator
+from . import backtest, cycle_log, data, enrichment, ledger, orchestrator, qdrant_sink
 from .config import CFG
 from .strategies import REGISTRY, discover_strategies
 
@@ -422,6 +422,27 @@ def report_run(payload: RunReportIn,
 def list_runs(workflow: str | None = Query(default=None),
               limit: int = Query(100, ge=1, le=500)) -> dict:
     return {"runs": enrichment.list_runs(workflow=workflow, limit=limit)}
+
+
+class AnalysisSearchReq(BaseModel):
+    query: str = Field(..., min_length=1, max_length=400)
+    limit: int = Field(5, ge=1, le=50)
+    symbols: list[str] | None = None
+    min_confidence: float = Field(0.0, ge=0.0, le=1.0)
+
+
+@app.post("/enrichment/asset-analysis/search")
+def search_asset_analyses(req: AnalysisSearchReq) -> dict:
+    """Semantic search over the `finance_asset_analysis` Qdrant
+    collection — returns the most similar past analyses to the query
+    string. Open endpoint (no token); collection lives on the dream-
+    network."""
+    hits = qdrant_sink.search_similar_analyses(
+        req.query, limit=req.limit,
+        symbols=[s.upper() for s in (req.symbols or [])] or None,
+        min_confidence=req.min_confidence,
+    )
+    return {"query": req.query, "hits": hits, "count": len(hits)}
 
 
 # --------------------------------------------------------------------------- #

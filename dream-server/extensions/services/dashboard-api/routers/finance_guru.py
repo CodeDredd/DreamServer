@@ -226,3 +226,12 @@ async def enrichment_runs(
     return await _guru_request("GET", "/enrichment/runs", params=params)
 
 
+@router.post("/api/finance-guru/enrichment/asset-analysis/search")
+async def search_analyses(
+    body: dict = Body(...),
+    api_key: str = Depends(verify_api_key),
+):
+    """Semantic search over the finance_asset_analysis Qdrant collection."""
+    return await _guru_request("POST", "/enrichment/asset-analysis/search", json=body)
+
+

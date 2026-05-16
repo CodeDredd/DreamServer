@@ -484,10 +484,26 @@ a sane place to write LLM-derived enrichment back to:
 * **History query endpoints** (`/history/symbols`, `/history/prices`,
   `/history/news`) let n8n pull windowed time-series without needing
   direct Postgres credentials.
+* **Qdrant sink** (`app/qdrant_sink.py`) — every successful
+  `POST /enrichment/asset-analysis` also embeds (`summary`+keywords)
+  via TEI and upserts into a new collection `finance_asset_analysis`
+  (768-dim cosine, payload-indexed on `symbol`, `asset_type`,
+  `keywords`, `confidence`, `ts_unix`). Every
+  `POST /enrichment/source-reliability` patches **all** existing
+  `finance_news` points of that source with
+  `payload.source_reliability` + `payload.source_weight` via Qdrant
+  `set_payload` — no re-embedding needed, queries that already filter
+  on `source` benefit automatically. Both writes are fire-and-forget
+  (`FINANCE_GURU_QDRANT_SINK=0` disables). Read-side helper
+  `POST /enrichment/asset-analysis/search` exposes ANN search over
+  the new collection.
+* **DecisionContext** gained `get_asset_analysis(symbol, limit)` and
+  `get_source_weight(source)` so future strategies can read
+  enrichment without re-implementing the SQLite/Qdrant lookups; the
+  source-weight cache is cleared at the start of every cycle so n8n
+  updates appear within one tick.
 
-### 11b. n8n enrichment workflows
-
-Two workflows ship in `config/n8n/` and are listed in
+### 11b. n8n enrichment workflowsTwo workflows ship in `config/n8n/` and are listed in
 `catalog.json`. Both use **LiteLLM alias `default`** (qwen3.6).
 
 | Workflow file | Cadence | What it does |

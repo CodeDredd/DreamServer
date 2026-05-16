@@ -3,10 +3,11 @@ trade execution + KPI logging."""
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import logging
 from typing import Iterable
 
-from . import cycle_log, data, ledger
+from . import cycle_log, data, enrichment, ledger
 from .config import CFG
 from .strategies import DecisionContext, Signal, StrategyDef
 
@@ -35,7 +36,26 @@ def _build_context(strategy_name: str, asset_types: Iterable[str],
         get_price_history=data.price_history,
         get_news=data.recent_news,
         get_social=data.recent_social,
+        get_asset_analysis=enrichment.latest_asset_analysis,
+        get_source_weight=_source_weight_lookup,
     )
+
+
+def _source_weight_lookup(source: str) -> dict | None:
+    """Tiny helper so strategies can do `ctx.get_source_weight("reuters")
+    → {"reliability": 0.92, "weight": 1.8, ...}` without paying for a
+    full table scan every call. Cached in-process; cleared each cycle by
+    run_strategy_once() so updates from n8n appear quickly."""
+    return _cached_source_weight(source.strip().lower())
+
+
+@functools.lru_cache(maxsize=256)
+def _cached_source_weight(source: str) -> dict | None:
+    rows = enrichment.list_source_reliability(limit=1000)
+    for r in rows:
+        if r["source"] == source:
+            return r
+    return None
 
 
 def _size_buy(signal: Signal, ctx: DecisionContext, max_frac: float) -> float:
@@ -55,6 +75,9 @@ def _size_buy(signal: Signal, ctx: DecisionContext, max_frac: float) -> float:
 def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
                       *, trigger: str = "scheduler") -> dict:
     ledger.ensure_strategy(sd.name, sd.description)
+    # Drop stale source-weight cache so any new reliability score the
+    # source_reliability workflow just wrote takes effect immediately.
+    _cached_source_weight.cache_clear()
     ctx = _build_context(sd.name, sd.asset_types, asset_type_map)
     started = ctx.now
 

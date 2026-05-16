@@ -28,6 +28,7 @@ import logging
 from typing import Any, Iterable
 
 from . import ledger
+from . import qdrant_sink
 
 log = logging.getLogger("finance-guru.enrichment")
 
@@ -149,7 +150,31 @@ def upsert_asset_analysis(
                 (raw_response or "")[:8000] or None,
             ),
         )
-        return int(cur.lastrowid or 0)
+        new_id = int(cur.lastrowid or 0)
+
+    # Fire-and-forget Qdrant write so the new analysis becomes
+    # semantically searchable. Failures here MUST NOT roll back the
+    # SQLite insert — the n8n workflow's idempotency relies on that.
+    try:
+        kw_list = sorted({str(k).strip().lower() for k in keywords if str(k).strip()})[:32]
+        qdrant_sink.upsert_asset_analysis(
+            analysis_id=new_id,
+            symbol=symbol.upper(),
+            asset_type=asset_type,
+            period_start=period_start.isoformat(),
+            period_end=period_end.isoformat(),
+            summary=(summary or "").strip()[:2000],
+            keywords=kw_list,
+            drivers=drivers or [],
+            news_ids=list(news_ids or []),
+            confidence=max(0.0, min(1.0, float(confidence))),
+            model=model,
+            ts=now,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Qdrant sink for asset_analysis %s failed (non-fatal): %s",
+                    symbol, exc)
+    return new_id
 
 
 def latest_asset_analysis(symbol: str, limit: int = 10) -> list[dict]:
@@ -216,6 +241,17 @@ def upsert_source_reliability(
              (methodology or "")[:2000], now, model,
              (raw_response or "")[:4000] or None),
         )
+    # Propagate the reliability/weight into the finance_news Qdrant
+    # payloads so existing semantic searches benefit from it. Fire-and-
+    # forget — Qdrant outages don't break the SQLite upsert.
+    try:
+        qdrant_sink.propagate_source_weight(
+            source=source.strip().lower(),
+            reliability=rel, weight=w, model=model,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Qdrant source_weight propagation for %s failed (non-fatal): %s",
+                    source, exc)
     return {"source": source.strip().lower(), "reliability": rel,
             "weight": w, "last_evaluated_at": now}
 

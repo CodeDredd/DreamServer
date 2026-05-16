@@ -39,6 +39,16 @@ services:
       - FINANCE_GURU_MAX_POSITION_FRAC=${FINANCE_GURU_MAX_POSITION_FRAC:-0.10}
       # Simulated round-trip fee (default 0.10% per trade).
       - FINANCE_GURU_FEE_BPS=${FINANCE_GURU_FEE_BPS:-10}
+      # ── Qdrant sink (enrichment → vector DB) ────────────────────────
+      # Asset analyses get embedded into `finance_asset_analysis`;
+      # source-reliability scores are propagated as payload.source_weight
+      # on the existing `finance_news` collection.
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - EMBEDDINGS_URL=${EMBEDDINGS_URL:-http://embeddings:80}
+      - FINANCE_ASSET_ANALYSIS_COLLECTION=${FINANCE_ASSET_ANALYSIS_COLLECTION:-finance_asset_analysis}
+      - FINANCE_NEWS_COLLECTION=${FINANCE_NEWS_COLLECTION:-finance_news}
+      - FINANCE_GURU_QDRANT_SINK=${FINANCE_GURU_QDRANT_SINK:-1}
     volumes:
       - ./data/finance-guru-api:/data
     ports:
