@@ -198,7 +198,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Phase A: 'next-candidate-batch' returns up to N stalest symbols per\n// asset class. We still process only ONE per run here (downstream\n// chain is single-item-safe; per-item parallel batching lands in\n// Phase A.2 once the build_payload/verify nodes are made\n// item-position-aware via $input.item.json instead of\n// $node['Pick candidate'].json).\n//\n// Effective throughput: cron */2 min * 1 symbol = 30 symbols/h\n// (was: */5 min = 12/h). 2.5x improvement.\nconst stockBatch  = $('Next candidate (stocks)').first()?.json?.next || [];\nconst cryptoBatch = $('Next candidate (crypto)').first()?.json?.next || [];\nlet symbol = null, assetType = null;\nif (stockBatch.length)        { symbol = stockBatch[0];  assetType = 'stock';  }\nelse if (cryptoBatch.length)  { symbol = cryptoBatch[0]; assetType = 'crypto'; }\nif (!symbol) {\n  return [{ json: { skip: true, reason: 'no stale candidate' } }];\n}\nreturn [{ json: { skip: false, symbol, asset_type: assetType, days: 180,\n                  batch_stock_n: stockBatch.length,\n                  batch_crypto_n: cryptoBatch.length } }];"
+        "jsCode": "// Phase A.2: emit ONE n8n item per stale symbol so every downstream\n// node (GET prices, GET news, Build LLM payload, qwen3.6, Verifier,\n// Store analysis, Report OK/error) runs per-item naturally instead\n// of being clamped to first(). Paired-item linkage is preserved by\n// n8n through the chain, so $('Pick candidate').item.json in the\n// downstream Code/HTTP nodes returns the matching pick for the row\n// being processed.\n//\n// Effective throughput per cron tick:\n//   stocks (limit=3) + crypto (limit=2) = up to 5 symbols/run\n//   cron */2 min                          = up to 150 symbols/h\n// (Phase A was: 1 symbol/run * */2 = 30/h \u2014 5x improvement.)\n//\n// Skip-fallback: if both batches are empty we emit a single skip item\n// so 'Report skipped' has something to consume.\nconst stockBatch  = $('Next candidate (stocks)').first()?.json?.next || [];\nconst cryptoBatch = $('Next candidate (crypto)').first()?.json?.next || [];\nconst items = [];\nfor (const s of stockBatch) {\n  items.push({ json: { skip: false, symbol: s, asset_type: 'stock',  days: 180,\n                       batch_index: items.length } });\n}\nfor (const s of cryptoBatch) {\n  items.push({ json: { skip: false, symbol: s, asset_type: 'crypto', days: 180,\n                       batch_index: items.length } });\n}\nif (!items.length) {\n  return [{ json: { skip: true, reason: 'no stale candidate' } }];\n}\nreturn items;"
       },
       "id": "pick",
       "name": "Pick candidate",
@@ -326,11 +326,11 @@
           "parameters": [
             {
               "name": "symbol",
-              "value": "={{ $node['Pick candidate'].json.symbol }}"
+              "value": "={{ $('Pick candidate').item.json.symbol }}"
             },
             {
               "name": "days",
-              "value": "={{ $node['Pick candidate'].json.days }}"
+              "value": "={{ $('Pick candidate').item.json.days }}"
             },
             {
               "name": "limit",
@@ -359,7 +359,8 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build a compact LLM payload. We deliberately:\n//   * only send the *biggest* daily moves (top 8) \u2014 the LLM is\n//     asked to *explain* them, not invent moves;\n//   * trim news headlines (title + ts + source + sentiment +\n//     news_id) \u2014 no body, keeps prompt under ~6k tokens;\n//   * include first/last/min/max stats so the LLM can quote them\n//     verbatim instead of computing (which is hallucination-prone).\nconst pick   = $node['Pick candidate'].json;\nconst prices = $node['GET 6mo prices'].json;\nconst news   = $node['GET 6mo news'].json;\nconst priceErr = prices?.rows === undefined;\nconst newsErr  = news?.rows  === undefined;\nif (priceErr || !prices.rows.length) {\n  return [{ json: { fatal: true, reason: 'no price history', symbol: pick.symbol } }];\n}\nconst trimmedNews = (news?.rows || []).map(n => ({\n  id: n.id,\n  ts: n.ts,\n  source: n.source,\n  sentiment: n.sentiment,\n  urgency: n.urgency,\n  title: (n.title || '').slice(0, 180),\n})).slice(0, 80);\nreturn [{ json: {\n  symbol: pick.symbol,\n  asset_type: pick.asset_type,\n  days: pick.days,\n  period_start: prices.rows[0].ts,\n  period_end:   prices.rows[prices.rows.length - 1].ts,\n  stats: prices.stats,\n  biggest_moves: prices.biggest,\n  news: trimmedNews,\n} }];"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Per-item Code node (Phase A.2). Inputs along the chain (Pick,\n// GET prices, GET news) all carry pairedItem so we grab the\n// matching row for *this* execution position via\n// $('NodeName').item.json instead of .first().\nconst pick   = $('Pick candidate').item.json;\nconst prices = $('GET 6mo prices').item.json;\nconst news   = $json; // current item = GET news response\nif (!prices || !prices.rows || !prices.rows.length) {\n  return { json: { fatal: true, reason: 'no price history',\n                   symbol: pick.symbol, asset_type: pick.asset_type } };\n}\nconst trimmedNews = (news?.rows || []).map(n => ({\n  id: n.id,\n  ts: n.ts,\n  source: n.source,\n  sentiment: n.sentiment,\n  urgency: n.urgency,\n  title: (n.title || '').slice(0, 180),\n})).slice(0, 80);\nreturn { json: {\n  symbol: pick.symbol,\n  asset_type: pick.asset_type,\n  days: pick.days,\n  period_start: prices.rows[0].ts,\n  period_end:   prices.rows[prices.rows.length - 1].ts,\n  stats: prices.stats,\n  biggest_moves: prices.biggest,\n  news: trimmedNews,\n} };"
       },
       "id": "build_payload",
       "name": "Build LLM payload",
@@ -440,7 +441,8 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse + validate the LLM draft. This is the anti-hallucination\n// gate the user explicitly asked for. We reject any driver that\n// references a date or news_id NOT present in the input payload.\nconst llm  = $items()[0].json;\nconst src  = $node['Build LLM payload'].json;\nlet draft  = null;\nlet rawTxt = '';\ntry {\n  const choice = llm?.choices?.[0]?.message?.content || '';\n  rawTxt = String(choice).trim();\n  // Strip ``` fences if the model added them.\n  const m = rawTxt.match(/\\{[\\s\\S]*\\}/);\n  draft = JSON.parse(m ? m[0] : rawTxt);\n} catch (e) {\n  return [{ json: { reject: true, reason: 'invalid JSON from LLM', raw: rawTxt.slice(0, 800) } }];\n}\nif (!draft || typeof draft !== 'object') {\n  return [{ json: { reject: true, reason: 'LLM returned non-object', raw: rawTxt.slice(0, 800) } }];\n}\nconst allowedIds   = new Set((src.news || []).map(n => String(n.id)));\nconst allowedDates = new Set((src.biggest_moves || []).map(m => (m.date || '').slice(0, 10)));\nconst drivers = Array.isArray(draft.drivers) ? draft.drivers : [];\nconst contradictions = [];\nconst cleanedDrivers = [];\nfor (const d of drivers.slice(0, 12)) {\n  const dt = String(d.date || '').slice(0, 10);\n  if (dt && !allowedDates.has(dt)) {\n    contradictions.push('driver date ' + dt + ' is not in biggest_moves');\n    continue;\n  }\n  const ids = Array.isArray(d.news_ids) ? d.news_ids : [];\n  const cleanIds = ids.filter(id => allowedIds.has(String(id)));\n  if (ids.length > cleanIds.length) {\n    contradictions.push('driver ' + dt + ' referenced ' + (ids.length - cleanIds.length) + ' unknown news_id(s)');\n  }\n  cleanedDrivers.push({\n    date: dt,\n    move_pct: Number(d.move_pct ?? 0),\n    reason: String(d.reason || '').slice(0, 240),\n    news_ids: cleanIds,\n  });\n}\nconst keywords = Array.isArray(draft.keywords) ? draft.keywords.map(k => String(k).slice(0, 32)).slice(0, 12) : [];\nconst summary  = String(draft.summary || '').slice(0, 600);\n// Confidence penalty for contradictions.\nlet conf = Math.max(0, Math.min(1, Number(draft.confidence ?? 0)));\nif (contradictions.length) conf = Math.max(0, conf - 0.15 * contradictions.length);\nconst allNewsIds = Array.from(new Set(cleanedDrivers.flatMap(d => d.news_ids)));\nreturn [{ json: {\n  reject: false,\n  symbol: src.symbol,\n  asset_type: src.asset_type,\n  period_start: src.period_start,\n  period_end:   src.period_end,\n  summary,\n  keywords,\n  drivers: cleanedDrivers,\n  news_ids: allNewsIds,\n  confidence: conf,\n  contradictions: contradictions.length ? contradictions.join('; ') : null,\n  prompt_hash_input: { symbol: src.symbol, period_start: src.period_start, period_end: src.period_end, biggest: src.biggest_moves },\n  raw_response: rawTxt.slice(0, 4000),\n} }];"
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Per-item Code node (Phase A.2). $json = LLM response for THIS\n// row, $('Build LLM payload').item.json = matching prompt input.\nconst llm  = $json;\nconst src  = $('Build LLM payload').item.json;\nlet draft  = null;\nlet rawTxt = '';\ntry {\n  const choice = llm?.choices?.[0]?.message?.content || '';\n  rawTxt = String(choice).trim();\n  const m = rawTxt.match(/\\{[\\s\\S]*\\}/);\n  draft = JSON.parse(m ? m[0] : rawTxt);\n} catch (e) {\n  return { json: { reject: true, reason: 'invalid JSON from LLM',\n                   symbol: src.symbol, raw: rawTxt.slice(0, 800) } };\n}\nif (!draft || typeof draft !== 'object') {\n  return { json: { reject: true, reason: 'LLM returned non-object',\n                   symbol: src.symbol, raw: rawTxt.slice(0, 800) } };\n}\nconst allowedIds   = new Set((src.news || []).map(n => String(n.id)));\nconst allowedDates = new Set((src.biggest_moves || []).map(m => (m.date || '').slice(0, 10)));\nconst drivers = Array.isArray(draft.drivers) ? draft.drivers : [];\nconst contradictions = [];\nconst cleanedDrivers = [];\nfor (const d of drivers.slice(0, 12)) {\n  const dt = String(d.date || '').slice(0, 10);\n  if (dt && !allowedDates.has(dt)) {\n    contradictions.push('driver date ' + dt + ' is not in biggest_moves');\n    continue;\n  }\n  const ids = Array.isArray(d.news_ids) ? d.news_ids : [];\n  const cleanIds = ids.filter(id => allowedIds.has(String(id)));\n  if (ids.length > cleanIds.length) {\n    contradictions.push('driver ' + dt + ' referenced ' + (ids.length - cleanIds.length) + ' unknown news_id(s)');\n  }\n  cleanedDrivers.push({\n    date: dt,\n    move_pct: Number(d.move_pct ?? 0),\n    reason: String(d.reason || '').slice(0, 240),\n    news_ids: cleanIds,\n  });\n}\nconst keywords = Array.isArray(draft.keywords) ? draft.keywords.map(k => String(k).slice(0, 32)).slice(0, 12) : [];\nconst summary  = String(draft.summary || '').slice(0, 600);\nlet conf = Math.max(0, Math.min(1, Number(draft.confidence ?? 0)));\nif (contradictions.length) conf = Math.max(0, conf - 0.15 * contradictions.length);\nconst allNewsIds = Array.from(new Set(cleanedDrivers.flatMap(d => d.news_ids)));\nreturn { json: {\n  reject: false,\n  symbol: src.symbol,\n  asset_type: src.asset_type,\n  period_start: src.period_start,\n  period_end:   src.period_end,\n  summary,\n  keywords,\n  drivers: cleanedDrivers,\n  news_ids: allNewsIds,\n  confidence: conf,\n  contradictions: contradictions.length ? contradictions.join('; ') : null,\n  prompt_hash_input: { symbol: src.symbol, period_start: src.period_start, period_end: src.period_end, biggest: src.biggest_moves },\n  raw_response: rawTxt.slice(0, 4000),\n} };"
       },
       "id": "verify",
       "name": "Verifier (anti-hallucination)",
@@ -538,7 +540,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: $('Verifier (anti-hallucination)').first().json.symbol, status: 'ok', note: 'confidence=' + Number($('Verifier (anti-hallucination)').first().json.confidence || 0).toFixed(2) + (($('Verifier (anti-hallucination)').first().json.contradictions) ? ' contradictions=' + String($('Verifier (anti-hallucination)').first().json.contradictions).slice(0,200) : '') }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: $('Verifier (anti-hallucination)').item.json.symbol, status: 'ok', note: 'confidence=' + Number($('Verifier (anti-hallucination)').item.json.confidence || 0).toFixed(2) + (($('Verifier (anti-hallucination)').item.json.contradictions) ? ' contradictions=' + String($('Verifier (anti-hallucination)').item.json.contradictions).slice(0,200) : '') }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -577,7 +579,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($('Pick candidate').first().json.symbol) || null, status: 'error', note: ($json && $json.reason) || 'verifier rejected draft' }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($json && $json.symbol) || ($('Pick candidate').item.json && $('Pick candidate').item.json.symbol) || null, status: 'error', note: ($json && $json.reason) || 'verifier rejected draft' }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -613,7 +615,7 @@
     }
   ],
   "connections": {
-    "Every 5 min": {
+    "Every 2 min": {
       "main": [
         [
           {
@@ -825,7 +827,7 @@
       "main": [
         [
           {
-            "node": "Cooldown 5 min",
+            "node": "Cooldown 60s",
             "type": "main",
             "index": 0
           }
@@ -836,7 +838,7 @@
       "main": [
         [
           {
-            "node": "Cooldown 5 min",
+            "node": "Cooldown 60s",
             "type": "main",
             "index": 0
           }
@@ -847,7 +849,7 @@
       "main": [
         [
           {
-            "node": "Cooldown 5 min",
+            "node": "Cooldown 60s",
             "type": "main",
             "index": 0
           }
@@ -857,7 +859,7 @@
   },
   "settings": {
     "executionOrder": "v1",
-    "executionTimeout": 600,
+    "executionTimeout": 1200,
     "saveExecutionProgress": true,
     "saveDataSuccessExecution": "all",
     "saveDataErrorExecution": "all"

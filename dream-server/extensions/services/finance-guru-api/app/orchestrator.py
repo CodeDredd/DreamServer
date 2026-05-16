@@ -7,7 +7,7 @@ import functools
 import logging
 from typing import Iterable
 
-from . import cycle_log, data, enrichment, ledger
+from . import cycle_log, data, enrichment, ledger, qdrant_rag
 from .config import CFG
 from .strategies import DecisionContext, Signal, StrategyDef
 
@@ -38,6 +38,15 @@ def _build_context(strategy_name: str, asset_types: Iterable[str],
         get_social=data.recent_social,
         get_asset_analysis=enrichment.latest_asset_analysis,
         get_source_weight=_source_weight_lookup,
+        # Phase B — RAG read-helpers. Strategies opt into them; the
+        # plain SQL-based lookups above stay for cheap, non-vector
+        # queries.
+        get_assets_rag=qdrant_rag.search_assets,
+        get_news_rag=qdrant_rag.search_news,
+        get_social_rag=qdrant_rag.search_social,
+        get_analysis_rag=qdrant_rag.search_asset_analyses,
+        get_relations_rag=qdrant_rag.search_relations,
+        get_strategy_lessons_rag=qdrant_rag.search_strategy_lessons,
     )
 
 
@@ -144,6 +153,10 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
                 "price":     price,
                 "realised_pnl": result.realised_pnl,
                 "reason":    sig.reason,
+                # Phase B: surface RAG hits / structured signal extras so
+                # the dashboard's cycle drill-down + the weekly retrospective
+                # have the evidence that supported each trade.
+                "extra":     dict(sig.extra) if sig.extra else {},
             })
         else:
             skipped.append({"symbol": sig.symbol, "action": sig.action,

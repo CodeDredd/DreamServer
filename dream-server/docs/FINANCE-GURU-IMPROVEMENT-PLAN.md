@@ -1,6 +1,7 @@
 # Finance Guru — Verbesserungsplan (Paper-Trading, RAG, Qdrant, UI)
 
-> Stand: 05/2026 · Status: Phase A ✅ deployed · Verantwortlich: AI-Agent + Operator
+> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ deployed
+> Verantwortlich: AI-Agent + Operator
 > Bezugspunkte: `AGENT-OPERATIONS.md §11–§14`, `extensions/services/finance-guru-api/`,
 > `extensions/services/finance-{vector,news,social,prices}/`, `extensions/services/dashboard-nuxt/`
 
@@ -269,32 +270,172 @@ n8n FinAssetBehav001              → aktiv, neuer Cron-Wert geladen
 n8n FinSourceRel0001              → aktiv, stündlich
 ```
 
-### Phase A.2 — Echte Per-Item Batching (Follow-up, 0.5–1 d)
+### Phase A.2 — Echte Per-Item Batching (Follow-up, 0.5–1 d) ✅ DONE 16.05.2026
 
-* Refactor Workflow 09: `Build LLM payload`, `Verifier`,
-  `Store analysis`, `Report OK`/`Report error` umstellen auf
-  `$input.item.json` statt `$node['Pick candidate'].json` →
-  `Pick candidate` darf dann N Items emittieren, alle Downstream-
-  Nodes laufen N-mal naturally.
-* `Cooldown 60s` muss in Phase A.2 als `Wait` *nach* der Item-
-  Schleife stehen (n8n `Wait`-Node feuert ein-Mal pro Execution,
-  nicht pro Item → 60 s Cooldown bleibt 60 s Total).
-* DoD: Logs zeigen ≥ 3 unterschiedliche `target`-Symbole pro
-  Workflow-Execution.
+* ✅ Refactor Workflow 09: `Build LLM payload` und `Verifier`
+  laufen jetzt mit `mode: 'runOnceForEachItem'`, ziehen den
+  passenden Pick / Preise / News-Eintrag via
+  `$('NodeName').item.json` aus der paired-item-Kette statt aus
+  `.first()`. `GET 6mo news` referenziert ebenfalls
+  `$('Pick candidate').item.json`. `Report OK` / `Report error`
+  nehmen `.item.json` statt `.first().json`.
+* ✅ `Pick candidate` emittiert pro Cron-Tick bis zu **5 Items**
+  (3 Stocks + 2 Crypto) statt einem einzigen Symbol. Skip-Fallback
+  bleibt 1-Item, damit `Report skipped` nichts kaputtmacht.
+* ✅ **Connection-Bug behoben** (war beim Phase-A-Rename liegen
+  geblieben): `connections` referenzierten weiterhin
+  `"Every 5 min"` / `"Cooldown 5 min"` während die Nodes
+  `"Every 2 min"` / `"Cooldown 60s"` hießen — Workflow lief
+  vorher nur über den Manual Trigger. Jetzt synchron.
+* ✅ `executionTimeout` von 600 s auf **1200 s** hochgesetzt
+  (kumulativ können 5 × LLM-`default`-Calls à ~3–4 min knapp
+  werden; Cooldown 60 s bleibt einmalig pro Execution, weil
+  `Wait` ein einmaliger Wait pro Execution ist und nicht pro
+  Item feuert).
+* ✅ `orchestrator.run_strategy_once()` schreibt `signal.extra`
+  (inkl. neuem `rag`-Block, s. Phase B) mit ins `executed`-Log,
+  so dass Phase-D-Auditing die Belege je Trade einsehen kann.
 
-### Phase B — RAG-Aktivierung (3–5 Tage)
+**Erwartete Throughput-Steigerung:** **5×** (1 Symbol/Run → 5
+Symbole/Run); 30 Symbole/h → **bis zu 150 Symbole/h**. Realer
+Wert hängt von der `default`-LLM-Latenz ab — bei ~3 min/Call und
+1200 s Timeout passen ~6 Items locker in eine Execution, im
+Worst-Case wartet n8n `coalesce` den nächsten Tick ab.
 
-5. **`qdrant_rag.py`** im guru-api mit Read-Helpern für alle vier
-   Collections + zwei neue (`finance_relations`,
-   `finance_strategy_lessons`).
-6. **`DecisionContext`** erweitern:
-   * `get_news_rag(query: str, k=10, symbols=None)` → Vector-Treffer
-   * `get_social_rag(query, k=10, symbols=None)`
-   * `get_relations(theme: str, k=10)`
-   * `get_strategy_lessons(query, k=5)`
-7. **`finance_strategy_lessons`-Collection** + Sink-Funktion
-   `upsert_strategy_lesson(strategy, outcome, reason, pnl_pct, …)`,
-   ausgelöst beim Retirement (§7).
+**Smoke-Test-Checkliste (Phase A.2):**
+
+```
+# Per-item-Batching: Logs zeigen ≥ 3 unterschiedliche
+# `target`-Symbole in einer Workflow-Execution:
+n8n UI → Executions → FinAssetBehav001 → letzte Execution →
+  Verifier (anti-hallucination): 5 Output-Items, je eigenes
+  `symbol`
+  Store analysis: 5 separate POSTs an
+  /enrichment/asset-analysis (HTTP 201)
+  Report OK: 5 separate POSTs an /enrichment/run
+
+# Connection-Sanity:
+curl -s http://127.0.0.1:5678/api/v1/workflows/FinAssetBehav001 \
+  -H "X-N8N-API-KEY: ${N8N_API_KEY}" \
+  | jq '.connections | keys'
+# enthält "Every 2 min" und "Cooldown 60s", keine 5-min-Namen.
+
+# Cron lebt:
+n8n UI → Executions: ein neuer Run alle 2 min.
+```
+
+### Phase B — RAG-Aktivierung (3–5 Tage) ✅ DONE 16.05.2026
+
+5. ✅ **`app/qdrant_rag.py`** — neuer, unifizierter Read/Write-Layer
+   für *alle* sechs finance-Collections:
+   * Read: `search_assets`, `search_news`, `search_social`,
+     `search_asset_analyses`, `search_relations`,
+     `search_strategy_lessons`.
+   * Write: `upsert_relation` (Phase E entrypoint),
+     `upsert_strategy_lesson` (Phase C entrypoint).
+   * Bootstrap: `ensure_relations_collection`,
+     `ensure_lessons_collection` mit Payload-Indizes
+     (`theme/entities/symbols/sectors/mechanism/confidence/ts_unix`
+     für relations; `strategy/outcome/pnl_pct/ts_unix` für
+     lessons).
+   * Status: `collection_status()` listet exists/points/dim für
+     alle sechs — wird von `GET /rag/status` exponiert.
+6. ✅ **`DecisionContext`** um sechs Callables erweitert
+   (`get_assets_rag`, `get_news_rag`, `get_social_rag`,
+   `get_analysis_rag`, `get_relations_rag`,
+   `get_strategy_lessons_rag`). Default = `None`, Strategien
+   prüfen explizit, damit alte Plugins beim Import nicht crashen.
+7. ✅ **`orchestrator._build_context`** verdrahtet alle sechs in
+   die `DecisionContext`-Instanz.
+8. ✅ **`news_sentiment`-Strategie** demonstriert RAG-Nutzung:
+   pro Signal wird `_rag_evidence(ctx, symbol, …)` aufgerufen
+   und steckt Top-3 `finance_asset_analysis`-Treffer + Top-3
+   `finance_news`-Treffer + Top-2 `finance_relations`-Treffer
+   in `signal.extra["rag"]`. Fehlerresistent — leere Listen wenn
+   Qdrant nicht erreichbar.
+9. ✅ **`orchestrator.run_strategy_once()`** propagiert
+   `sig.extra` ins `executed`-Cycle-Log → DoD §10/B erfüllt:
+   jedes ausgeführte Signal trägt im Cycle-Log mindestens einen
+   RAG-Eintrag (mindestens leere Listen, sobald Collections
+   gefüllt sind echte Treffer).
+10. ✅ **Bearer-guarded Write-Endpoints** für die Phase-D/E-Workflows:
+    * `POST /rag/relation` (n8n Phase-E `13-finance-causal-extraction`)
+    * `POST /rag/strategy-lesson` (Phase-C `weekly_audit` ruft das
+      gleichermaßen + die n8n-Phase-D-Workflows können archivieren).
+11. ✅ **Read-Endpoints** offen (dream-network internal, kein
+    Bearer): `/rag/{news,social,asset-analysis,relations,strategy-lessons}`
+    (POST mit `query`+Filtern) und `/rag/status` (GET).
+12. ✅ **Env-Vars** (Defaults konservativ):
+    * `FINANCE_ASSETS_COLLECTION=finance_assets`
+    * `FINANCE_SOCIAL_COLLECTION=finance_social`
+    * `FINANCE_RELATIONS_COLLECTION=finance_relations`
+    * `FINANCE_STRATEGY_LESSONS_COLLECTION=finance_strategy_lessons`
+    * `FINANCE_GURU_RAG_TOPK=10`
+    * Compose-Defaults gesetzt; `.env`-Override optional.
+
+**Smoke-Test-Checkliste (Phase B):**
+
+```
+# Status der RAG-Collections:
+curl -s http://127.0.0.1:8098/rag/status | jq
+# erwartet: 6 Einträge; assets/news/social/asset_analysis sollten
+# exists:true sein, relations/lessons noch exists:false bis Phase E
+# / Phase C sie schreiben.
+
+# Semantische Suche über Asset-Analysen (sofortiger Hit, da n8n
+# Workflow 09 die Collection füllt):
+curl -s -X POST http://127.0.0.1:8098/rag/asset-analysis \
+  -H "Content-Type: application/json" \
+  -d '{"query":"ETF inflow positive sentiment","limit":3}' | jq '.count, .hits[0]'
+
+# Semantische Suche über News:
+curl -s -X POST http://127.0.0.1:8098/rag/news \
+  -H "Content-Type: application/json" \
+  -d '{"query":"interest rate cut Federal Reserve","limit":3}' | jq '.count'
+
+# Strategy-Lesson schreiben + suchen (Bearer required):
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+curl -s -X POST http://127.0.0.1:8098/rag/strategy-lesson \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"strategy":"smoke_test","outcome":"note","lesson":"smoke-test lesson body","keywords":["smoke","test"]}'
+curl -s -X POST http://127.0.0.1:8098/rag/strategy-lessons \
+  -H "Content-Type: application/json" \
+  -d '{"query":"smoke test","limit":3}' | jq
+
+# Cycle-Log mit RAG-Evidence (DoD §10/B):
+curl -s -X POST http://127.0.0.1:8098/decide \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"strategy":"news_sentiment"}'
+# nach einer Minute:
+curl -s "http://127.0.0.1:8098/cycles?strategy=news_sentiment&limit=1" \
+  | jq '.cycles[0].payload.executed[0].extra.rag'
+# erwartet: {symbol, seed, analyses:[…], news:[…], relations:[…]}
+```
+
+**Lessons learned aus Phase B:**
+
+* Wir mussten doppelt einbinden: `qdrant_sink.py` ist das
+  bestehende Write-Modul (asset_analysis + source-weight-Patch),
+  `qdrant_rag.py` das neue Read+Write-Modul für die zusätzlichen
+  Collections. Beide teilen die `tei_embed`-Logik trivial und
+  bleiben getrennt, damit der Hot-Write-Pfad keine RAG-Imports
+  zieht und die Bootstrap-Reihenfolge (Sink → Collection → Embed
+  → Upsert) klar dokumentiert bleibt.
+* `DecisionContext`-Callables sind alle optional (`= None`).
+  Strategien müssen `if ctx.get_news_rag is None: skip` prüfen.
+  Vorteil: alte Plugins (`momentum_breakout`, `social_buzz`)
+  laufen ungebremst weiter, neue können selektiv RAG ziehen.
+* Cycle-Log `payload_json` enthält jetzt `executed[].extra.rag`.
+  Bei vielen Trades pro Cycle wächst die Spalte — falls das in
+  Produktion zum Problem wird, bei `cycle_log.record()` ein
+  zusätzliches Trimming auf z.B. die 3 stärksten Hits pro Block
+  einziehen. Aktuell unproblematisch (≤ 3 buys + ≤ N sells pro
+  Cycle, je ≤ 8 kleine Treffer).
+* `qdrant_rag.collection_status()` ist defensiv: wenn ein einzelner
+  Collection-Check exceptet, wird ein Fehler-Row mit `exists:false`
+  zurückgegeben statt die ganze Antwort zu killen.
+
+
 
 ### Phase C — Strategie-Lifecycle (5–7 Tage)
 

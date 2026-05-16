@@ -51,6 +51,20 @@ class DecisionContext:
     get_asset_analysis: Callable[[str, int], list[dict]] = field(default=None)  # type: ignore
     get_source_weight:  Callable[[str], dict | None] = field(default=None)      # type: ignore
 
+    # ── RAG read-helpers (Phase B) ──────────────────────────────────────
+    # All return list[dict] of `{score, ...payload}`; empty list if the
+    # backing collection is unreachable or hasn't been populated yet.
+    # Signatures use kwargs-only on the callable to keep call-sites
+    # self-documenting:
+    #   ctx.get_news_rag("Iran tanker disruption", symbols=["BP","XOM"])
+    #   ctx.get_relations_rag("rate cut", min_confidence=0.4)
+    get_assets_rag:           Callable[..., list[dict]] = field(default=None)  # type: ignore
+    get_news_rag:             Callable[..., list[dict]] = field(default=None)  # type: ignore
+    get_social_rag:           Callable[..., list[dict]] = field(default=None)  # type: ignore
+    get_analysis_rag:         Callable[..., list[dict]] = field(default=None)  # type: ignore
+    get_relations_rag:        Callable[..., list[dict]] = field(default=None)  # type: ignore
+    get_strategy_lessons_rag: Callable[..., list[dict]] = field(default=None)  # type: ignore
+
 
 @dataclass
 class Signal:

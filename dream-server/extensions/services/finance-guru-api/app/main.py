@@ -36,7 +36,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from . import backtest, cycle_log, data, enrichment, ledger, orchestrator, qdrant_sink
+from . import backtest, cycle_log, data, enrichment, ledger, orchestrator, qdrant_rag, qdrant_sink
 from .config import CFG
 from .strategies import REGISTRY, discover_strategies
 
@@ -465,6 +465,168 @@ def search_asset_analyses(req: AnalysisSearchReq) -> dict:
         min_confidence=req.min_confidence,
     )
     return {"query": req.query, "hits": hits, "count": len(hits)}
+
+
+# --------------------------------------------------------------------------- #
+# RAG endpoints — read-side unification across every finance collection.
+# Open (read-only, dream-network internal). Writes are bearer-guarded.
+# --------------------------------------------------------------------------- #
+class RagQueryBase(BaseModel):
+    query: str = Field(..., min_length=1, max_length=400)
+    limit: int = Field(10, ge=1, le=50)
+    symbols: list[str] | None = None
+
+
+class NewsRagReq(RagQueryBase):
+    since_hours: int | None = Field(default=None, ge=1, le=24 * 365)
+    min_sentiment_abs: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_source_weight: float | None = Field(default=None, ge=0.0, le=2.0)
+
+
+class SocialRagReq(RagQueryBase):
+    since_hours: int | None = Field(default=None, ge=1, le=24 * 365)
+    min_score: int | None = Field(default=None, ge=0)
+
+
+class AnalysisRagReq(RagQueryBase):
+    min_confidence: float = Field(0.0, ge=0.0, le=1.0)
+
+
+class RelationsRagReq(RagQueryBase):
+    sectors: list[str] | None = None
+    min_confidence: float = Field(0.0, ge=0.0, le=1.0)
+    since_hours: int | None = Field(default=None, ge=1, le=24 * 365)
+
+
+class LessonsRagReq(RagQueryBase):
+    strategies: list[str] | None = None
+    outcomes: list[str] | None = None
+
+
+def _since(hours: int | None) -> dt.datetime | None:
+    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
+            if hours else None)
+
+
+@app.post("/rag/news")
+def rag_news(req: NewsRagReq) -> dict:
+    hits = qdrant_rag.search_news(
+        req.query, limit=req.limit,
+        symbols=[s.upper() for s in (req.symbols or [])] or None,
+        since=_since(req.since_hours),
+        min_sentiment_abs=req.min_sentiment_abs,
+        min_source_weight=req.min_source_weight,
+    )
+    return {"query": req.query, "hits": hits, "count": len(hits)}
+
+
+@app.post("/rag/social")
+def rag_social(req: SocialRagReq) -> dict:
+    hits = qdrant_rag.search_social(
+        req.query, limit=req.limit,
+        symbols=[s.upper() for s in (req.symbols or [])] or None,
+        since=_since(req.since_hours),
+        min_score=req.min_score,
+    )
+    return {"query": req.query, "hits": hits, "count": len(hits)}
+
+
+@app.post("/rag/asset-analysis")
+def rag_analysis(req: AnalysisRagReq) -> dict:
+    hits = qdrant_rag.search_asset_analyses(
+        req.query, limit=req.limit,
+        symbols=[s.upper() for s in (req.symbols or [])] or None,
+        min_confidence=req.min_confidence,
+    )
+    return {"query": req.query, "hits": hits, "count": len(hits)}
+
+
+@app.post("/rag/relations")
+def rag_relations(req: RelationsRagReq) -> dict:
+    hits = qdrant_rag.search_relations(
+        req.query, limit=req.limit,
+        symbols=[s.upper() for s in (req.symbols or [])] or None,
+        sectors=req.sectors or None,
+        min_confidence=req.min_confidence,
+        since=_since(req.since_hours),
+    )
+    return {"query": req.query, "hits": hits, "count": len(hits)}
+
+
+@app.post("/rag/strategy-lessons")
+def rag_lessons(req: LessonsRagReq) -> dict:
+    hits = qdrant_rag.search_strategy_lessons(
+        req.query, limit=req.limit,
+        strategies=req.strategies or None,
+        outcomes=req.outcomes or None,
+    )
+    return {"query": req.query, "hits": hits, "count": len(hits)}
+
+
+@app.get("/rag/status")
+def rag_status() -> dict:
+    return {"collections": qdrant_rag.collection_status()}
+
+
+# --- Write-side for the new collections (Phase D/E entry points) ----------- #
+class RelationIn(BaseModel):
+    theme: str = Field(..., min_length=1, max_length=200)
+    summary: str = ""
+    entities: list[str] = Field(default_factory=list)
+    sectors:  list[str] = Field(default_factory=list)
+    symbols:  list[str] = Field(default_factory=list)
+    mechanism: str | None = None
+    evidence_ids: list[str | int] = Field(default_factory=list)
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    model: str | None = None
+
+
+@app.post("/rag/relation", status_code=status.HTTP_201_CREATED)
+def store_relation(payload: RelationIn,
+                   authorization: str | None = Header(default=None)) -> dict:
+    _check_token(authorization)
+    ok = qdrant_rag.upsert_relation(
+        theme=payload.theme.strip(),
+        summary=payload.summary,
+        entities=payload.entities,
+        sectors=payload.sectors,
+        symbols=payload.symbols,
+        mechanism=payload.mechanism,
+        evidence_ids=payload.evidence_ids,
+        confidence=payload.confidence,
+        model=payload.model,
+    )
+    if not ok:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "qdrant sink disabled or embed failed")
+    return {"theme": payload.theme.strip(), "stored": True}
+
+
+class StrategyLessonIn(BaseModel):
+    strategy: str = Field(..., min_length=1, max_length=80)
+    outcome: Literal["retired", "promoted", "archived", "note"] = "note"
+    pnl_pct: float | None = None
+    lesson: str = Field(..., min_length=1, max_length=4000)
+    keywords: list[str] = Field(default_factory=list)
+    extra: dict | None = None
+
+
+@app.post("/rag/strategy-lesson", status_code=status.HTTP_201_CREATED)
+def store_strategy_lesson(payload: StrategyLessonIn,
+                          authorization: str | None = Header(default=None)) -> dict:
+    _check_token(authorization)
+    ok = qdrant_rag.upsert_strategy_lesson(
+        strategy=payload.strategy.strip(),
+        outcome=payload.outcome,
+        pnl_pct=payload.pnl_pct,
+        lesson_text=payload.lesson,
+        keywords=payload.keywords,
+        extra=payload.extra,
+    )
+    if not ok:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "qdrant sink disabled or embed failed")
+    return {"strategy": payload.strategy.strip(), "stored": True}
 
 
 # --------------------------------------------------------------------------- #

@@ -130,6 +130,7 @@ def decide(ctx: DecisionContext) -> list[Signal]:
         # Passing qty=0 would be ambiguous — pass a sentinel of 1.0 unit and
         # let the orchestrator scale; here we instead set `extra.eur_target`
         # so the orchestrator can do max-frac sizing by EUR.
+        rag_block = _rag_evidence(ctx, sym, rows["title"].head(3).tolist())
         signals.append(Signal(
             symbol=sym,
             action="buy",
@@ -137,9 +138,66 @@ def decide(ctx: DecisionContext) -> list[Signal]:
             confidence=min(1.0, score),
             risk=1.0 - min(1.0, score),
             reason=_summarise_reason(sym, "buy", rows["title"].head(3).tolist()),
-            extra={"score": round(score, 3), "eur_target": "max_position_frac"},
+            extra={"score": round(score, 3),
+                   "eur_target": "max_position_frac",
+                   "rag": rag_block},
         ))
+    # Mirror the RAG enrichment onto sell signals so the cycle drill-down
+    # always shows *why* the model held the prior view, even when selling.
+    for sig in signals:
+        if sig.action == "sell" and "rag" not in (sig.extra or {}):
+            sig.extra["rag"] = _rag_evidence(ctx, sig.symbol, [])
     return signals
+
+
+def _rag_evidence(ctx: DecisionContext, symbol: str,
+                  headlines: list[str]) -> dict:
+    """Pull a small bundle of vector-search hits to back the trade.
+
+    Phase B contract: every signal carries at least one RAG entry in
+    `extra.rag` when the collections are reachable. Hits are tiny
+    payloads (score + a couple of payload fields) so cycle_log stays
+    small.
+    """
+    if ctx.get_news_rag is None:
+        return {"reason": "rag helpers unavailable"}
+    seed = headlines[0] if headlines else f"recent drivers for {symbol}"
+    bundle: dict = {"symbol": symbol, "seed": seed[:120]}
+    try:
+        analyses = (ctx.get_analysis_rag or (lambda *_a, **_k: []))(
+            seed, limit=3, symbols=[symbol], min_confidence=0.0)
+        bundle["analyses"] = [{
+            "score":   round(h.get("score", 0.0), 3),
+            "summary": (h.get("summary") or "")[:160],
+            "confidence": h.get("confidence"),
+            "ts": h.get("ts"),
+        } for h in analyses[:3]]
+    except Exception:  # noqa: BLE001
+        bundle["analyses"] = []
+    try:
+        news_hits = ctx.get_news_rag(
+            seed, limit=3, symbols=[symbol],
+            since=ctx.now - dt.timedelta(days=14))
+        bundle["news"] = [{
+            "score":  round(h.get("score", 0.0), 3),
+            "title":  (h.get("title") or "")[:140],
+            "source": h.get("source"),
+            "ts":     h.get("ts"),
+        } for h in news_hits[:3]]
+    except Exception:  # noqa: BLE001
+        bundle["news"] = []
+    try:
+        rels = (ctx.get_relations_rag or (lambda *_a, **_k: []))(
+            seed, limit=2, symbols=[symbol])
+        bundle["relations"] = [{
+            "score":      round(h.get("score", 0.0), 3),
+            "theme":      h.get("theme"),
+            "mechanism":  h.get("mechanism"),
+            "confidence": h.get("confidence"),
+        } for h in rels[:2]]
+    except Exception:  # noqa: BLE001
+        bundle["relations"] = []
+    return bundle
 
 
 def _news_for(news_df: pd.DataFrame, symbol: str) -> pd.DataFrame:

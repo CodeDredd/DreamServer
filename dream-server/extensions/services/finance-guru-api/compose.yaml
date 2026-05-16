@@ -48,6 +48,16 @@ services:
       - EMBEDDINGS_URL=${EMBEDDINGS_URL:-http://embeddings:80}
       - FINANCE_ASSET_ANALYSIS_COLLECTION=${FINANCE_ASSET_ANALYSIS_COLLECTION:-finance_asset_analysis}
       - FINANCE_NEWS_COLLECTION=${FINANCE_NEWS_COLLECTION:-finance_news}
+      # ── RAG read-side (Phase B) ─────────────────────────────────────
+      # Collections written by sibling services are read here unchanged;
+      # the two new collections (`finance_relations`,
+      # `finance_strategy_lessons`) are owned by finance-guru-api and
+      # bootstrap on first write (Phase D/E + weekly_audit).
+      - FINANCE_ASSETS_COLLECTION=${FINANCE_ASSETS_COLLECTION:-finance_assets}
+      - FINANCE_SOCIAL_COLLECTION=${FINANCE_SOCIAL_COLLECTION:-finance_social}
+      - FINANCE_RELATIONS_COLLECTION=${FINANCE_RELATIONS_COLLECTION:-finance_relations}
+      - FINANCE_STRATEGY_LESSONS_COLLECTION=${FINANCE_STRATEGY_LESSONS_COLLECTION:-finance_strategy_lessons}
+      - FINANCE_GURU_RAG_TOPK=${FINANCE_GURU_RAG_TOPK:-10}
       - FINANCE_GURU_QDRANT_SINK=${FINANCE_GURU_QDRANT_SINK:-1}
     volumes:
       - ./data/finance-guru-api:/data
