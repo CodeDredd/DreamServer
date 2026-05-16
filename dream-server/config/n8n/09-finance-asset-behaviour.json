@@ -107,7 +107,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Merge stock + crypto universe and keep asset_type tagging.\nconst u = items.map(it => ({\n  symbols: (it.json.symbols || []).slice(0, 200),\n  asset_type: (it.json.asset_type || 'stock')\n}));\nreturn [{ json: { universes: u } }];"
+        "jsCode": "// Combine stock + crypto universes after both GET calls completed.\n// Uses $('node').first() because the workflow is now sequential \u2014\n// no real Merge node needed, both universes are already on the\n// execution trace by the time this Code node runs.\nconst stocks = $('GET universe (stocks)').first().json || {};\nconst crypto = $('GET universe (crypto)').first().json || {};\nreturn [{ json: { universes: [\n  { symbols: (stocks.symbols || []).slice(0, 200), asset_type: 'stock' },\n  { symbols: (crypto.symbols || []).slice(0, 200), asset_type: 'crypto' }\n]}}];"
       },
       "id": "merge_universe",
       "name": "Merge universe",
@@ -137,7 +137,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ asset_type: 'stock', stale_after_hours: 168, universe: $json.universes[0].symbols }) }}",
+        "jsonBody": "={{ JSON.stringify({ asset_type: 'stock', stale_after_hours: 168, universe: $('Merge universe').first().json.universes[0].symbols }) }}",
         "options": {
           "timeout": 8000,
           "response": {
@@ -176,7 +176,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ asset_type: 'crypto', stale_after_hours: 168, universe: $json.universes[1] ? $json.universes[1].symbols : [] }) }}",
+        "jsonBody": "={{ JSON.stringify({ asset_type: 'crypto', stale_after_hours: 168, universe: $('Merge universe').first().json.universes[1].symbols }) }}",
         "options": {
           "timeout": 8000,
           "response": {
@@ -198,7 +198,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Pick the first asset_type that produced a candidate.\n// If both empty -> we're caught up; mark as skipped and stop the\n// branch (later 'Stop or skip' guard handles it).\nconst stock = $items('Next candidate (stocks)')[0]?.json?.next || null;\nconst crypto = $items('Next candidate (crypto)')[0]?.json?.next || null;\nlet symbol = null, assetType = null;\nif (stock) { symbol = stock; assetType = 'stock'; }\nelse if (crypto) { symbol = crypto; assetType = 'crypto'; }\nif (!symbol) {\n  return [{ json: { skip: true, reason: 'no stale candidate' } }];\n}\nreturn [{ json: { skip: false, symbol, asset_type: assetType, days: 180 } }];"
+        "jsCode": "// Pick the first asset_type that produced a candidate.\n// Sequential chain guarantees both 'Next candidate' nodes have\n// run by the time we get here.\nconst stock  = $('Next candidate (stocks)').first()?.json?.next || null;\nconst crypto = $('Next candidate (crypto)').first()?.json?.next || null;\nlet symbol = null, assetType = null;\nif (stock)       { symbol = stock;  assetType = 'stock';  }\nelse if (crypto) { symbol = crypto; assetType = 'crypto'; }\nif (!symbol) {\n  return [{ json: { skip: true, reason: 'no stale candidate' } }];\n}\nreturn [{ json: { skip: false, symbol, asset_type: assetType, days: 180 } }];"
       },
       "id": "pick",
       "name": "Pick candidate",
@@ -620,11 +620,6 @@
             "node": "GET universe (stocks)",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "GET universe (crypto)",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -636,11 +631,6 @@
             "node": "GET universe (stocks)",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "GET universe (crypto)",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -649,7 +639,7 @@
       "main": [
         [
           {
-            "node": "Merge universe",
+            "node": "GET universe (crypto)",
             "type": "main",
             "index": 0
           }
@@ -674,11 +664,6 @@
             "node": "Next candidate (stocks)",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Next candidate (crypto)",
-            "type": "main",
-            "index": 0
           }
         ]
       ]
@@ -687,7 +672,7 @@
       "main": [
         [
           {
-            "node": "Pick candidate",
+            "node": "Next candidate (crypto)",
             "type": "main",
             "index": 0
           }
