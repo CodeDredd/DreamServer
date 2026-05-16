@@ -21,6 +21,12 @@ services:
       - N8N_SECURE_COOKIE=${N8N_SECURE_COOKIE:-false}
       - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678}
       - GENERIC_TIMEZONE=${TIMEZONE:-UTC}
+      # Allow workflow nodes to read process env via {{ $env.NAME }}.
+      # n8n blocks this by default since 1.x for safety; we intentionally
+      # opt back in because every built-in workflow under config/n8n/*.json
+      # authenticates downstream services with bearer tokens injected via
+      # the environment (FINANCE_*_TOKEN, OPENCLAW_TOKEN, VIKUNJA_API_TOKEN…).
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       # Tokens consumed by built-in workflows (see config/n8n/*.json).
       # n8n exposes process env to Code/HTTP nodes via {{ $env.NAME }}.
       - VIKUNJA_API_TOKEN=${VIKUNJA_API_TOKEN:-}
