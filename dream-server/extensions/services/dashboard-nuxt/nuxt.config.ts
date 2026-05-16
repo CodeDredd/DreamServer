@@ -53,6 +53,16 @@ export default defineNuxtConfig({
     fonts: false, // Wir verwenden System-Fonts (JetBrains Mono).
   },
 
+  // Nuxt Icon: lokale Collections bevorzugen und Server-Bundle nutzen,
+  // damit Icons schon zur Build-Zeit aufgeloest werden. CDN-Fallback
+  // bleibt erlaubt (siehe CSP `connect-src: api.iconify.design`), wird
+  // aber nur fuer Collections gebraucht, die wir nicht lokal haben.
+  icon: {
+    serverBundle: { collections: ['lucide'] },
+    clientBundle: { scan: true, includeCustomCollections: true, sizeLimitKb: 512 },
+    provider: 'iconify',
+  },
+
 
 
   // Server-only secrets via runtimeConfig (Bearer wird in
@@ -173,7 +183,12 @@ export default defineNuxtConfig({
         'style-src': ['\'self\'', '\'unsafe-inline\''],
         'img-src': ['\'self\'', 'data:', 'blob:'],
         'font-src': ['\'self\'', 'data:'],
-        'connect-src': ['\'self\''],
+        // Iconify CDN: Nuxt-UI/Nuxt-Icon faellt zur Laufzeit auf
+        // https://api.iconify.design zurueck, wenn ein Icon nicht in
+        // der lokalen `@iconify-json/lucide`-Collection enthalten ist.
+        // Ohne diese Whitelist landen alle nicht-bundled Icons im
+        // Browser-Console-CSP-Block.
+        'connect-src': ['\'self\'', 'https://api.iconify.design'],
         'media-src': ['\'self\'', 'blob:'],
         'frame-ancestors': ['\'none\''],
         'base-uri': ['\'self\''],

@@ -22,7 +22,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["lotto"])
 
-_TIMEOUT = httpx.Timeout(20.0, connect=5.0)
+# Jackpot-Backtest (10 Jahre × 7 Strategien) braucht regelmaessig ~10 s,
+# beim Cold-Start mit Cache-Warmup auch laenger. Optimal-Schein zieht
+# Cache aus latest_tip_run und ist normalerweise <100 ms, faellt aber
+# auf score_all_strategies zurueck wenn der Cache leer ist (~5 s).
+# 60 s gibt beiden genug Headroom; Browser-fetch wartet ohnehin laenger.
+_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 
 
 def _bearer_headers() -> dict:
