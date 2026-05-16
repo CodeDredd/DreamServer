@@ -4006,6 +4006,8 @@ ${CYAN}Commands:${NC}
   check-image-updates Compare image: pins against upstream registries (alias: check-images)
   agent [action]      Manage dream host agent (status|start|stop|restart|logs)
   sync-from-repo      Sync repo working copy into install dir (alias: sync)
+  finance <sub>       Finance Guru helpers — catalog|propose|evaluate|lifecycle|status
+                      (alias: 'dream finance-propose <file.json>')
   help                Show this help
 
 ${CYAN}Preset Commands:${NC}
@@ -4091,6 +4093,11 @@ ${CYAN}Examples:${NC}
   dream agent restart             # Restart host agent
   dream sync-from-repo --dry-run  # Preview repo→install sync
   dream sync --restart n8n        # Sync repo and restart n8n
+  dream finance catalog           # Show DSL signal whitelist + genesis gate + quota
+  dream finance propose strat.json --name my_pattern --sync
+                                  # Propose a DSL strategy and run the backtest gate synchronously
+  dream finance lifecycle --kind generated  # List generated strategies + status
+  dream finance status my_pattern # Combined meta + recent audits for one strategy
 
 ${CYAN}Environment:${NC}
   DREAM_HOME          Installation directory (default: ~/dream-server)
@@ -4099,6 +4106,178 @@ ${CYAN}Environment:${NC}
 EOF
 }
 
+#=============================================================================
+# Finance Guru — operator helpers (Phase D)
+#
+# Talks to the finance-guru-api service on 127.0.0.1:${FINANCE_GURU_PORT:-8098}
+# using FINANCE_GURU_TOKEN from ${DREAM_HOME}/.env. Wraps the HTTP endpoints
+# the dashboard and n8n workflows use so a human can quickly:
+#   * Inspect the DSL signal catalog + gate + quota
+#   * Propose a JSON file as a new generated strategy
+#   * Manually trigger the backtest+promote pipeline
+#   * List generated strategies and audit trail
+#=============================================================================
+_finance_base_url() {
+    local port="${FINANCE_GURU_PORT:-8098}"
+    printf 'http://127.0.0.1:%s' "$port"
+}
+_finance_require_token() {
+    if [[ -z "${FINANCE_GURU_TOKEN:-}" ]]; then
+        error "FINANCE_GURU_TOKEN is empty - set it in ${DREAM_HOME:-~/dream-server}/.env (used by /strategies/propose and /strategies/{name}/evaluate)"
+    fi
+}
+# _finance_curl <METHOD> <PATH> [BODY_FILE] [--no-auth]
+# Single curl helper that adds the bearer header unless --no-auth is passed
+# and attaches a JSON body from a file when BODY_FILE is non-empty.
+_finance_curl() {
+    local method="$1" path="$2" body="${3:-}" auth="${4:-with-auth}"
+    local url; url="$(_finance_base_url)${path}"
+    local args=( --silent --show-error --max-time 60 -X "$method" "$url" )
+    if [[ "$auth" != "--no-auth" ]]; then
+        _finance_require_token
+        args+=( -H "Authorization: Bearer ${FINANCE_GURU_TOKEN}" )
+    fi
+    if [[ -n "$body" ]]; then
+        args+=( -H "Content-Type: application/json" --data-binary "@${body}" )
+    fi
+    curl "${args[@]}"
+}
+cmd_finance() {
+    check_install
+    load_env
+    local sub="${1:-help}"; shift || true
+    case "$sub" in
+        catalog|cat)
+            local resp
+            resp="$(_finance_curl GET /strategies/dsl/catalog "" --no-auth)" \
+                || error "finance-guru-api unreachable at $(_finance_base_url)"
+            if command -v jq >/dev/null 2>&1; then
+                printf '%s' "$resp" | jq .
+            else
+                printf '%s\n' "$resp"
+            fi
+            ;;
+        propose)
+            local file="" name="" backtest="true" sync_eval="false"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --name)         name="$2"; shift 2 ;;
+                    --no-backtest)  backtest="false"; shift ;;
+                    --sync)         sync_eval="true"; shift ;;
+                    -h|--help)
+                        cat <<'PROPOSE_USAGE'
+Usage: dream finance propose <dsl.json> [--name NAME] [--no-backtest] [--sync]
+  <dsl.json>      Either the full request body { "name": ..., "source": {...} }
+                  OR just the DSL source itself { "version": 1, "rules": [...] }
+                  (use --name in that case).
+  --name NAME     Strategy name (overrides any name in the file).
+  --no-backtest   Skip the auto-backtest gate (row stays in 'proposed').
+  --sync          After propose, immediately POST /strategies/<name>/evaluate?sync=true
+                  so the genesis result is returned in the same response.
+PROPOSE_USAGE
+                        return 0
+                        ;;
+                    -*)             error "unknown flag: $1" ;;
+                    *)              file="$1"; shift ;;
+                esac
+            done
+            [[ -n "$file" ]]   || error "missing <dsl.json> path. Run 'dream finance propose --help'."
+            [[ -f "$file" ]]   || error "file not found: $file"
+            command -v jq >/dev/null 2>&1 || error "jq is required for 'dream finance propose'"
+            local payload tmp
+            tmp="$(mktemp)"
+            if jq -e '.source and .name' "$file" >/dev/null 2>&1; then
+                if [[ -n "$name" ]]; then
+                    payload="$(jq --arg n "$name" '.name=$n' "$file")"
+                else
+                    payload="$(cat "$file")"
+                fi
+            else
+                [[ -n "$name" ]] || error "file has no top-level .name -- pass --name NAME"
+                payload="$(jq --arg n "$name" '{name:$n, source:.}' "$file")"
+            fi
+            printf '%s' "$payload" >"$tmp"
+            local url_path="/strategies/propose"
+            [[ "$backtest" == "false" ]] && url_path="${url_path}?auto_backtest=false"
+            log "POST ${url_path}"
+            local resp
+            resp="$(_finance_curl POST "$url_path" "$tmp")"
+            rm -f "$tmp"
+            printf '%s' "$resp" | jq .
+            if [[ "$sync_eval" == "true" ]]; then
+                local final_name
+                final_name="$(printf '%s' "$resp" | jq -r '.name // empty')"
+                if [[ -z "$final_name" ]]; then
+                    warn "propose response carried no .name (likely an error) -- skipping --sync"
+                    return 0
+                fi
+                log "POST /strategies/${final_name}/evaluate?sync=true"
+                _finance_curl POST "/strategies/${final_name}/evaluate?sync=true" | jq .
+            fi
+            ;;
+        evaluate|eval)
+            local name="" sync_eval="false"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --sync)  sync_eval="true"; shift ;;
+                    -*)      error "unknown flag: $1" ;;
+                    *)       name="$1"; shift ;;
+                esac
+            done
+            [[ -n "$name" ]] || error "usage: dream finance evaluate <name> [--sync]"
+            local q=""
+            [[ "$sync_eval" == "true" ]] && q="?sync=true"
+            _finance_curl POST "/strategies/${name}/evaluate${q}" | jq .
+            ;;
+        lifecycle|ls)
+            local kind="" stat="" limit="50"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --kind)   kind="$2"; shift 2 ;;
+                    --status) stat="$2"; shift 2 ;;
+                    --limit)  limit="$2"; shift 2 ;;
+                    *)        error "unknown flag: $1" ;;
+                esac
+            done
+            local qs="?limit=${limit}"
+            [[ -n "$kind"  ]] && qs="${qs}&kind=${kind}"
+            [[ -n "$stat"  ]] && qs="${qs}&status=${stat}"
+            _finance_curl GET "/strategies/lifecycle${qs}" "" --no-auth \
+                | jq '.strategies[] | {name, kind, status, bt_pnl_pct, bt_n_trades, created_at}'
+            ;;
+        status|info)
+            local name="${1:-}"
+            [[ -n "$name" ]] || error "usage: dream finance status <name>"
+            local meta audits
+            meta="$(_finance_curl GET "/strategies/lifecycle?limit=500" "" --no-auth \
+                    | jq --arg n "$name" '.strategies[] | select(.name==$n)')"
+            audits="$(_finance_curl GET "/strategies/audits?strategy=${name}&limit=20" "" --no-auth)"
+            jq -n --argjson m "${meta:-null}" --argjson a "${audits:-{}}" \
+                '{meta:$m, audits:$a}'
+            ;;
+        help|--help|-h|"")
+            cat <<'FINHELP'
+dream finance <subcommand> [options]
+Subcommands:
+  catalog                     GET /strategies/dsl/catalog   (signals, ops, sizing, gate, quota)
+  propose <file.json>         POST /strategies/propose      (validates DSL + queues backtest)
+        [--name NAME]              required if <file.json> is bare DSL (no top-level .name)
+        [--no-backtest]            skip the auto-backtest gate
+        [--sync]                   after propose, also POST /evaluate?sync=true
+  evaluate <name> [--sync]    POST /strategies/<name>/evaluate (manual backtest re-run)
+  lifecycle [--kind K]        GET /strategies/lifecycle
+        [--status S] [--limit N]
+  status <name>               combined view of meta + recent audits
+Env:
+  FINANCE_GURU_TOKEN          bearer token (required for propose / evaluate)
+  FINANCE_GURU_PORT           service port (default 8098)
+FINHELP
+            ;;
+        *)
+            error "unknown 'dream finance' subcommand: $sub (run 'dream finance help')"
+            ;;
+    esac
+}
 #=============================================================================
 # Sync working copy of the repo into the install dir
 #=============================================================================
@@ -4251,6 +4430,8 @@ case "${1:-help}" in
     check-image-updates|check-images|images-check) shift; cmd_check_image_updates "$@" ;;
     template|tmpl) shift; cmd_template "$@" ;;
     agent)        shift; cmd_agent "$@" ;;
+    finance|fin) shift; cmd_finance "$@" ;;
+    finance-propose) shift; cmd_finance propose "$@" ;;
     sync-from-repo|sync) shift; cmd_sync "$@" ;;
     help|h|--help|-h) cmd_help ;;
     version|v|--version|-v) echo "dream-cli v${VERSION}" ;;

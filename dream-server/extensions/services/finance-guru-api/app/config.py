@@ -80,6 +80,14 @@ class GuruConfig:
         "FINANCE_GURU_GENESIS_MIN_BT_PCT", "4.0")))
     genesis_min_backtest_trades: int = field(default_factory=lambda: int(os.getenv(
         "FINANCE_GURU_GENESIS_MIN_BT_TRADES", "5")))
+    # Genesis safety quota: maximum number of `kind='generated'` proposals
+    # accepted within a rolling window. 0 disables the quota (back-compat
+    # for the original Phase D ship). The default 25/7d matches the cron
+    # cadence (4/day × 7d ≈ 28) with a small margin for manual retries.
+    genesis_quota_per_window: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_GENESIS_QUOTA", "25")))
+    genesis_quota_window_days: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_GENESIS_QUOTA_WINDOW_DAYS", "7")))
 
     @property
     def enabled_strategies(self) -> set[str] | None:

@@ -117,6 +117,28 @@ def list_meta(status: Status | None = None,
         return [dict(r) for r in c.execute(" ".join(sql), tuple(args)).fetchall()]
 
 
+def count_recent_proposed(*, days: int, kind: Kind = "generated") -> int:
+    """Count strategies_meta rows of the given kind created within the
+    rolling window. Used by the genesis quota guard so a misbehaving
+    LLM workflow can't flood the lifecycle table.
+
+    Counts ALL transitions (proposed → live AND proposed → archived)
+    since the relevant quantity for the quota is "how many proposals
+    did we accept and run", not "how many are still in 'proposed'
+    status right now"."""
+    if days <= 0:
+        return 0
+    cutoff = (dt.datetime.now(dt.timezone.utc)
+              - dt.timedelta(days=days)).isoformat()
+    with ledger.conn() as c:
+        row = c.execute(
+            "SELECT COUNT(*) AS n FROM strategies_meta "
+            "WHERE kind = ? AND created_at >= ?",
+            (kind, cutoff),
+        ).fetchone()
+    return int(row["n"] if row else 0)
+
+
 def list_audits(strategy: str | None = None, limit: int = 100) -> list[dict]:
     sql = ["SELECT id, ts, strategy, transition, from_status, to_status, "
            "pnl_pct, n_cycles, note, actor FROM strategy_audits WHERE 1=1"]

@@ -734,10 +734,42 @@ n8n UI → Executions → FinStratGenesis001 → letzte Execution:
 
 * **Cycle-Log-Filter `kind=generated`** im Dashboard — wird Teil von
   Phase F (Dashboard-Panels).
-* **Operator-CLI** `dream finance-propose <file.json>` — Nice-to-have,
-  kein Blocker; das Bearer-`curl` aus dem Smoke-Test reicht.
-* **Genesis-Quota** (max N proposed/Woche) — frühestens wenn das
-  Lifecycle-Backlog tatsächlich auf 100+ archived-Rows wächst.
+* ✅ **Operator-CLI** `dream finance <sub>` (16.05.2026, Phase D
+  follow-up) — `cmd_finance` in `dream-cli` mountet `catalog | propose |
+  evaluate | lifecycle | status` als dünne Wrapper auf die HTTP-Endpoints
+  und liest `FINANCE_GURU_TOKEN`/`FINANCE_GURU_PORT` aus `~/dream-server/.env`.
+  `dream finance-propose <file.json>` ist als Alias auf `dream finance
+  propose` registriert, damit die ursprüngliche Plan-Shortform aus §6
+  arbeitet. `--sync` macht direkt im Anschluss `POST /strategies/<n>/evaluate?sync=true`
+  — das Smoke-`curl`-Pattern aus §6 ist damit Ein-Befehl-Ergonomie.
+* ✅ **Genesis-Quota** `FINANCE_GURU_GENESIS_QUOTA` (Default 25 Proposals /
+  rolling 7d) — `lifecycle.count_recent_proposed()` zählt `kind='generated'`-
+  Zeilen im Fenster; `lifecycle_propose` lehnt mit `HTTP 429` ab wenn das
+  Budget erschöpft ist. Quota + `quota_used` werden im Catalog
+  (`/strategies/dsl/catalog.gate`) exponiert, damit der n8n-Verifier in
+  Workflow `12-finance-strategy-genesis.json` den verbleibenden
+  Spielraum sieht (Workflow ist mit `neverError: true` für 4xx
+  vorbereitet — kein Workflow-Patch nötig). 0 deaktiviert die Quota für
+  Back-Compat mit dem ersten Phase-D-Ship.
+
+### Phase D Smoke-Tests (Follow-up)
+
+```
+# Catalog enthält jetzt Quota:
+curl -s http://127.0.0.1:8098/strategies/dsl/catalog | jq '.gate'
+# erwartet: enthält quota_per_window, quota_window_days, quota_used.
+
+# Quota-Block einmal manuell auslösen (Test-Umgebung):
+FINANCE_GURU_GENESIS_QUOTA=1 docker compose up -d finance-guru-api
+dream finance propose /tmp/strat.json --name smoke1   # 201 + queued_backtest=true
+dream finance propose /tmp/strat.json --name smoke2   # 429 "genesis quota exhausted ..."
+
+# Operator-CLI End-to-End:
+dream finance catalog | jq '.gate.quota_per_window'
+dream finance propose /tmp/strat.json --name smoke3 --sync   # propose + evaluate in einem Call
+dream finance lifecycle --kind generated
+dream finance status smoke3
+```
 
 ### Phase D — Strategie-Generator (legacy plan section)
 

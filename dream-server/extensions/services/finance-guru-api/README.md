@@ -248,5 +248,29 @@ next cycle doesn't re-propose the same pattern.
 | `FINANCE_GURU_GENESIS_BT_UNIVERSE`     | `40`  | top-N symbols by row count |
 | `FINANCE_GURU_GENESIS_MIN_BT_PCT`      | `4.0` | min realised %-PnL to promote |
 | `FINANCE_GURU_GENESIS_MIN_BT_TRADES`   | `5`   | min n_trades to promote |
+| `FINANCE_GURU_GENESIS_QUOTA`           | `25`  | max generated proposals accepted per rolling window (0 = unlimited) |
+| `FINANCE_GURU_GENESIS_QUOTA_WINDOW_DAYS` | `7` | rolling-window length (days) for the quota counter |
+
+`/strategies/dsl/catalog` surfaces both the gate (`quota_per_window`,
+`quota_window_days`) and the current `quota_used` count so the n8n
+genesis workflow can render the remaining budget in its `Build brief`
+node. When the quota is exhausted `POST /strategies/propose` responds
+with `HTTP 429`; the workflow's HTTP node is already configured with
+`neverError: true`, so the failure surfaces in the execution log
+without halting the cron.
+
+### Operator CLI shortcuts (`dream finance`)
+
+Implemented in `dream-cli` as `cmd_finance`. All subcommands read
+`FINANCE_GURU_TOKEN` and `FINANCE_GURU_PORT` from `~/dream-server/.env`.
+
+```bash
+dream finance catalog                                    # GET /strategies/dsl/catalog (incl. quota)
+dream finance propose strat.json --name pattern --sync   # POST /strategies/propose + sync evaluate
+dream finance-propose strat.json --name pattern          # alias for the line above (matches Phase D plan §6)
+dream finance evaluate pattern --sync                    # POST /strategies/<n>/evaluate?sync=true
+dream finance lifecycle --kind generated --status live
+dream finance status pattern                             # combined meta + audit trail
+```
 
 

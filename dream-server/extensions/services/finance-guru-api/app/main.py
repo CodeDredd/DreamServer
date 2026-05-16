@@ -815,6 +815,18 @@ def lifecycle_propose(payload: ProposeStrategyIn,
     except strategy_dsl.DslError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             f"DSL validation failed: {exc}")
+    # Quota guard — protect the lifecycle table + backtest worker from a
+    # misbehaving / runaway genesis workflow. 0 quota disables the gate.
+    quota = max(0, int(CFG.genesis_quota_per_window))
+    window = max(1, int(CFG.genesis_quota_window_days))
+    if quota > 0:
+        used = lifecycle.count_recent_proposed(days=window, kind="generated")
+        if used >= quota:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"genesis quota exhausted: {used}/{quota} proposals "
+                f"in the last {window} d (FINANCE_GURU_GENESIS_QUOTA)",
+            )
     try:
         meta = lifecycle.propose(name=name,
                                   source=payload.source,
@@ -869,6 +881,11 @@ def lifecycle_dsl_catalog() -> dict:
             "backtest_days":       CFG.genesis_backtest_days,
             "backtest_step_min":   CFG.genesis_backtest_step_minutes,
             "universe_limit":      CFG.genesis_backtest_universe_limit,
+            "quota_per_window":    CFG.genesis_quota_per_window,
+            "quota_window_days":   CFG.genesis_quota_window_days,
+            "quota_used":          lifecycle.count_recent_proposed(
+                                      days=max(1, CFG.genesis_quota_window_days),
+                                      kind="generated"),
         },
     }
 
