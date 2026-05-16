@@ -179,6 +179,24 @@ ssh sky-net@192.168.178.110 'KEY=$(grep ^QDRANT_API_KEY= ~/dream-server/.env | c
 
 ## 7. Things that bit us before — read these once
 
+* **`dream sync` is additive — renamed/deleted files survive on Halo
+  and silently shadow new code.** When `app/pages/finance-guru.vue`
+  was moved to `app/pages/finance-guru/index.vue` via `git mv`, sync
+  only copied the new file; the old `finance-guru.vue` stayed put in
+  `~/dream-server/extensions/services/dashboard-nuxt/app/pages/`. In
+  Nuxt that makes `finance-guru.vue` the parent layout of the
+  `finance-guru/` directory — and because it never rendered
+  `<NuxtPage />`, every child route only showed the parent's loader
+  ("Lade Finance Guru ..."). Same trap will hit any locally-built
+  service (dashboard, dashboard-nuxt, finance-*, lotto-oracle,
+  dreamforge, …) whenever a source file is renamed.
+  **Whenever you rename or delete a file under a locally-built
+  service, also delete the stale copy on Halo, then rebuild:**
+  ```bash
+  ssh sky-net@192.168.178.110 'rm <path/in/dream-server/...> && \
+    dream restart <svc> --rebuild-images'
+  ```
+
 * **Sync silently flipped service intent.** Before `feat(sync): preserve
   per-service enabled/disabled intent across pulls`, every pull
   re-enabled disabled services and never updated content of
@@ -555,7 +573,7 @@ on the existing 30s `usePolling` loop.
 > `AGENT-OPERATIONS.md` for the operator context (servers, repo
 > layout, daily commands, sync semantics, things that bit us).
 > SSH to the Halo Strix is `sky-net@192.168.178.110` and I have
-> `SSHPASS` exported.  Pi 5 is the `claw-pi5` ssh alias.
+> public key exported.  Pi 5 is the `claw-pi5` ssh alias.
 
 ## 13. Lotto Oracle — second tab inside Finance Guru
 
