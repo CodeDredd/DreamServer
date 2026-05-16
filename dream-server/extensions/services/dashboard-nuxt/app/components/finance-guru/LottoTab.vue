@@ -743,6 +743,8 @@ function statsMainData(game: LottoGame | null): { number?: number, count: number
               </h4>
             </div>
           </template>
+          <ul
+            v-if="lotto.draws.value.length"
             class="divide-y divide-default"
           >
             <li
