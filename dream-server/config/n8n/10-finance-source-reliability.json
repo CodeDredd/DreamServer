@@ -272,7 +272,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: 'batch', status: 'ok', duration_ms: $now.toMillis() - $execution.startedAt.toMillis(), note: 'scored=' + ($('Verify + recompute weight').first().json.scores || []).length + ' dropped=' + ($('Verify + recompute weight').first().json.dropped || []).length }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: 'batch', status: 'ok', note: 'scored=' + ($('Verify + recompute weight').first().json.scores || []).length + ' dropped=' + ($('Verify + recompute weight').first().json.dropped || []).length }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -311,7 +311,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: null, status: ($json.fatal ? 'error' : 'skipped'), duration_ms: $now.toMillis() - $execution.startedAt.toMillis(), note: $json.reason || 'no sources or verifier rejected' }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: null, status: ($json.fatal ? 'error' : 'skipped'), note: $json.reason || 'no sources or verifier rejected' }) }}",
         "options": {
           "timeout": 5000,
           "response": {

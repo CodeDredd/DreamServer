@@ -538,7 +538,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: $('Verifier (anti-hallucination)').first().json.symbol, status: 'ok', duration_ms: $now.toMillis() - $execution.startedAt.toMillis(), note: 'confidence=' + Number($('Verifier (anti-hallucination)').first().json.confidence || 0).toFixed(2) + (($('Verifier (anti-hallucination)').first().json.contradictions) ? ' contradictions=' + String($('Verifier (anti-hallucination)').first().json.contradictions).slice(0,200) : '') }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: $('Verifier (anti-hallucination)').first().json.symbol, status: 'ok', note: 'confidence=' + Number($('Verifier (anti-hallucination)').first().json.confidence || 0).toFixed(2) + (($('Verifier (anti-hallucination)').first().json.contradictions) ? ' contradictions=' + String($('Verifier (anti-hallucination)').first().json.contradictions).slice(0,200) : '') }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -577,7 +577,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($('Pick candidate').first().json.symbol) || null, status: 'error', duration_ms: $now.toMillis() - $execution.startedAt.toMillis(), note: ($json && $json.reason) || 'verifier rejected draft' }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($('Pick candidate').first().json.symbol) || null, status: 'error', note: ($json && $json.reason) || 'verifier rejected draft' }) }}",
         "options": {
           "timeout": 5000,
           "response": {
