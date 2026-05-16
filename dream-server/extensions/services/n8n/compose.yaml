@@ -50,6 +50,10 @@ services:
       - FINANCE_SOCIAL_TOKEN=${FINANCE_SOCIAL_TOKEN:-}
       # lotto-oracle tip engine bearer token (POST /refresh, /tips/generate).
       - LOTTO_ORACLE_TOKEN=${LOTTO_ORACLE_TOKEN:-}
+      # LiteLLM master key — workflows authenticate to the LLM gateway via
+      # `Authorization: Bearer {{$env.LITELLM_KEY}}` (see finance-* workflows).
+      - LITELLM_KEY=${LITELLM_KEY:-}
+      - LITELLM_API_KEY=${LITELLM_KEY:-}
     volumes:
       - ./data/n8n:/home/node/.n8n
       - ./config/n8n:/home/node/workflows
