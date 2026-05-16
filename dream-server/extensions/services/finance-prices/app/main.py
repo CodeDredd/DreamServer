@@ -77,7 +77,13 @@ def _us_market_open(now: dt.datetime | None = None) -> bool:
     return 14 * 60 + 30 <= minute_of_day <= 21 * 60
 
 
-def _run_stocks_blocking() -> None:
+def _run_stocks_blocking(force: bool = False, period: str = "1d") -> None:
+    """Fetch stock bars and upsert. When `force=True` the market-hours
+    guard is bypassed (used by the startup backfill so that yfinance's
+    `period='5d'` window pulls the last completed session even on a
+    weekend / outside RTH); when False, normal market-hours respect
+    applies (used by the regular cron).
+    """
     if not _locks["stocks"].acquire(blocking=False):
         log.info("stocks fetch already running, skipping")
         return
@@ -86,17 +92,21 @@ def _run_stocks_blocking() -> None:
         s["running"] = True
         s["last_started"] = dt.datetime.now(dt.timezone.utc).isoformat()
         s["last_error"] = None
-        if RESPECT_MARKET_HOURS and not _us_market_open():
+        if not force and RESPECT_MARKET_HOURS and not _us_market_open():
             log.info("market closed -> skipping stocks fetch")
             s["last_rows"] = 0
             s["last_completed"] = dt.datetime.now(dt.timezone.utc).isoformat()
             return
         universe = universe_stocks(FETCH_CFG)
-        bars = fetch_stock_bars(FETCH_CFG, universe)
+        # Backfill mode: pull a wider window so the orchestrator and
+        # learning workflows have a non-empty stock universe even after
+        # extended Yahoo-outages or after-hours container restarts.
+        bars = fetch_stock_bars(FETCH_CFG, universe, period=period)
         n = upsert_bars(DB_CFG, bars)
         s["last_rows"] = n
         s["last_completed"] = dt.datetime.now(dt.timezone.utc).isoformat()
-        log.info("stocks fetch done: %d bars upserted (%d symbols)", n, len(universe))
+        log.info("stocks fetch done: %d bars upserted (%d symbols, period=%s, force=%s)",
+                 n, len(universe), period, force)
     except Exception as exc:  # noqa: BLE001
         log.exception("stocks fetch failed")
         s["last_error"] = str(exc)
@@ -128,8 +138,8 @@ def _run_crypto_blocking() -> None:
         _locks["crypto"].release()
 
 
-async def _stocks_async() -> None:
-    await asyncio.to_thread(_run_stocks_blocking)
+async def _stocks_async(force: bool = False, period: str = "1d") -> None:
+    await asyncio.to_thread(_run_stocks_blocking, force, period)
 
 
 async def _crypto_async() -> None:
@@ -183,8 +193,19 @@ async def lifespan(app: FastAPI):
         if RUN_ON_START == "always" or rc == 0:
             log.info("Kicking initial stocks + crypto fetch (RUN_ON_START=%s, rows=%d)",
                      RUN_ON_START, rc)
-            asyncio.create_task(_stocks_async())
+            asyncio.create_task(_stocks_async(force=True, period="5d"))
             asyncio.create_task(_crypto_async())
+        else:
+            # rc > 0 means we already have *some* bars (almost always
+            # crypto, because Yahoo's been blocking us). Still trigger
+            # a stock-only backfill, bypassing market-hours + with a
+            # 5d window, so a container restart on Saturday produces a
+            # usable stock universe immediately instead of waiting for
+            # Monday 14:30 UTC. Crypto stays scheduler-driven.
+            log.info("DB has %d rows; triggering stocks backfill anyway "
+                     "(force=True, period=5d) to keep universe non-empty "
+                     "across weekends + Yahoo outages.", rc)
+            asyncio.create_task(_stocks_async(force=True, period="5d"))
 
     try:
         yield

@@ -3,7 +3,16 @@ uvicorn[standard]==0.32.0
 apscheduler==3.10.4
 psycopg[binary,pool]==3.2.3
 qdrant-client==1.12.1
-yfinance==0.2.50
+# yfinance is unpinned-with-floor: Yahoo Finance breaks its private API
+# multiple times per year (Cloudflare-403, JSON-shape changes, crumb
+# rotation). Pinning to a specific patch traps the service in a stale
+# parser. Floor 0.2.65 is the first release with curl_cffi-based auth
+# that survives the May-2025 Yahoo lockdown that broke 0.2.50 with
+# 'JSONDecodeError: Expecting value: line 1 column 1' on EVERY ticker.
+yfinance>=0.2.65,<0.3
+# Required for yfinance's Cloudflare-bypass auth (browser-impersonation).
+# Without it yfinance falls back to plain requests and gets 403'd.
+curl_cffi>=0.7.0
 pandas==2.2.3
 requests==2.32.3
 tenacity==9.0.0

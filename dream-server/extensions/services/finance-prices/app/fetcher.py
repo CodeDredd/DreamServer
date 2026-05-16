@@ -109,9 +109,30 @@ def _yf_symbol(payload: dict) -> str:
     return f"{sym}{suffix}" if sym else sym
 
 
-def fetch_stock_bars(cfg: FetcherConfig, payloads: list[dict]) -> list[tuple]:
-    """Returns rows ready for db.upsert_bars()."""
+def fetch_stock_bars(cfg: FetcherConfig, payloads: list[dict],
+                     period: str = "1d") -> list[tuple]:
+    """Returns rows ready for db.upsert_bars().
+
+    `period` is forwarded to yfinance — default '1d' for the regular
+    15-min cron, '5d' for startup backfills so we capture the last
+    completed trading session even on weekends / after-hours.
+    """
     import yfinance as yf
+
+    # Yahoo Finance gates non-browser requests since early 2025 — every
+    # plain `requests.get` returns an empty body that yfinance then
+    # JSON-decodes into the famous `JSONDecodeError: Expecting value:
+    # line 1 column 1` on every ticker. Workaround: route through
+    # `curl_cffi` with browser TLS-fingerprint impersonation. yfinance
+    # picks the session up via the `session=` kwarg, falling back to
+    # its plain requests adapter if we pass None.
+    session = None
+    try:
+        from curl_cffi import requests as _cffi_requests
+        session = _cffi_requests.Session(impersonate="chrome")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("curl_cffi unavailable (%s); yfinance may hit Yahoo "
+                    "anti-bot 403/empty-JSON", exc)
 
     rows: list[tuple] = []
     if not payloads:
@@ -131,12 +152,13 @@ def fetch_stock_bars(cfg: FetcherConfig, payloads: list[dict]) -> list[tuple]:
         try:
             df = yf.download(
                 tickers=" ".join(batch),
-                period="1d",
+                period=period,
                 interval=cfg.interval,
                 group_by="ticker",
                 threads=False,
                 progress=False,
                 auto_adjust=False,
+                session=session,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("yfinance batch failed (%d tickers): %s", len(batch), exc)
