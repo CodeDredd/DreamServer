@@ -8,7 +8,31 @@ fail (corp proxy, DNS block, mirror down).
 After bootstrap, the scheduled fetcher (see `LOTTO_ORACLE_FETCH_CRON`,
 default `30 3 * * 1,4`) keeps the archive up to date.
 
-## Format
+## Bundled history (≥ 30 years)
+
+| File                   | Spiel             | Draws | Range                        |
+|------------------------|-------------------|-------|------------------------------|
+| `lotto-6aus49.csv`     | Lotto 6 aus 49    | ~2 590| Mi/Sa 1957 → 2022            |
+| `eurojackpot.csv`      | Eurojackpot       | ~510  | Di/Fr 2012 → 2022            |
+| `spiel77.csv`          | Spiel 77          | ~2 845| 1975 → 2022                  |
+| `super6.csv`           | Super 6           | ~1 975| 1991 → 2022                  |
+| `LOTTO_ab_2018.csv`    | Lotto + S77 + Su6 | ~940  | lotto.de bulk export 2018-   |
+| `EJ_ab_2018.csv`       | Eurojackpot       | ~720  | lotto.de bulk export 2018-   |
+
+The per-game CSVs above are generated from the operator-supplied Excel
+archives under `_sources/` (`LOTTO6aus49_2021.xlsx`, `Eurojackpot.xlsx`,
+`Spiel77.xlsx`, `SUPER6.xlsx`) by the `scripts/import_xlsx.py`
+converter. To regenerate after dropping a fresher xlsx archive::
+
+    pip install openpyxl              # one-time
+    python3 scripts/import_xlsx.py    # writes seed_data/<game>.csv
+
+The bulk `LOTTO_ab_2018.csv` / `EJ_ab_2018.csv` files come straight from
+lotto.de's CSV export and are read by a separate parser
+(`OfficialArchiveParser`) on every cron tick, so any drift between the
+two source sets is silently de-duplicated by the upsert layer.
+
+## Per-game CSV format
 
 Each file is a header-row CSV. Field names are exactly the pool names
 declared in `app/games.py`.
@@ -35,6 +59,21 @@ The parser is tolerant: numbers within a pool can be space-, comma-, or
 semicolon-separated; the date must be ISO `YYYY-MM-DD`.
 
 ## Manual bootstrap (full 30 years)
+
+The bundled per-game CSVs already give you the full 30+ year history on
+**first** start. For an **existing** install (DB already seeded with a
+smaller stub), the engine will *not* re-import on container restart
+(bootstrap only runs against an empty DB). Two options to ingest the
+new history:
+
+```bash
+# A) cleanest: wipe the DB on the host and let bootstrap re-run
+docker compose stop lotto-oracle
+rm ~/dream-server/data/lotto-oracle/lotto.db
+docker compose start lotto-oracle
+```
+
+Or, if you want to keep auto-generated tips and other state intact:
 
 Easiest path:
 
