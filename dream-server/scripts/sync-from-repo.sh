@@ -707,5 +707,19 @@ if [[ ${#ALL_RESTARTS[@]} -gt 0 ]]; then
     echo "  · $svc"
     "$CLI" restart "$svc" || echo "    WARN: restart $svc failed (non-fatal)"
   done
+
+  # If n8n was (re)started, re-import workflow JSONs from config/n8n/.
+  # n8n boots from its SQLite DB and does NOT auto-import the mounted JSONs,
+  # so freshly-pulled workflows would otherwise stay invisible in the UI.
+  # The import is idempotent thanks to stable workflow IDs.
+  if printf '%s\n' "${ALL_RESTARTS[@]}" | grep -qx "n8n"; then
+    n8n_importer="$DST/scripts/n8n-import-workflows.sh"
+    if [[ -x "$n8n_importer" ]] && docker inspect dream-n8n >/dev/null 2>&1; then
+      echo
+      echo "→ Importing n8n workflow JSONs from config/n8n/ …"
+      ( cd "$DST" && bash "$n8n_importer" --activate ) \
+        || echo "    WARN: n8n workflow import reported errors (non-fatal)"
+    fi
+  fi
 fi
 
