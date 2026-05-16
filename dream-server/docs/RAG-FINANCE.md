@@ -302,7 +302,7 @@ Das **Promotion-Gate** (`POST /strategies/promote`) verlangt zudem
 
 Override **nur** über `X-Force-Promote: 1` (Operator-Header; der
 ehemalige `force`-Body-Feld-Pfad wurde in Phase G entfernt — Pydantic
-`extra=forbid` → HTTP 400).
+`extra=forbid` → HTTP 422 bei Altcalls).
 
 ---
 

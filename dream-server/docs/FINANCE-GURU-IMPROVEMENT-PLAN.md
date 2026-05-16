@@ -890,7 +890,7 @@ curl -s http://192.168.178.110:8098/strategies/dsl/catalog \
     FINANCE_GURU_GENESIS_MIN_BT_TRADES`. Override **nur** über den
     Header `X-Force-Promote: 1` (Operator-only); das frühere
     `force: true`-Body-Feld wurde entfernt (Pydantic
-    `model_config = {"extra": "forbid"}` → HTTP 400 bei Altcalls).
+    `model_config = {"extra": "forbid"}` → HTTP 422 bei Altcalls).
     Audit-Log differenziert `actor='operator:force-promote'`
     gegenüber `actor='operator'` (manuelle Promotion bei sauberem
     Gate) und `actor='system'` (Genesis-Pipeline).
@@ -975,7 +975,7 @@ curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/s
 curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/strategies/promote \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -d '{"name":"news_sentiment","bt_pnl_pct":15.0,"bt_n_trades":2}'
-# c) Altes force-Feld → 400
+# c) Altes force-Feld → 422 (Pydantic extra_forbidden, kein 400)
 curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/strategies/promote \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -d '{"name":"news_sentiment","bt_pnl_pct":3.5,"bt_n_trades":2,"force":true}'

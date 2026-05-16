@@ -754,7 +754,8 @@ class PromoteStrategyIn(BaseModel):
     # `X-Force-Promote: 1` header so that the operator decision is
     # explicit in HTTP logs (n8n's neverError-mode replays do not leak
     # a stale body field into accidental promotions). Older callers
-    # that still send `force: true` get HTTP 400.
+    # that still send `force: true` get HTTP 422 (Pydantic
+    # `extra_forbidden`).
     model_config = {"extra": "forbid"}
 
 
