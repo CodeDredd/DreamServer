@@ -1,6 +1,6 @@
 # Finance Guru — Verbesserungsplan (Paper-Trading, RAG, Qdrant, UI)
 
-> Stand: 05/2026 · Status: Plan · Verantwortlich: AI-Agent + Operator
+> Stand: 05/2026 · Status: Phase A ✅ deployed · Verantwortlich: AI-Agent + Operator
 > Bezugspunkte: `AGENT-OPERATIONS.md §11–§14`, `extensions/services/finance-guru-api/`,
 > `extensions/services/finance-{vector,news,social,prices}/`, `extensions/services/dashboard-nuxt/`
 
@@ -205,16 +205,82 @@ selektierten Pfad enthalten) und einem `#item`-Slot, der weiterhin
 
 ## 6. Roadmap — phasenweise
 
-### Phase A — Quick-Wins (1–2 Tage, kein Schema-Bruch)
+### Phase A — Quick-Wins (1–2 Tage, kein Schema-Bruch) ✅ DONE 16.05.2026 (Commit fc2d3d5b)
 
-1. **Sidebar `UTree`** (§5) inkl. Routen-Aufteilung
+1. ✅ **Sidebar `UTree`** (§5) inkl. Routen-Aufteilung
    `finance-guru/trading.vue` + `finance-guru/lotto.vue`.
-2. **n8n Asset-Behaviour-Batching**: `*/2 min`, `n=3`, server-seitiges
-   `POST /enrichment/next-candidate-batch`-Endpoint.
-3. **n8n Source-Reliability-Batching**: `0 * * * *`, `n=5`.
-4. **`useFinanceGuru.ts`**: Polling-Intervall nicht mehr 30 s flat,
-   sondern ETag-aware (`If-None-Match` gegen
-   `/strategies?since=…`) — spart Frontend-Last.
+   * `DashboardRoute` um optionales `to` + `children` erweitert,
+     `visibleSidebar` filtert Children rekursiv und droppt leere
+     Container.
+   * `SidebarMenu.vue` rendert `UTree` (expanded → Tree, collapsed →
+     flach via `UNavigationMenu` als Fallback, da UTree keine
+     Icons-only-Variante hat).
+   * `pages/finance-guru.vue` ist jetzt ein Service-aware Redirect,
+     der alte `#lotto`-Hash bleibt funktional.
+2. ✅ **n8n Asset-Behaviour-Batching**:
+   * Server-Endpoint `POST /enrichment/next-candidate-batch`
+     (Helper `enrichment.next_candidate_batch()`).
+   * Workflow 09: Cron `0 */5` → `0 */2`, Cooldown `5 min` → `60 s`,
+     Candidate-Picker holt jetzt eine Batch (`limit=3` Stocks +
+     `limit=2` Crypto), nimmt aber **noch** nur das erste Symbol.
+     Begründung: die Downstream-Nodes (`Build LLM payload`,
+     `Verifier`) lesen via `$node['Pick candidate'].json` — das ist
+     `first-item-only`. True per-item Parallel-Batching erfordert
+     Umbau auf `$input.item.json` → schiebe ich nach Phase A.2.
+3. ✅ **n8n Source-Reliability-Batching**:
+   * Workflow 10: Cron `0 0 */6` → `0 0 *` (stündlich). Workflow
+     batched intern bereits alle Quellen pro Run.
+4. ⏭️  **`useFinanceGuru.ts` ETag-aware Polling**: deferred nach
+   Phase B — kein Blocker, Nice-to-have.
+
+**Lessons learned aus Phase A:**
+
+* Erwartete Throughput-Steigerung Workflow 09 war **2.5×**
+  (`*/5 → */2`), gemessen aber nur **~1.2–1.5×** weil der reale
+  Bottleneck die LLM-`default`-Antwortzeit ist (~3–4 min/Call auf
+  Halo Strix). Bei laufender Verarbeitung dropt der nächste
+  Cron-Tick wegen `coalesce` ohnehin. Der Gewinn kommt v.a. aus dem
+  **kürzeren Cooldown** (5 min → 60 s).
+* Echte Throughput-Skalierung erfordert entweder:
+  - **Phase A.2**: per-item Parallel-Batching (Nodes refactor auf
+    `$input.item.json`) — dann verarbeitet ein Cycle 3 Symbole
+    sequenziell aber innerhalb eines LLM-Calls (Batched-Prompt).
+  - **Phase B**: Wechsel auf LLM-`fast` für die erste Vorqualifikation
+    + `default` nur für komplexe Cases.
+* UTree-Komponente in Nuxt UI v4 hat **keine collapsed/icons-only
+  Variante** → wir mussten den Fallback auf `UNavigationMenu` mit
+  flatten-Logik bauen. Akzeptabler Trade-off; alternativ später
+  einen eigenen Custom-Tree-Renderer für Collapsed.
+* Routing-Split funktioniert sauber (alle 3 Pfade liefern HTTP 200,
+  Nuxt-Routes-Map in `client.precomputed.mjs` zeigt
+  `/finance-guru`, `/finance-guru/lotto`, `/finance-guru/trading`).
+
+**Smoke-Test-Ergebnisse (16.05.2026, post-deploy):**
+
+```
+finance-guru-api/health           → {"status":"ok", strategies=3}
+POST /enrichment/next-candidate-batch (limit=3)
+                                  → ["AAPL","GOOGL","MSFT"], count=3
+GET /finance-guru                 → 200 (SPA-Redirect ins richtige
+                                       Sub-Pages je Service-Inventar)
+GET /finance-guru/trading         → 200
+GET /finance-guru/lotto           → 200
+n8n FinAssetBehav001              → aktiv, neuer Cron-Wert geladen
+n8n FinSourceRel0001              → aktiv, stündlich
+```
+
+### Phase A.2 — Echte Per-Item Batching (Follow-up, 0.5–1 d)
+
+* Refactor Workflow 09: `Build LLM payload`, `Verifier`,
+  `Store analysis`, `Report OK`/`Report error` umstellen auf
+  `$input.item.json` statt `$node['Pick candidate'].json` →
+  `Pick candidate` darf dann N Items emittieren, alle Downstream-
+  Nodes laufen N-mal naturally.
+* `Cooldown 60s` muss in Phase A.2 als `Wait` *nach* der Item-
+  Schleife stehen (n8n `Wait`-Node feuert ein-Mal pro Execution,
+  nicht pro Item → 60 s Cooldown bleibt 60 s Total).
+* DoD: Logs zeigen ≥ 3 unterschiedliche `target`-Symbole pro
+  Workflow-Execution.
 
 ### Phase B — RAG-Aktivierung (3–5 Tage)
 
