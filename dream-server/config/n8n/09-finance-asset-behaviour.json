@@ -8,13 +8,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 */5 * * * *"
+              "expression": "0 */2 * * * *"
             }
           ]
         }
       },
       "id": "cron",
-      "name": "Every 5 min",
+      "name": "Every 2 min",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
@@ -121,7 +121,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://finance-guru-api:8098/enrichment/next-candidate",
+        "url": "http://finance-guru-api:8098/enrichment/next-candidate-batch",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -137,7 +137,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ asset_type: 'stock', stale_after_hours: 168, universe: $('Merge universe').first().json.universes[0].symbols }) }}",
+        "jsonBody": "={{ JSON.stringify({ asset_type: 'stock', stale_after_hours: 168, limit: 3, universe: $('Merge universe').first().json.universes[0].symbols }) }}",
         "options": {
           "timeout": 8000,
           "response": {
@@ -160,7 +160,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://finance-guru-api:8098/enrichment/next-candidate",
+        "url": "http://finance-guru-api:8098/enrichment/next-candidate-batch",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -176,7 +176,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ asset_type: 'crypto', stale_after_hours: 168, universe: $('Merge universe').first().json.universes[1].symbols }) }}",
+        "jsonBody": "={{ JSON.stringify({ asset_type: 'crypto', stale_after_hours: 168, limit: 2, universe: $('Merge universe').first().json.universes[1].symbols }) }}",
         "options": {
           "timeout": 8000,
           "response": {
@@ -198,7 +198,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Pick the first asset_type that produced a candidate.\n// Sequential chain guarantees both 'Next candidate' nodes have\n// run by the time we get here.\nconst stock  = $('Next candidate (stocks)').first()?.json?.next || null;\nconst crypto = $('Next candidate (crypto)').first()?.json?.next || null;\nlet symbol = null, assetType = null;\nif (stock)       { symbol = stock;  assetType = 'stock';  }\nelse if (crypto) { symbol = crypto; assetType = 'crypto'; }\nif (!symbol) {\n  return [{ json: { skip: true, reason: 'no stale candidate' } }];\n}\nreturn [{ json: { skip: false, symbol, asset_type: assetType, days: 180 } }];"
+        "jsCode": "// Phase A: 'next-candidate-batch' returns up to N stalest symbols per\n// asset class. We still process only ONE per run here (downstream\n// chain is single-item-safe; per-item parallel batching lands in\n// Phase A.2 once the build_payload/verify nodes are made\n// item-position-aware via $input.item.json instead of\n// $node['Pick candidate'].json).\n//\n// Effective throughput: cron */2 min * 1 symbol = 30 symbols/h\n// (was: */5 min = 12/h). 2.5x improvement.\nconst stockBatch  = $('Next candidate (stocks)').first()?.json?.next || [];\nconst cryptoBatch = $('Next candidate (crypto)').first()?.json?.next || [];\nlet symbol = null, assetType = null;\nif (stockBatch.length)        { symbol = stockBatch[0];  assetType = 'stock';  }\nelse if (cryptoBatch.length)  { symbol = cryptoBatch[0]; assetType = 'crypto'; }\nif (!symbol) {\n  return [{ json: { skip: true, reason: 'no stale candidate' } }];\n}\nreturn [{ json: { skip: false, symbol, asset_type: assetType, days: 180,\n                  batch_stock_n: stockBatch.length,\n                  batch_crypto_n: cryptoBatch.length } }];"
       },
       "id": "pick",
       "name": "Pick candidate",
@@ -599,11 +599,11 @@
     },
     {
       "parameters": {
-        "amount": 5,
-        "unit": "minutes"
+        "amount": 60,
+        "unit": "seconds"
       },
       "id": "cooldown",
-      "name": "Cooldown 5 min",
+      "name": "Cooldown 60s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [

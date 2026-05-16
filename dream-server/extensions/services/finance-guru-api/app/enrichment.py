@@ -327,3 +327,51 @@ def next_candidate(asset_type: str | None = None, stale_after_hours: int = 24 * 
     stale.sort(key=lambda x: x[1] or "")
     return stale[0][0]
 
+
+def next_candidate_batch(asset_type: str | None = None,
+                         stale_after_hours: int = 24 * 7,
+                         universe: list[str] | None = None,
+                         limit: int = 3) -> list[str]:
+    """Batched variant of next_candidate() — returns up to `limit`
+    stalest symbols. Plan §3 / Phase A: lets n8n's asset-behaviour
+    workflow process multiple symbols per run instead of looping a
+    5-min cron + 5-min cooldown for every single ticker.
+
+    Order:
+      1. Symbols never analysed (alphabetical for determinism)
+      2. Symbols whose last analysis is older than `stale_after_hours`
+         (oldest first)
+      3. Stop once `limit` reached
+    """
+    if not universe:
+        return []
+    limit = max(1, min(int(limit), 50))
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=stale_after_hours)).isoformat()
+    placeholders = ",".join("?" * len(universe))
+    with ledger.conn() as c:
+        rows = c.execute(
+            f"SELECT symbol, MAX(ts) AS last_ts FROM enrichment_asset_analysis "
+            f"WHERE symbol IN ({placeholders}) GROUP BY symbol",
+            tuple(universe),
+        ).fetchall()
+        ts_by_sym = {r["symbol"]: r["last_ts"] for r in rows}
+    out: list[str] = []
+    # 1) Never analysed (alphabetical so two parallel n8n runs don't
+    #    fight over the same symbol).
+    never = sorted([s for s in universe if s not in ts_by_sym])
+    out.extend(never[:limit])
+    if len(out) >= limit:
+        return out
+    # 2) Stale beyond cutoff, oldest first.
+    stale = sorted(
+        [(s, t) for s, t in ts_by_sym.items() if (t or "") < cutoff],
+        key=lambda x: x[1] or "",
+    )
+    for s, _ in stale:
+        if s in out:
+            continue
+        out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+

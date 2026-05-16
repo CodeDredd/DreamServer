@@ -8,13 +8,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 17 */6 * * *"
+              "expression": "0 0 * * * *"
             }
           ]
         }
       },
       "id": "cron",
-      "name": "Every 6h",
+      "name": "Every 1h",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [

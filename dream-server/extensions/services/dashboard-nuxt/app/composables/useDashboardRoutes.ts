@@ -23,12 +23,20 @@ import { useSystemStore } from '~/stores/system'
 
 export interface DashboardRoute {
   id: string
-  to: string
+  /** NuxtLink-Ziel. Optional, wenn der Knoten reiner Container ist
+   *  (z.B. "Finance Guru" hat selbst keine Page, sondern children). */
+  to?: string
   label: string
   icon: string
   order: number
-  /** Nur in Sidebar zeigen wenn predicate true (oder undefined). */
+  /** Nur in Sidebar zeigen wenn predicate true (oder undefined).
+   *  Bei Container-Knoten zusätzlich: wenn predicate false, ist der
+   *  ganze Teilbaum (inkl. children) unsichtbar. */
   predicate?: (ctx: PredicateContext) => boolean
+  /** Phase A: Sub-Routen. Sidebar rendert sie als UTree-Branches.
+   *  Children werden ebenfalls predicate-gefiltert; ein Container
+   *  ohne sichtbare children fällt aus der Sidebar. */
+  children?: DashboardRoute[]
 }
 
 export interface PredicateContext {
@@ -92,7 +100,7 @@ export const coreRoutes: DashboardRoute[] = [
   },
   {
     id: 'finance-guru',
-    to: '/finance-guru',
+    // Kein `to`: reiner Container, Default-Redirect macht pages/finance-guru/index.vue.
     label: 'Finance Guru',
     icon: 'i-lucide-trending-up',
     order: 4.5,
@@ -100,6 +108,27 @@ export const coreRoutes: DashboardRoute[] = [
     predicate: ({ hasService }) =>
       hasService('finance-guru') || hasService('finance guru')
       || hasService('lotto-oracle') || hasService('lotto oracle'),
+    children: [
+      {
+        id: 'finance-guru.trading',
+        to: '/finance-guru/trading',
+        label: 'Trading',
+        icon: 'i-lucide-line-chart',
+        order: 0,
+        // Trading-Sub-Tab nur wenn finance-guru-api präsent ist.
+        predicate: ({ hasService }) =>
+          hasService('finance-guru') || hasService('finance guru'),
+      },
+      {
+        id: 'finance-guru.lotto',
+        to: '/finance-guru/lotto',
+        label: 'Lotto Orakel',
+        icon: 'i-lucide-ticket',
+        order: 1,
+        predicate: ({ hasService }) =>
+          hasService('lotto-oracle') || hasService('lotto oracle'),
+      },
+    ],
   },
   {
     id: 'repo-map',
@@ -141,9 +170,22 @@ export function useDashboardRoutes(): {
     [...coreRoutes].sort((a, b) => a.order - b.order),
   )
 
-  const visibleSidebar = computed(() =>
-    routes.value.filter(r => !r.predicate || r.predicate(ctx.value)),
-  )
+  // Rekursiver Filter: jeder Knoten muss sein eigenes Predicate
+  // bestehen. Container-Knoten (mit `children`) fliegen zusätzlich
+  // raus, wenn nach dem Filter keine sichtbaren Children mehr
+  // übrigbleiben — eine leere "Finance Guru"-Spalte wäre verwirrend.
+  function filterTree(list: DashboardRoute[]): DashboardRoute[] {
+    return list
+      .filter(r => !r.predicate || r.predicate(ctx.value))
+      .map((r) => {
+        if (!r.children?.length) return r
+        const kids = filterTree(r.children).sort((a, b) => a.order - b.order)
+        return { ...r, children: kids }
+      })
+      .filter(r => !r.children || r.children.length > 0)
+  }
+
+  const visibleSidebar = computed(() => filterTree(routes.value))
 
   return { routes, visibleSidebar }
 }

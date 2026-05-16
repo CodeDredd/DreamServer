@@ -1,65 +1,52 @@
 <!--
-  Finance Guru (Phase 4 Welle C.1a + C.1b). Pendant zu
-  dashboard/src/pages/FinanceGuru.jsx — Tab-Wrapper mit zwei
-  Tabs (Strategies, Lotto).
-
-  Tab-State wird wie im Original via window.location.hash persistiert
-  (`#lotto`), damit Bookmarks/Refresh den Tab erhalten.
+  Finance Guru — Default-Redirect (Phase A).
+  Die alte Tab-basierte Seite wurde in zwei Sub-Routen aufgeteilt:
+    /finance-guru/trading  (Strategies)
+    /finance-guru/lotto    (Lotto Orakel)
+  Diese Index-Page entscheidet anhand des Service-Inventars, wohin
+  navigiert wird. Erhalt der alten URLs:
+    /finance-guru          → /finance-guru/trading bevorzugt,
+                             sonst /finance-guru/lotto.
+    /finance-guru#lotto    → /finance-guru/lotto   (Bookmark-Migration).
 -->
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import StrategiesTab from '~/components/finance-guru/StrategiesTab.vue'
-import LottoTab from '~/components/finance-guru/LottoTab.vue'
+import { onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useSystemStore } from '~/stores/system'
 
 definePageMeta({ layout: 'default' })
 
-type TabId = 'strategies' | 'lotto'
+const router = useRouter()
+const system = useSystemStore()
 
-const tab = ref<TabId>('strategies')
-
-onMounted(() => {
-  const fromHash = (window.location.hash || '').replace('#', '').trim()
-  if (fromHash === 'lotto') tab.value = 'lotto'
-})
-
-watch(tab, (v) => {
-  if (typeof window === 'undefined') return
-  if (v === 'strategies') {
-    if (window.location.hash) {
-      history.replaceState(null, '', window.location.pathname + window.location.search)
-    }
+onMounted(async () => {
+  // Warten, bis das Service-Inventory einmal geladen wurde — sonst
+  // landet der erste Aufruf immer auf der Trading-Page, auch wenn
+  // nur lotto-oracle aktiv ist.
+  if (!system.serviceIds.length) {
+    try { await system.fetchStatus() } catch { /* ignore */ }
   }
-  else {
-    window.location.hash = v
-  }
-})
 
-const tabs = computed(() => [
-  { label: 'Paper-Trade Strategien', value: 'strategies' as TabId, icon: 'i-lucide-line-chart' },
-  { label: 'Lotto Oracle', value: 'lotto' as TabId, icon: 'i-lucide-ticket' },
-])
+  const wantsLotto = (typeof window !== 'undefined'
+    && (window.location.hash || '').replace('#', '').trim() === 'lotto')
+
+  const hasFinance = system.hasService('finance-guru') || system.hasService('finance guru')
+  const hasLotto   = system.hasService('lotto-oracle') || system.hasService('lotto oracle')
+
+  let target = '/finance-guru/trading'
+  if (wantsLotto && hasLotto) target = '/finance-guru/lotto'
+  else if (!hasFinance && hasLotto) target = '/finance-guru/lotto'
+
+  void router.replace(target)
+})
 </script>
 
 <template>
-  <UDashboardPanel id="finance-guru">
-    <template #header>
-      <UDashboardNavbar
-        title="Finance Guru"
-        description="Paper-Trade Strategien & Lotto Oracle"
-        icon="i-lucide-trending-up"
-      >
-        <template #leading>
-          <UDashboardSidebarCollapse />
-        </template>
-      </UDashboardNavbar>
-    </template>
+  <UDashboardPanel id="finance-guru-redirect">
     <template #body>
-      <UTabs v-model="tab" :items="tabs" :ui="{ list: 'mb-4' }">
-        <template #content="{ item }">
-          <StrategiesTab v-if="item.value === 'strategies'" />
-          <LottoTab v-else />
-        </template>
-      </UTabs>
+      <div class="flex h-full items-center justify-center p-8 text-sm text-muted">
+        Lade Finance Guru …
+      </div>
     </template>
   </UDashboardPanel>
 </template>

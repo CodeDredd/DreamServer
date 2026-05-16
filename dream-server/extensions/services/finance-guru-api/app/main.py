@@ -384,6 +384,27 @@ def next_candidate(req: NextCandidateReq,
     return {"next": sym}
 
 
+class NextCandidateBatchReq(NextCandidateReq):
+    """Plan §3 / Phase A: same selection logic as `next-candidate` but
+    returns up to `limit` stalest symbols at once so the n8n asset-
+    behaviour workflow can process them in a SplitInBatches loop instead
+    of one symbol per cron tick."""
+    limit: int = Field(3, ge=1, le=50)
+
+
+@app.post("/enrichment/next-candidate-batch")
+def next_candidate_batch(req: NextCandidateBatchReq,
+                         authorization: str | None = Header(default=None)) -> dict:
+    _check_token(authorization)
+    syms = enrichment.next_candidate_batch(
+        asset_type=req.asset_type,
+        stale_after_hours=req.stale_after_hours,
+        universe=req.universe,
+        limit=req.limit,
+    )
+    return {"next": syms, "count": len(syms), "limit": req.limit}
+
+
 @app.post("/enrichment/source-reliability", status_code=status.HTTP_201_CREATED)
 def store_source_reliability(payload: SourceReliabilityIn,
                               authorization: str | None = Header(default=None)) -> dict:
