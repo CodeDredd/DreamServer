@@ -19,6 +19,7 @@ const props = defineProps<{
 
 const strategyFilter = ref<string>('all')
 const statusFilter = ref<'all' | 'ok' | 'empty' | 'error'>('all')
+const kindFilter = ref<'all' | 'builtin' | 'generated'>('all')
 const search = ref('')
 const debouncedSearch = refDebounced(search, 250)
 
@@ -34,11 +35,18 @@ const statusItems = [
   { label: 'Error', value: 'error' },
 ]
 
+const kindItems = [
+  { label: 'Alle Kinds', value: 'all' },
+  { label: 'Builtin', value: 'builtin' },
+  { label: 'Nur generierte', value: 'generated' },
+]
+
 const filteredCycles = computed(() => {
   const q = debouncedSearch.value.trim().toLowerCase()
   return props.cycles.filter((row) => {
     if (strategyFilter.value !== 'all' && row.strategy !== strategyFilter.value) return false
     if (statusFilter.value !== 'all' && row.status !== statusFilter.value) return false
+    if (kindFilter.value !== 'all' && (row.kind || 'builtin') !== kindFilter.value) return false
     if (q) {
       const hay = `${row.strategy} ${row.trigger} ${row.error || ''}`.toLowerCase()
       if (!hay.includes(q)) return false
@@ -65,7 +73,14 @@ const columns: TableColumn<FinanceCycleRow>[] = [
   {
     accessorKey: 'strategy',
     header: 'Strategie',
-    cell: ({ row }) => h('span', { class: 'font-mono text-xs text-default' }, row.original.strategy),
+    cell: ({ row }) => h('div', { class: 'flex flex-col gap-0.5' }, [
+      h('span', { class: 'font-mono text-xs text-default' }, row.original.strategy),
+      row.original.kind === 'generated'
+        ? h(UBadge, { color: 'info', variant: 'subtle', size: 'xs' }, () => 'generated')
+        : (row.original.kind === 'builtin'
+          ? h(UBadge, { color: 'neutral', variant: 'subtle', size: 'xs' }, () => 'builtin')
+          : null),
+    ]),
   },
   {
     accessorKey: 'trigger',
@@ -156,6 +171,7 @@ const expandRow = ref<FinanceCycleRow | null>(null)
         <div class="ml-auto flex flex-wrap items-center gap-2">
           <UInput v-model="search" icon="i-lucide-search" placeholder="suchen…" size="xs" />
           <USelect v-model="strategyFilter" :items="strategyItems" size="xs" class="min-w-40" />
+          <USelect v-model="kindFilter" :items="kindItems" size="xs" class="min-w-32" />
           <USelect v-model="statusFilter" :items="statusItems" size="xs" class="min-w-32" />
         </div>
       </div>
@@ -231,6 +247,18 @@ const expandRow = ref<FinanceCycleRow | null>(null)
                 Cash
               </div>
               <div>{{ expandRow.cash_eur != null ? formatEur(expandRow.cash_eur) : '–' }}</div>
+            </div>
+            <div>
+              <div class="uppercase tracking-wider text-muted">
+                Kind
+              </div>
+              <div>{{ expandRow.kind || '–' }}</div>
+            </div>
+            <div>
+              <div class="uppercase tracking-wider text-muted">
+                Backtest %
+              </div>
+              <div>{{ expandRow.bt_pnl_pct != null ? formatPct(expandRow.bt_pnl_pct) : '–' }}</div>
             </div>
           </div>
           <UAlert

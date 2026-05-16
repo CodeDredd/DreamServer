@@ -37,19 +37,64 @@ CREATE TABLE IF NOT EXISTS cycle_runs (
     pnl_pct       REAL,
     status        TEXT NOT NULL DEFAULT 'ok',     -- ok|error|empty
     error         TEXT,
-    payload_json  TEXT                            -- compressed run-result for drill-down
+    payload_json  TEXT,                           -- compressed run-result for drill-down
+    -- Phase G: lifecycle snapshot at write-time so the dashboard's
+    -- "nur generierte" filter doesn't need a JOIN per row, and so the
+    -- record survives later renames/retires of the strategy.
+    kind          TEXT,                           -- builtin|generated (nullable for legacy rows)
+    bt_pnl_pct    REAL                            -- promotion-backtest pnl%, copied from strategies_meta
 );
 
 CREATE INDEX IF NOT EXISTS idx_cycle_runs_strategy_ts ON cycle_runs (strategy, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_cycle_runs_ts          ON cycle_runs (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cycle_runs_kind_ts     ON cycle_runs (kind, ts DESC);
 """
+
+
+# Columns added after the initial Phase B ship. SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so we inspect pragma_table_info and
+# patch on the fly. Keeps in-place upgrades automatic — operators
+# don't have to run a migration script.
+_EXTRA_COLS = (
+    ("kind",       "TEXT"),
+    ("bt_pnl_pct", "REAL"),
+)
+
+
+def _ensure_extra_columns() -> None:
+    with ledger.conn() as c:
+        have = {row["name"] for row in c.execute("PRAGMA table_info(cycle_runs)").fetchall()}
+        for col, ddl in _EXTRA_COLS:
+            if col not in have:
+                c.execute(f"ALTER TABLE cycle_runs ADD COLUMN {col} {ddl}")
+                log.info("cycle_log: added column %s %s", col, ddl)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_cycle_runs_kind_ts ON cycle_runs (kind, ts DESC)")
 
 
 def init_db() -> None:
     """Idempotent — safe to call after ledger.init_db()."""
     with ledger.conn() as c:
         c.executescript(SCHEMA_SQL)
+    _ensure_extra_columns()
     log.info("Cycle log table ready")
+
+
+def _lookup_meta_snapshot(strategy: str) -> tuple[str | None, float | None]:
+    """Best-effort (kind, bt_pnl_pct) lookup from strategies_meta. Returns
+    (None, None) when the lifecycle table doesn't exist yet (cold boot)
+    or the strategy was never registered (legacy backtest harness).
+    Never raises — cycle_log writes must not block on lifecycle hiccups."""
+    try:
+        with ledger.conn() as c:
+            row = c.execute(
+                "SELECT kind, bt_pnl_pct FROM strategies_meta WHERE name = ?",
+                (strategy,),
+            ).fetchone()
+        if row is None:
+            return None, None
+        return row["kind"], row["bt_pnl_pct"]
+    except Exception:  # noqa: BLE001
+        return None, None
 
 
 def record(
@@ -79,10 +124,12 @@ def record(
         "kpi":      kpi,
     }
     with ledger.conn() as c:
+        kind, bt_pnl_pct = _lookup_meta_snapshot(strategy)
         cur = c.execute(
             "INSERT INTO cycle_runs (ts, strategy, trigger, duration_ms, universe, "
-            "signals, executed, skipped, equity_eur, cash_eur, pnl_pct, status, error, payload_json) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "signals, executed, skipped, equity_eur, cash_eur, pnl_pct, status, error, "
+            "payload_json, kind, bt_pnl_pct) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 started.isoformat(),
                 strategy,
@@ -98,15 +145,19 @@ def record(
                 status,
                 (error or "")[:500] or None,
                 json.dumps(trimmed, default=str),
+                kind,
+                bt_pnl_pct,
             ),
         )
         return int(cur.lastrowid or 0)
 
 
 def list_cycles(strategy: str | None = None, limit: int = 50,
-                status_filter: str | None = None) -> list[dict]:
+                status_filter: str | None = None,
+                kind: str | None = None) -> list[dict]:
     sql = ["SELECT id, ts, strategy, trigger, duration_ms, universe, signals, "
-           "executed, skipped, equity_eur, cash_eur, pnl_pct, status, error "
+           "executed, skipped, equity_eur, cash_eur, pnl_pct, status, error, "
+           "kind, bt_pnl_pct "
            "FROM cycle_runs WHERE 1=1"]
     args: list = []
     if strategy:
@@ -115,6 +166,9 @@ def list_cycles(strategy: str | None = None, limit: int = 50,
     if status_filter:
         sql.append("AND status = ?")
         args.append(status_filter)
+    if kind:
+        sql.append("AND kind = ?")
+        args.append(kind)
     sql.append("ORDER BY ts DESC LIMIT ?")
     args.append(max(1, min(limit, 500)))
     with ledger.conn() as c:

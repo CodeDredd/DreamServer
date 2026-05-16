@@ -154,6 +154,8 @@ async def trigger_backtest(
 async def list_cycles(
     strategy: str | None = Query(default=None),
     status: str | None = Query(default=None),
+    kind: str | None = Query(default=None,
+                             description="Lifecycle kind filter: builtin|generated"),
     limit: int = Query(default=50, ge=1, le=500),
     api_key: str = Depends(verify_api_key),
 ):
@@ -163,6 +165,8 @@ async def list_cycles(
         params["strategy"] = strategy
     if status:
         params["status"] = status
+    if kind in ("builtin", "generated"):
+        params["kind"] = kind
     return await _guru_request("GET", "/cycles", params=params)
 
 

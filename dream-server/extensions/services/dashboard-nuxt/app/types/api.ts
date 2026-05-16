@@ -530,6 +530,11 @@ export interface FinanceCycleRow {
   pnl_pct?: number | null
   status: 'ok' | 'empty' | 'error' | string
   error?: string | null
+  // Phase G — lifecycle snapshot copied in at write-time so the
+  // dashboard can filter "nur generierte" / show the promotion-backtest
+  // benchmark next to the live pnl without a join.
+  kind?: 'builtin' | 'generated' | null
+  bt_pnl_pct?: number | null
 }
 
 export interface FinanceCycleSummary {

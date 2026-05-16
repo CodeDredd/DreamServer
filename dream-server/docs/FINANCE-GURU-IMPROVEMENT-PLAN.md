@@ -1,6 +1,6 @@
 # Finance Guru — Verbesserungsplan (Paper-Trading, RAG, Qdrant, UI)
 
-> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ · Phase D ✅ deployed · Phase E ✅ deployed
+> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ · Phase D ✅ deployed · Phase E ✅ deployed · Phase G ✅ deployed
 > Verantwortlich: AI-Agent + Operator
 > Bezugspunkte: `AGENT-OPERATIONS.md §11–§14`, `extensions/services/finance-guru-api/`,
 > `extensions/services/finance-{vector,news,social,prices}/`, `extensions/services/dashboard-nuxt/`
@@ -882,15 +882,136 @@ curl -s http://192.168.178.110:8098/strategies/dsl/catalog \
 19. **`useFinanceGuru.ts`** um RAG-Endpoints erweitern; alle
     neuen Panels über `usePolling` mit angepassten Intervallen.
 
-### Phase G — Härtung & Aufräumen
+### Phase G — Härtung & Aufräumen ✅ DONE 16.05.2026
 
-20. **Backtest-Pflicht im Promotion-Pfad**: ohne grünen Backtest
-    keine Promotion (auch nicht manuell — Header-Override mit
-    `X-Force-Promote: 1` nur für Operator).
-21. **Cycle-Log-Index** um `bt_pnl_pct` + `kind` erweitern,
-    Dashboard-Filter "nur generierte".
-22. **Docs**: `dream-server/docs/RAG-FINANCE.md` mit
-    Collection-Schemas + Beispiel-Queries.
+20. ✅ **Backtest-Pflicht im Promotion-Pfad** —
+    `POST /strategies/promote` prüft jetzt **beide** Gates synchron:
+    `bt_pnl_pct >= FINANCE_GURU_TARGET_WEEK_PCT` und `bt_n_trades >=
+    FINANCE_GURU_GENESIS_MIN_BT_TRADES`. Override **nur** über den
+    Header `X-Force-Promote: 1` (Operator-only); das frühere
+    `force: true`-Body-Feld wurde entfernt (Pydantic
+    `model_config = {"extra": "forbid"}` → HTTP 400 bei Altcalls).
+    Audit-Log differenziert `actor='operator:force-promote'`
+    gegenüber `actor='operator'` (manuelle Promotion bei sauberem
+    Gate) und `actor='system'` (Genesis-Pipeline).
+    Response enthält `force_promoted: bool` + `gate_violations: []`,
+    damit das Dashboard die Override-Markierung sichtbar machen
+    kann.
+21. ✅ **Cycle-Log um `kind` + `bt_pnl_pct`** —
+    `cycle_runs` bekommt zwei neue Spalten (idempotente
+    `ALTER TABLE`-Migration in `_ensure_extra_columns()`), die beim
+    Insert per Lookup auf `strategies_meta` befüllt werden. Neuer
+    Index `idx_cycle_runs_kind_ts (kind, ts DESC)`. Der API-Endpoint
+    `GET /cycles` akzeptiert `?kind=builtin|generated` und reicht
+    den Filter an den Server-side-Helper durch. Dashboard-API
+    `/api/finance-guru/cycles` proxied den Param mit. Frontend:
+    `CycleLogTable.vue` bekommt einen `USelect`-Filter "Alle Kinds
+    / Builtin / Nur generierte" plus ein zweizeiliges Strategie-
+    Cell (Name + UBadge `builtin`/`generated`), der UModal-Drill-
+    down zeigt Kind + Backtest-%. Filter ist client-seitig — das
+    Backend-Filter wird verfügbar gemacht, aber das Composable
+    pollt weiterhin alle Cycles auf einmal, damit das Tab-Switching
+    keinen zusätzlichen Roundtrip verursacht.
+22. ✅ **`dream-server/docs/RAG-FINANCE.md`** — neues Dokument mit
+    den vollständigen Payload-Schemas für alle sechs finance-
+    Collections (`finance_assets`, `finance_news`, `finance_social`,
+    `finance_asset_analysis`, `finance_relations`,
+    `finance_strategy_lessons`), Beispiel-Queries (sowohl gegen
+    `qdrant`-Raw als auch gegen die `/rag/*`-API), Operator-Smoke-
+    Tests pro Collection, und Verifier-Pattern-Übersicht für die
+    vier n8n-Workflows. Cross-Linked aus
+    `FINANCE-GURU-IMPROVEMENT-PLAN.md` und der Service-README.
+
+**Lessons learned aus Phase G:**
+
+* **Pydantic `extra=forbid` statt nur "ignore die Old-Field"** — die
+  saubere Lösung gegen accidental-bypass durch n8n-Workflow-
+  Replay. n8n hängt manchmal alte Workflow-Versionen mit veralteten
+  Bodies wieder los, und ein stillschweigend ignoriertes
+  `force: true` wäre der genau falsche Trade-off zwischen Backwards-
+  Compat und Sicherheit. Lieber laute HTTP 400.
+* **SQLite `ALTER TABLE` ohne `IF NOT EXISTS`-Klausel.** Die
+  Migration-Helper-Funktion `_ensure_extra_columns()` inspiziert
+  `PRAGMA table_info`, fügt fehlende Spalten einzeln nach und ist
+  damit idempotent — der gleiche Trick wie in `lifecycle.init_db()`.
+  Kein eigenes Migrationssystem, weil der gesamte State in einer
+  einzigen SQLite-Datei liegt und atomar gebackupt wird.
+* **Cycle-Log-`kind` per Lookup statt per Parameter.** Erst dachten
+  wir, `orchestrator.run_strategy_once()` sollte `kind` aus dem
+  `StrategyDef` weiterreichen. Verworfen: damit hätten wir den
+  Phase-D-Generated-Pfad und den Builtin-Pfad an zwei Stellen
+  synchron halten müssen, und der Backtest-Harness (`backtest.py`)
+  hätte denselben Lookup nochmal selbst machen müssen. Lookup im
+  `cycle_log.record()` zentral, defensive Try/Except, fertig.
+* **Dashboard-Filter client-seitig.** Der `kind`-Filter steht zwar
+  als Query-Param am Server zur Verfügung, das Composable zieht aber
+  weiterhin alle Cycles in einem Roundtrip — ein Tab-Wechsel im
+  UI ist instantan, kein Loader-Flash. Bei stärkerem Volumen
+  (>500 Cycles im Polling-Fenster) kann das Composable den
+  Server-Filter aktivieren — der Code-Pfad ist bereit.
+
+**Smoke-Test-Checkliste (Phase G):**
+
+```bash
+# 1) Cycle-Log-Migration ohne Datenverlust:
+ssh sky-net@192.168.178.110 'docker compose exec finance-guru-api \
+  sqlite3 /data/ledger.sqlite ".schema cycle_runs"' \
+  | grep -E "kind|bt_pnl_pct"
+# erwartet: beide Spalten + idx_cycle_runs_kind_ts
+
+# 2) Neuer Filter funktioniert (nach mind. 1 Cycle pro Kind):
+curl -s "http://192.168.178.110:8098/cycles?kind=generated&limit=5" \
+  | jq '.cycles[] | {strategy, kind, bt_pnl_pct, status}'
+curl -s "http://192.168.178.110:8098/cycles?kind=builtin&limit=5" \
+  | jq '.cycles[] | {strategy, kind, bt_pnl_pct, status}'
+
+# 3) Promote-Gate (beide Bedingungen):
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+# a) zu wenig pct → 412
+curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/strategies/promote \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"news_sentiment","bt_pnl_pct":3.5,"bt_n_trades":20}'
+# b) zu wenig trades → 412
+curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/strategies/promote \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"news_sentiment","bt_pnl_pct":15.0,"bt_n_trades":2}'
+# c) Altes force-Feld → 400
+curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/strategies/promote \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"news_sentiment","bt_pnl_pct":3.5,"bt_n_trades":2,"force":true}'
+# d) Override per Header → 200 + force_promoted=true + gate_violations[]
+curl -s -X POST http://192.168.178.110:8098/strategies/promote \
+  -H "Authorization: Bearer $TOK" -H "X-Force-Promote: 1" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"news_sentiment","bt_pnl_pct":3.5,"bt_n_trades":2}' | jq
+
+# 4) Audit-Trail dokumentiert override:
+curl -s "http://192.168.178.110:8098/strategies/audits?strategy=news_sentiment&limit=3" \
+  | jq '.audits[] | {transition, from_status, to_status, actor, note}'
+# erwartet: aktuellster Eintrag actor=operator:force-promote
+
+# 5) Docs erreichbar im Editor:
+ls -l ~/PhpstormProjects/codedredd/DreamServer/dream-server/docs/RAG-FINANCE.md
+
+# 6) Dashboard-Filter sichtbar:
+# /finance-guru/trading → Tab "Cycles & Runs" → neuer USelect
+# "Alle Kinds / Builtin / Nur generierte"; UBadge unterhalb des
+# Strategie-Namens; Modal zeigt "Kind" + "Backtest %".
+```
+
+### Phase G — Härtung & Aufräumen (legacy plan items, ✅ superseded)
+
+> Die drei Items waren die ursprüngliche Phase-G-Skizze und sind oben
+> umgesetzt. Mapping zur tatsächlichen Implementierung:
+
+20. **Backtest-Pflicht im Promotion-Pfad** → `app/main.py::lifecycle_promote`
+    + `PromoteStrategyIn (extra=forbid)` ✅
+21. **Cycle-Log-Index `bt_pnl_pct` + `kind`** → `app/cycle_log.py`
+    (`SCHEMA_SQL`, `_ensure_extra_columns`, `list_cycles(kind=)`) +
+    `app/main.py::list_cycles` + Dashboard
+    `CycleLogTable.vue` ✅
+22. **`docs/RAG-FINANCE.md`** → neu, 8 Sektionen, alle 6 Collections
+    + Beispiel-Queries + Operator-Smoke-Tests ✅
 
 ---
 

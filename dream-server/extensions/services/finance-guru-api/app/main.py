@@ -373,10 +373,14 @@ def list_cycles(
     strategy: str | None = Query(default=None, description="Filter by strategy"),
     status_filter: str | None = Query(default=None, alias="status",
                                       description="Filter by 'ok'|'empty'|'error'"),
+    kind: str | None = Query(default=None,
+                             description="Filter by lifecycle kind 'builtin'|'generated'"),
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict:
+    kind_filter = kind if kind in ("builtin", "generated") else None
     rows = cycle_log.list_cycles(strategy=strategy, limit=limit,
-                                 status_filter=status_filter)
+                                 status_filter=status_filter,
+                                 kind=kind_filter)
     return {
         "summary":  cycle_log.summary(strategy),
         "next_run": _state["next_run"],
@@ -745,8 +749,13 @@ class PromoteStrategyIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     bt_pnl_pct: float
     bt_n_trades: int = Field(..., ge=0)
-    force: bool = Field(False, description="If true, promote even when "
-                        "bt_pnl_pct < target (operator override).")
+    # NOTE: the body `force` flag is intentionally *not* exposed in
+    # Phase G — promotion overrides must travel via the
+    # `X-Force-Promote: 1` header so that the operator decision is
+    # explicit in HTTP logs (n8n's neverError-mode replays do not leak
+    # a stale body field into accidental promotions). Older callers
+    # that still send `force: true` get HTTP 400.
+    model_config = {"extra": "forbid"}
 
 
 class RetireStrategyIn(BaseModel):
@@ -895,22 +904,40 @@ def lifecycle_promote(payload: PromoteStrategyIn,
                       x_force_promote: str | None = Header(default=None, alias="X-Force-Promote"),
                       authorization: str | None = Header(default=None)) -> dict:
     _check_token(authorization)
-    force = payload.force or (x_force_promote or "").strip() == "1"
-    if not force and payload.bt_pnl_pct < CFG.weekly_audit_target_pct:
+    force = (x_force_promote or "").strip() == "1"
+    # Phase G — backtest is mandatory. Both the %-PnL gate AND the
+    # min-trades gate must hold unless the operator explicitly
+    # overrides via the X-Force-Promote: 1 header. The min-trades
+    # check protects against a "single lucky trade" backtest result.
+    min_pct    = CFG.weekly_audit_target_pct
+    min_trades = max(0, int(CFG.genesis_min_backtest_trades))
+    failed: list[str] = []
+    if payload.bt_pnl_pct < min_pct:
+        failed.append(
+            f"bt_pnl_pct {payload.bt_pnl_pct:+.2f}% < target {min_pct:+.2f}%")
+    if payload.bt_n_trades < min_trades:
+        failed.append(
+            f"bt_n_trades {payload.bt_n_trades} < min {min_trades} "
+            f"(FINANCE_GURU_GENESIS_MIN_BT_TRADES)")
+    if failed and not force:
         raise HTTPException(
             status.HTTP_412_PRECONDITION_FAILED,
-            f"backtest pnl {payload.bt_pnl_pct:+.2f}% < target "
-            f"{CFG.weekly_audit_target_pct:+.2f}%; set force=true or "
-            f"X-Force-Promote: 1 to override",
+            "backtest gate failed: " + "; ".join(failed) +
+            " — send header `X-Force-Promote: 1` to override (operator only)",
         )
     try:
         meta = lifecycle.promote(name=payload.name.strip(),
                                   bt_pnl_pct=payload.bt_pnl_pct,
                                   bt_n_trades=payload.bt_n_trades,
-                                  actor="operator" if force else "system")
+                                  actor=("operator:force-promote" if force and failed
+                                         else ("operator" if force else "system")))
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
-    return meta
+    if force and failed:
+        log.warning("FORCE-PROMOTE %s — gate violations bypassed: %s",
+                    payload.name, "; ".join(failed))
+    return dict(meta) | {"force_promoted": bool(force and failed),
+                         "gate_violations": failed}
 
 
 @app.post("/strategies/retire")
