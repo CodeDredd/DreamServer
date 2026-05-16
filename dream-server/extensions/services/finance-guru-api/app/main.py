@@ -1062,16 +1062,25 @@ def history_prices(symbol: str = Query(..., min_length=1),
 @app.get("/history/news")
 def history_news(symbol: str | None = Query(default=None),
                   days: int = Query(default=180, ge=1, le=365 * 2),
+                  hours: int | None = Query(default=None, ge=1, le=24 * 14),
                   limit: int = Query(default=200, ge=1, le=1000),
                   min_sentiment_abs: float | None = Query(default=None,
-                                                          ge=0.0, le=1.0)) -> dict:
+                                                          ge=0.0, le=1.0),
+                  min_urgency: int | None = Query(default=None, ge=0, le=5)) -> dict:
     """Headlines for the asset-behaviour workflow. Symbol filter is
-    optional — sometimes the workflow wants macro context too."""
+    optional — sometimes the workflow wants macro context too.
+    `hours` overrides `days` when set (Phase E causal-extraction wants
+    a short rolling window with urgency filtering)."""
     syms = [symbol.upper().strip()] if symbol else None
-    df = data.recent_news(lookback=dt.timedelta(days=days), symbols=syms,
+    lookback = (dt.timedelta(hours=hours) if hours
+                else dt.timedelta(days=days))
+    df = data.recent_news(lookback=lookback, symbols=syms,
                            min_sentiment_abs=min_sentiment_abs)
     if df.empty:
         return {"symbol": symbol, "days": days, "rows": []}
+    if min_urgency is not None and "urgency" in df.columns:
+        # Drop rows whose urgency is NULL or below threshold.
+        df = df[df["urgency"].fillna(-1).astype(int) >= int(min_urgency)]
     df = df.sort_values("ts", ascending=False).head(limit)
     rows = []
     for _, r in df.iterrows():

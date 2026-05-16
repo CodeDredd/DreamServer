@@ -1,6 +1,6 @@
 # Finance Guru — Verbesserungsplan (Paper-Trading, RAG, Qdrant, UI)
 
-> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ · Phase D ✅ deployed
+> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ · Phase D ✅ deployed · Phase E ✅ deployed
 > Verantwortlich: AI-Agent + Operator
 > Bezugspunkte: `AGENT-OPERATIONS.md §11–§14`, `extensions/services/finance-guru-api/`,
 > `extensions/services/finance-{vector,news,social,prices}/`, `extensions/services/dashboard-nuxt/`
@@ -771,43 +771,103 @@ dream finance lifecycle --kind generated
 dream finance status smoke3
 ```
 
-### Phase D — Strategie-Generator (legacy plan section)
+### Phase D — Strategie-Generator (legacy plan section, ✅ superseded by Phase D delivery above)
 
-12. **Strategie-DSL** in `app/strategies/dsl.py`:
-    JSON-Schema mit erlaubten Bausteinen
-    (`when: {signal: 'sentiment', op: '>=', value: 0.5}`,
-    `and / or`, `action: buy/sell`, `sizing: max_frac/fixed_eur`).
-13. **`app/strategies/llm_generated.py`**: Loader, der eine Zeile
-    aus `strategies_meta.kind='generated'` in eine Pseudo-`StrategyDef`
-    übersetzt (interpretiert die DSL → `decide(ctx)`-Closure). Damit
-    bleibt Discovery automatisch, ohne neue Python-Files.
-14. **n8n-Workflow `12-finance-strategy-genesis.json`** (Cron `0 */6 h`):
-    * Query an Qdrant `finance_relations` + `finance_asset_analysis`:
-      "welche Themen haben in den letzten 7 d die meiste
-      Sentiment-Bewegung?".
-    * LLM `reasoning` (`Qwen3.5-122B-A10B`) erzeugt **1–3 DSL-Patches**
-      (mit Verifier).
-    * `POST /strategies/propose` → guru-api macht **automatischen
-      Backtest** über die letzten 30 d Daten.
-    * Wenn `bt_pnl_pct >= 4 %` und `n_trades >= 5` → automatisch
-      promotet, sonst archiviert in `finance_strategy_lessons`.
+> Diese drei Items waren die ursprüngliche Phase-D-Skizze und sind
+> bereits geliefert — siehe „Phase D ✅ DONE 16.05.2026" oben.
+> Mapping zur tatsächlichen Implementierung:
 
-### Phase E — Kausalketten (7–10 Tage, parallel zu D möglich)
+12. **Strategie-DSL** → `extensions/services/finance-guru-api/app/strategies/dsl.py` ✅
+13. **`llm_generated.py` Loader** → `extensions/services/finance-guru-api/app/strategies/llm_generated.py` ✅
+14. **n8n `12-finance-strategy-genesis.json`** → `config/n8n/12-finance-strategy-genesis.json` ✅
+    (mit Quota-Gate aus dem Phase-D-Follow-up unten + dem `dream finance` CLI)
 
-15. **`finance_relations`-Collection** anlegen
-    (Payload: `{theme, entities[], symbols[], sectors[], evidence_ids[],
-    confidence, ts}`).
-16. **n8n `13-finance-causal-extraction.json`** (Cron `*/15 min`,
-    batched):
-    * Holt die letzten 6 h news.events mit `urgency >= 2`.
-    * LLM `default` extrahiert pro Headline ein
-      `{event, geo, mechanism}`-Triple + Vorschlag betroffener
-      Sektoren/Symbole.
-    * Verifier: jedes Symbol muss in TimescaleDB existieren.
-    * Aggregiert pro Thema → Upsert in `finance_relations`.
-17. **`relations_rag` Strategie** (Phase F): RAG-Treffer aus
-    `finance_relations` + Price-Korrelation gegen Sektor-Proxy =
-    BUY-Signal.
+### Phase E — Kausalketten (7–10 Tage, parallel zu D möglich) ✅ DONE 16.05.2026
+
+15. **`finance_relations`-Collection** ✅ vorhanden seit Phase B
+    (Bootstrap-Helper `qdrant_rag.ensure_relations_collection`,
+    Schreibhelfer `qdrant_rag.upsert_relation(...)`, HTTP-Endpoint
+    `POST /rag/relation` und RAG-Such-Endpoint `POST /rag/relations`).
+16. **n8n `13-finance-causal-extraction.json`** ✅ neu, Cron `*/15 min`:
+    * `GET /history/news?hours=6&min_urgency=2&limit=120` ← neu hinzu-
+      gefügte Query-Params (`hours` überschreibt `days`, `min_urgency`
+      filtert serverseitig — schrumpft Payload an den LLM erheblich).
+    * `GET /history/symbols?hours=168` liefert die Live-Universe.
+    * **Build brief**: dedupliziert Headlines per
+      `lower(source) + first 80 chars of title`, cappt auf 24 Items.
+    * **LLM `default`** (kein Reasoning, Cost-Sparer) extrahiert
+      `themes[]` mit `{theme, mechanism, summary, entities, sectors,
+      symbols, evidence_ids, confidence}` als striktes JSON
+      (`response_format: { type: 'json_object' }`).
+    * **Verifier (relations)**:
+      * filtert Symbole gegen die Live-Universe (Symbole, die nicht
+        existieren, werden aus der Liste *entfernt* — aber das Thema
+        bleibt erhalten, solange noch verifizierte Symbole *oder*
+        Evidence-IDs übrig sind),
+      * filtert `evidence_ids` auf die tatsächlich übergebenen News-IDs
+        des Briefs,
+      * verwirft Themen mit `confidence < 0.3` oder ohne jedes
+        verifizierte Symbol/Evidence,
+      * begrenzt auf max. 6 Themen pro Run.
+    * **POST `/rag/relation`** pro Thema (Bearer auth), danach
+      `Report OK / reject / Log skip` ins `enrichment_runs`-Audit.
+17. **`relations_rag` Strategie** — wird Phase F (Dashboard) zugeordnet,
+    nicht Teil dieses Ships.
+
+**Lessons learned aus Phase E:**
+
+* **Server-side filter > LLM-side filter.** Die `min_urgency`-/`hours`-
+  Query-Params auf `/history/news` sind ein 30-Zeilen-Patch, der den
+  Token-Verbrauch des Extraction-Calls glatt halbiert. Solche Filter
+  gehören vor das LLM, nicht in den System-Prompt.
+* **Partielle Akzeptanz statt Reject.** Erstentwurf hat ein Thema
+  komplett abgelehnt, sobald ein einziges nicht-Universe-Symbol darin
+  war. Das hat funktionierende Macro-Themes verschenkt (z. B. "OPEC
+  cuts" mit gültigen Energy-Tickern + einem halluzinierten EU-Ticker).
+  Jetzt: Symbole werden gefiltert, das Thema bleibt, solange genug
+  verifizierter Anker übrig ist.
+* **`default` reicht für Themenextraktion.** `reasoning` (Qwen3.5-122B)
+  ist hier nicht nötig — Headlines sind kurz, das Schema ist starr,
+  der Job ist eher Klassifikation als Strategie-Design. Spart ~70 %
+  Kosten pro Run gegenüber Workflow 12.
+* **Cron alle 15 min ist ein Token-Verbraucher.** Wenn man das real
+  laufen lässt, sind das 96 LLM-Calls/Tag — vergleichbar mit Workflow
+  09 (asset-behaviour). Bei knappem Budget: Cron auf `*/30` oder
+  `*/45` umstellen, der Trade-off ist nur Latenz beim Erkennen frischer
+  Macro-Themen.
+
+**Smoke-Test-Checkliste (Phase E):**
+
+```bash
+# 1) Neue Query-Params auf /history/news funktionieren:
+curl -s "http://192.168.178.110:8098/history/news?hours=6&min_urgency=2&limit=5" \
+  | jq '{n: (.rows | length), urgencies: ([.rows[].urgency] | unique)}'
+# erwartet: alle urgencies >= 2; n <= 5
+
+# 2) Workflow 13 manuell triggern:
+#    n8n UI → "Finance Causal Extraction" → Execute Workflow
+#    Erwartete Knotenkette: news → universe → brief → if → LLM →
+#    verifier → if → POST /rag/relation (mehrfach) → Report OK
+
+# 3) finance_relations enthält neue Einträge:
+TOKEN=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+curl -s -X POST http://192.168.178.110:8098/rag/relations \
+  -H "Content-Type: application/json" \
+  -d '{"query":"macro themes affecting multiple symbols","limit":5,"min_confidence":0.3}' \
+  | jq '.hits[] | {theme, mechanism, symbols, confidence, ts}'
+# erwartet: ≥ 1 Treffer aus dem letzten 13-Workflow-Lauf
+
+# 4) Audit-Trail sieht die Workflow-Runs:
+curl -s "http://192.168.178.110:8098/enrichment/runs?workflow=causal_extraction&limit=5" \
+  | jq '.runs[] | {ts, status, note}'
+# erwartet: ok / skipped / error Einträge
+
+# 5) DSL-Signal `rag.relations_count` kann jetzt sinnvoll feuern
+#    (Phase D-Strategien haben Datengrundlage):
+curl -s http://192.168.178.110:8098/strategies/dsl/catalog \
+  | jq '.signals["rag.relations_count"]'
+# erwartet: die Doku-Zeile aus dsl.py
+```
 
 ### Phase F — Dashboard-Erweiterungen
 
