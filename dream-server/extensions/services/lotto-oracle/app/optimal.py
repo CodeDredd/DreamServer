@@ -152,14 +152,19 @@ def build_optimal_schein(*, recency_k: int = RECENCY_K_DEFAULT,
 
         ranked = _rank_strategies_by_edge(meta, strategies_for(gid, recency_k=recency_k))
 
-        # Combinatorial: top-N strategies, each one field. Cycle the list
-        # if there are fewer strategies than fields requested.
+        # Always lead with meta_combo (kitchen-sink top mix) if available,
+        # then fill remaining fields with the next top-edge strategies.
         if g.kind == "combinatorial":
-            chosen_names = ranked[:n_fields]
+            ordered = (["meta_combo"] if "meta_combo" in ranked else []) + \
+                      [n for n in ranked if n != "meta_combo"]
+            chosen_names = ordered[:n_fields]
             while len(chosen_names) < n_fields:
-                chosen_names.append(ranked[0])
+                chosen_names.append(ordered[0])
         else:
-            chosen_names = ranked[:1]
+            # Digit: 1 field. Prefer meta_combo (cascades recency+endziffer+
+            # anti_pattern and inherits the history-guard exclusion).
+            chosen_names = (["meta_combo"] if "meta_combo" in ranked
+                            else ranked[:1])
 
         fields = []
         for name in chosen_names:

@@ -364,6 +364,93 @@ def _strat_random_uniform(g: Game, history: list[dict], *, rng: random.Random,
     return out
 
 
+def _strat_meta_combo(g: Game, history: list[dict], *, rng: random.Random,
+                      rows: int, exclude_last_k: int = 1) -> list[dict]:
+    """Top-Strategie: kaskadiert die stärksten Constraints in einem Pass.
+
+    Für den Hauptpool werden gleichzeitig erzwungen:
+      * recency_exclude  — keine Zahl aus den letzten K Ziehungen
+      * balanced         — Summe ∈ IQR der historischen Summen,
+                            Even/Odd-Mix, keine 3-er-Sequenz, ≥1 Zahl >31
+      * anti_pattern     — keine arithm. Folge, keine Schein-Reihe (1–7, 8–14, …)
+      * (history-guard wird automatisch via Post-Filter angewendet)
+
+    Bonuspools (Superzahl / Eurozahlen) erhalten ``recency_exclude``
+    ohne Soft-Constraints — der Pool ist zu klein für sinnvolle Regeln.
+
+    Statistisch ist jedes Lotto iid, also keine Verschiebung des
+    Erwartungswerts; was sich verschiebt ist die *Anteilsquote*
+    (geringere Überlappung mit beliebten Tipps → höherer Jackpot-Anteil,
+    falls man trifft) und das Risiko-Profil (keine Random-Ausreißer).
+    """
+    rows_grid = [set(range(start, start + 7)) for start in range(1, 50, 7)]
+    out = []
+    for _ in range(rows):
+        pool_values: dict[str, list[int]] = {}
+        rationale_parts = []
+        for i, p in enumerate(g.pools):
+            past = _pool_history(history, p.name)
+            past_k = past[:exclude_last_k]
+            forbidden = {n for draw in past_k for n in draw}
+            sums = [sum(d) for d in past] or [p.pick * (p.low + p.high) // 2]
+            target_lo = statistics.quantiles(sums, n=4)[0] if len(sums) >= 4 else min(sums)
+            target_hi = statistics.quantiles(sums, n=4)[2] if len(sums) >= 4 else max(sums)
+            attempts = 0
+            chosen: list[int] = []
+            relaxed = False
+            while attempts < 1500:
+                attempts += 1
+                pool = [n for n in range(p.low, p.high + 1) if n not in forbidden]
+                if len(pool) < p.pick:
+                    pool = list(range(p.low, p.high + 1))
+                    relaxed = True
+                pick = sorted(rng.sample(pool, p.pick))
+                if i == 0 and g.id in {"lotto-6aus49", "eurojackpot"} and p.pick >= 5:
+                    s = sum(pick)
+                    if not (target_lo <= s <= target_hi):
+                        continue
+                    odd = sum(1 for n in pick if n % 2)
+                    if not (p.pick // 3 <= odd <= p.pick - p.pick // 3):
+                        continue
+                    if any(b - a == 1 and c - b == 1 for a, b, c in zip(pick, pick[1:], pick[2:])):
+                        continue
+                    if all(n <= 31 for n in pick):
+                        continue
+                    diffs = {b - a for a, b in zip(pick, pick[1:])}
+                    if len(diffs) == 1:
+                        continue
+                    if any(set(pick).issubset(rg) for rg in rows_grid):
+                        continue
+                chosen = pick
+                break
+            if not chosen:
+                pool = [n for n in range(p.low, p.high + 1) if n not in forbidden] \
+                       or list(range(p.low, p.high + 1))
+                chosen = sorted(rng.sample(pool, p.pick))
+                relaxed = True
+            pool_values[p.name] = chosen
+            if i == 0 and p.pick >= 5:
+                rationale_parts.append(
+                    f"{p.name}: recency+balanced+anti-pattern kaskadiert "
+                    f"(Summe∈[{int(target_lo)},{int(target_hi)}], even/odd, "
+                    f"≥1 Zahl >31, keine 3er-Folge, keine Scheinreihe)"
+                    + (" — relaxed" if relaxed else ""),
+                )
+            else:
+                rationale_parts.append(
+                    f"{p.name}: recency_exclude (letzte {exclude_last_k} Ziehung(en) verboten)"
+                    + (" — relaxed" if relaxed else ""),
+                )
+        payload, display = _format_combinatorial(g, pool_values)
+        out.append({
+            "strategy":  "meta_combo",
+            "payload":   payload,
+            "display":   display,
+            "rationale": " · ".join(rationale_parts),
+        })
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Digit-game strategies (Spiel 77 / Super 6)
 # --------------------------------------------------------------------------- #
@@ -563,6 +650,69 @@ def _digit_strat_random_uniform(g: Game, history: list[dict], *, rng: random.Ran
     return out
 
 
+def _digit_strat_meta_combo(g: Game, history: list[dict], *, rng: random.Random,
+                            rows: int, exclude_last_k: int = 1) -> list[dict]:
+    """Top-Digit-Strategie: kaskadiert die User-Wünsche in einem Pass.
+
+      * recency_exclude (pro Position andere Ziffer als letzte K Ziehungen)
+      * last_digit_recency (Endziffer ≠ Endziffern der letzten 5 Ziehungen
+        → Spiel-77-Klasse-7-Marker, Super-6 Endziffer-Logik)
+      * anti_pattern (keine all-equal, keine 1234567, keine Datums-Tipps,
+        keine Palindrome)
+      * unique_history (post-filter via history-guard) — schließt jede
+        je gezogene Losnummer aus.
+    """
+    out = []
+    history_strs = _digit_history(history)
+    history_k = history_strs[:exclude_last_k]
+    last_digit_history = {int(s[-1]) for s in history_strs[:5] if s}
+    last_full = history_strs[0] if history_strs else None
+    for _ in range(rows):
+        attempts = 0
+        digits = ""
+        while attempts < 1500:
+            attempts += 1
+            # Position-wise build under recency+last-digit constraint
+            buf: list[str] = []
+            ok = True
+            for pos in range(g.digits):
+                forbidden = {int(s[pos]) for s in history_k if len(s) > pos}
+                if pos == g.digits - 1:
+                    forbidden |= last_digit_history
+                choices = [d for d in range(10) if d not in forbidden] or list(range(10))
+                buf.append(str(rng.choice(choices)))
+            cand = "".join(buf)
+            # anti_pattern checks
+            if len(set(cand)) == 1:
+                continue
+            if all(int(b) - int(a) == 1 for a, b in zip(cand, cand[1:])):
+                continue
+            if all(int(a) - int(b) == 1 for a, b in zip(cand, cand[1:])):
+                continue
+            if cand == cand[::-1]:
+                continue
+            if g.digits >= 4:
+                d1 = int(cand[:2]); d2 = int(cand[2:4])
+                if 1 <= d1 <= 31 and 1 <= d2 <= 12:
+                    continue
+            if last_full and cand == last_full:
+                continue
+            digits = cand
+            break
+        if not digits:
+            digits = "".join(str(rng.randint(0, 9)) for _ in range(g.digits))
+        payload, display = _format_digits(digits)
+        out.append({
+            "strategy":  "meta_combo",
+            "payload":   payload,
+            "display":   display,
+            "rationale": ("recency+endziffer+anti-pattern kaskadiert "
+                          f"(Endziffer ≠ {sorted(last_digit_history) or '–'}, "
+                          "keine all-equal/Folge/Datum/Palindrom)"),
+        })
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
@@ -595,6 +745,12 @@ def _recency_desc_digit(k: int) -> str:
 def _combinatorial_strategies(recency_k: int) -> list[Strategy]:
     k = max(RECENCY_K_MIN, min(RECENCY_K_MAX, int(recency_k)))
     return [
+        Strategy("meta_combo", "Top-Mix (Recency + Balanced + Anti-Pattern)",
+                 "Kombiniert die stärksten Constraints in einer Auswahl: schließt die "
+                 "letzten K Ziehungen aus, erzwingt plausible Summe/Even-Odd und vermeidet "
+                 "beliebte Spielermuster — plus History-Guard (kein 1:1-Match je Ziehung).",
+                 lambda g, h, rng, rows, _k=k:
+                     _strat_meta_combo(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
         Strategy("recency_exclude", _recency_label(k), _recency_desc_combo(k),
                  lambda g, h, rng, rows, _k=k:
                      _strat_recency_exclude(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
@@ -622,6 +778,11 @@ def _combinatorial_strategies(recency_k: int) -> list[Strategy]:
 def _digit_strategies(recency_k: int) -> list[Strategy]:
     k = max(RECENCY_K_MIN, min(RECENCY_K_MAX, int(recency_k)))
     return [
+        Strategy("meta_combo", "Top-Mix (Recency + Endziffer + Anti-Pattern)",
+                 "Kaskadiert recency_exclude, last_digit_recency und anti_pattern — "
+                 "und der History-Guard schließt automatisch alle je gezogenen Losnummern aus.",
+                 lambda g, h, rng, rows, _k=k:
+                     _digit_strat_meta_combo(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
         Strategy("recency_exclude", _recency_label(k), _recency_desc_digit(k),
                  lambda g, h, rng, rows, _k=k:
                      _digit_strat_recency_exclude(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
@@ -703,6 +864,47 @@ def _historical_combo_set(g: Game, history: list[dict]) -> set[tuple]:
     return sigs
 
 
+def _historical_digit_set(g: Game, history: list[dict]) -> set[str]:
+    """Set jeder je gezogenen Losnummer (für Spiel77 / Super6)."""
+    if g.kind != "digit":
+        return set()
+    return {s for s in _digit_history(history) if len(s) == g.digits}
+
+
+def _apply_history_guard_digit(g: Game, tips: list[dict], history_set: set[str],
+                               *, regen: Callable[[], list[dict]]) -> list[dict]:
+    if not history_set:
+        return tips
+    n_hist = len(history_set)
+    out: list[dict] = []
+    for tip in tips:
+        cur = tip
+        payload = cur.get("payload") or {}
+        digits = payload.get("digits") if isinstance(payload, dict) else None
+        retries = 0
+        while isinstance(digits, str) and digits in history_set and retries < HISTORY_GUARD_MAX_RETRIES:
+            retries += 1
+            try:
+                replacement = regen() or []
+            except Exception:  # noqa: BLE001
+                break
+            if not replacement:
+                break
+            cur = replacement[0]
+            payload = cur.get("payload") or {}
+            digits = payload.get("digits") if isinstance(payload, dict) else None
+        if isinstance(digits, str) and digits in history_set:
+            note = f"⚠ historische Losnummer nicht vermeidbar ({n_hist} hist. Ziehungen)"
+        else:
+            note = f"schließt {n_hist} historische Losnummern aus"
+            if retries:
+                note += f" ({retries}× neu gezogen)"
+        r = (cur.get("rationale") or "").strip()
+        cur["rationale"] = f"{r} · {note}" if r else note
+        out.append(cur)
+    return out
+
+
 def _apply_history_guard_combo(g: Game, tips: list[dict], history_set: set[tuple],
                                *, regen: Callable[[], list[dict]]) -> list[dict]:
     if not history_set:
@@ -746,10 +948,14 @@ def generate_tips(game_id: str, history: list[dict],
     the history guard: if the tip's full payload matches any historical
     draw, the strategy is re-rolled (up to ``HISTORY_GUARD_MAX_RETRIES``)
     so we never recommend a 1:1 repeat.
+    For digit games the analogous guard rejects any Losnummer that has
+    ever been drawn (10⁷ pool for Spiel 77, 10⁶ for Super 6 — repeats
+    are theoretically possible but historically didn't happen).
     """
     g = GAMES[game_id]
     rng = rng or random.Random()
-    history_set = _historical_combo_set(g, history) if g.kind == "combinatorial" else set()
+    history_set_combo = _historical_combo_set(g, history) if g.kind == "combinatorial" else set()
+    history_set_digit = _historical_digit_set(g, history)  if g.kind == "digit"          else set()
     tips: list[dict] = []
     for s in strategies_for(game_id, recency_k=recency_k):
         try:
@@ -757,9 +963,16 @@ def generate_tips(game_id: str, history: list[dict],
         except Exception as exc:  # noqa: BLE001
             log.exception("strategy %s for %s crashed: %s", s.name, game_id, exc)
             continue
-        if history_set:
+        if history_set_combo:
             emitted = _apply_history_guard_combo(
-                g, emitted, history_set,
+                g, emitted, history_set_combo,
+                regen=lambda _s=s: _s.fn(g, history, rng, 1),
+            )
+        elif history_set_digit and s.name != "unique_history":
+            # unique_history schließt das schon per Definition aus —
+            # die Note wäre redundant.
+            emitted = _apply_history_guard_digit(
+                g, emitted, history_set_digit,
                 regen=lambda _s=s: _s.fn(g, history, rng, 1),
             )
         tips.extend(emitted)
@@ -801,6 +1014,12 @@ def run_strategy(game_id: str, name: str, history: list[dict], *,
         history_set = _historical_combo_set(g, history)
         emitted = _apply_history_guard_combo(
             g, emitted, history_set,
+            regen=lambda: s.fn(g, history, rng, 1),
+        )
+    elif g.kind == "digit" and name != "unique_history":
+        history_set_d = _historical_digit_set(g, history)
+        emitted = _apply_history_guard_digit(
+            g, emitted, history_set_d,
             regen=lambda: s.fn(g, history, rng, 1),
         )
     return emitted
