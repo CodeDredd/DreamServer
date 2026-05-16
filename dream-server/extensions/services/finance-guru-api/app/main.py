@@ -174,6 +174,14 @@ async def lifespan(app: FastAPI):
     lifecycle.init_db()
     log.info("Discovering strategy plugins")
     discover_strategies()
+    # Phase P-3.3: defensively bootstrap finance_social so /rag/status
+    # and /assets/canonical don't show error rows just because
+    # finance-social hasn't seen a first post yet (missing Reddit
+    # credentials, etc.). Idempotent.
+    try:
+        qdrant_rag.ensure_social_collection()
+    except Exception:  # noqa: BLE001
+        log.exception("ensure_social_collection failed (continuing)")
     enabled = _enabled_strategies()
     log.info("Plugins discovered: registered=%d enabled=%d (%s)",
              len(REGISTRY), len(enabled), ",".join(enabled))
@@ -550,6 +558,20 @@ def report_run(payload: RunReportIn,
 def list_runs(workflow: str | None = Query(default=None),
               limit: int = Query(100, ge=1, le=500)) -> dict:
     return {"runs": enrichment.list_runs(workflow=workflow, limit=limit)}
+
+
+@app.get("/enrichment/health")
+def enrichment_health(window_hours: int = Query(default=24, ge=1, le=24 * 14)) -> dict:
+    """Phase P-2.1: per-workflow ok/skip/error counts + verdict over the
+    last `window_hours`. The dashboard and `dream doctor` colour
+    `verdict=='silent-skip'` red — that's the anti-pattern that hid
+    Workflow 09 + 13 burning cron slots without producing Qdrant
+    points before Phase P-1."""
+    return {
+        "window_hours": window_hours,
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "workflows":    enrichment.run_health(window_hours=window_hours),
+    }
 
 
 class AnalysisSearchReq(BaseModel):
@@ -1029,6 +1051,77 @@ def history_symbols(asset_type: str | None = Query(default=None),
     universe of analysable assets."""
     syms = data.list_symbols(asset_type=asset_type, since=dt.timedelta(hours=hours))
     return {"asset_type": asset_type, "since_hours": hours, "symbols": syms}
+
+
+# --------------------------------------------------------------------------- #
+# Phase P-1: Canonical-universe endpoint. Reads from the daily-refreshed
+# `finance_assets` Qdrant collection so n8n workflows that need to pick
+# "which symbols exist?" are NOT coupled to live-tick freshness or
+# market hours. WF 09/12/13 should call this instead of /history/symbols.
+# Falls back to enrichment SQLite (every symbol ever analysed) if Qdrant
+# is empty, then to /history/symbols (90-day window) so we never return
+# an empty universe just because finance-vector hasn't seeded yet.
+# --------------------------------------------------------------------------- #
+@app.get("/assets/canonical")
+def assets_canonical(asset_type: str | None = Query(default=None),
+                     limit: int = Query(default=500, ge=1, le=5000),
+                     detail: bool = Query(default=False),
+                     only_with_prices: bool = Query(default=False),
+                     price_history_days: int = Query(default=90, ge=1, le=365)) -> dict:
+    rows = qdrant_rag.list_assets(asset_type=asset_type, limit=limit)
+    source = "qdrant"
+    if not rows:
+        # Fallback 1: every symbol the enrichment loop has ever touched.
+        try:
+            known = enrichment.list_analysed_symbols(limit=limit)
+            rows = [{"symbol": s.get("symbol"), "type": s.get("asset_type"),
+                     "name": None, "sector": None, "country": None,
+                     "market_cap": None}
+                    for s in known
+                    if s.get("symbol") and (
+                        not asset_type
+                        or (s.get("asset_type") or "").lower() == asset_type.lower())]
+            source = "enrichment-sqlite" if rows else source
+        except Exception:  # noqa: BLE001
+            log.exception("assets_canonical SQLite fallback failed")
+    if not rows:
+        # Fallback 2: widest possible history window (90 days). Last
+        # resort so generic operator queries never get [] on a fresh
+        # install.
+        try:
+            syms = data.list_symbols(asset_type=asset_type,
+                                     since=dt.timedelta(days=90))
+            rows = [{"symbol": s, "type": asset_type, "name": None,
+                     "sector": None, "country": None, "market_cap": None}
+                    for s in syms]
+            source = "history-90d" if rows else source
+        except Exception:  # noqa: BLE001
+            log.exception("assets_canonical history fallback failed")
+    # Phase P-1 follow-up: intersect with the price-history universe
+    # so downstream workflows (WF09 asset-behaviour, WF13 causal-
+    # extraction) don't churn on symbols finance-prices never fetched.
+    # The canonical list stays the source of truth for the universe
+    # *catalogue*; this filter only narrows it to *currently-analysable*
+    # symbols. Without this every WF09 tick logs `no price history`
+    # for tickers like 2Z that exist in finance_assets but never had
+    # a single tick.
+    if only_with_prices and rows:
+        try:
+            tradable = set(data.list_symbols(
+                asset_type=asset_type,
+                since=dt.timedelta(days=max(1, int(price_history_days)))))
+            rows = [r for r in rows
+                    if (r.get("symbol") or "").upper() in tradable]
+            source = f"{source}+history{price_history_days}d"
+        except Exception:  # noqa: BLE001
+            log.exception("assets_canonical only_with_prices filter failed")
+    rows = rows[:limit]
+    if detail:
+        return {"asset_type": asset_type, "source": source,
+                "count": len(rows), "assets": rows}
+    return {"asset_type": asset_type, "source": source,
+            "count": len(rows),
+            "symbols": [r["symbol"] for r in rows if r.get("symbol")]}
 
 
 @app.get("/history/prices")

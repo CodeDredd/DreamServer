@@ -529,7 +529,7 @@ curl -s http://127.0.0.1:8098/strategies/lifecycle | jq '.count, .strategies[] |
 curl -s http://127.0.0.1:8098/strategies/audits?limit=10 | jq
 
 # 3) Manual audit synchronously, NO retiring + NO lesson cost:
-TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2)
 curl -s -X POST "http://127.0.0.1:8098/strategies/audit?sync=true" \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -d '{"retire_failing":false,"emit_lessons":false}' | jq
@@ -701,7 +701,7 @@ curl -s -X POST http://127.0.0.1:8098/rag/strategy-lessons \
 curl -s http://127.0.0.1:8098/strategies/dsl/catalog | jq '.signals | keys | length, .gate'
 
 # 2) Propose mit absichtlich-ungültiger DSL → HTTP 400:
-TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2)
 curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://127.0.0.1:8098/strategies/propose \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
   -d '{"name":"bad","source":{"version":1,"rules":[]}}'
@@ -730,58 +730,6 @@ n8n UI → Executions → FinStratGenesis001 → letzte Execution:
   - Cooldown 60s
 ```
 
-### Phase D Roadmap-Reste (für später)
-
-* **Cycle-Log-Filter `kind=generated`** im Dashboard — wird Teil von
-  Phase F (Dashboard-Panels).
-* ✅ **Operator-CLI** `dream finance <sub>` (16.05.2026, Phase D
-  follow-up) — `cmd_finance` in `dream-cli` mountet `catalog | propose |
-  evaluate | lifecycle | status` als dünne Wrapper auf die HTTP-Endpoints
-  und liest `FINANCE_GURU_TOKEN`/`FINANCE_GURU_PORT` aus `~/dream-server/.env`.
-  `dream finance-propose <file.json>` ist als Alias auf `dream finance
-  propose` registriert, damit die ursprüngliche Plan-Shortform aus §6
-  arbeitet. `--sync` macht direkt im Anschluss `POST /strategies/<n>/evaluate?sync=true`
-  — das Smoke-`curl`-Pattern aus §6 ist damit Ein-Befehl-Ergonomie.
-* ✅ **Genesis-Quota** `FINANCE_GURU_GENESIS_QUOTA` (Default 25 Proposals /
-  rolling 7d) — `lifecycle.count_recent_proposed()` zählt `kind='generated'`-
-  Zeilen im Fenster; `lifecycle_propose` lehnt mit `HTTP 429` ab wenn das
-  Budget erschöpft ist. Quota + `quota_used` werden im Catalog
-  (`/strategies/dsl/catalog.gate`) exponiert, damit der n8n-Verifier in
-  Workflow `12-finance-strategy-genesis.json` den verbleibenden
-  Spielraum sieht (Workflow ist mit `neverError: true` für 4xx
-  vorbereitet — kein Workflow-Patch nötig). 0 deaktiviert die Quota für
-  Back-Compat mit dem ersten Phase-D-Ship.
-
-### Phase D Smoke-Tests (Follow-up)
-
-```
-# Catalog enthält jetzt Quota:
-curl -s http://127.0.0.1:8098/strategies/dsl/catalog | jq '.gate'
-# erwartet: enthält quota_per_window, quota_window_days, quota_used.
-
-# Quota-Block einmal manuell auslösen (Test-Umgebung):
-FINANCE_GURU_GENESIS_QUOTA=1 docker compose up -d finance-guru-api
-dream finance propose /tmp/strat.json --name smoke1   # 201 + queued_backtest=true
-dream finance propose /tmp/strat.json --name smoke2   # 429 "genesis quota exhausted ..."
-
-# Operator-CLI End-to-End:
-dream finance catalog | jq '.gate.quota_per_window'
-dream finance propose /tmp/strat.json --name smoke3 --sync   # propose + evaluate in einem Call
-dream finance lifecycle --kind generated
-dream finance status smoke3
-```
-
-### Phase D — Strategie-Generator (legacy plan section, ✅ superseded by Phase D delivery above)
-
-> Diese drei Items waren die ursprüngliche Phase-D-Skizze und sind
-> bereits geliefert — siehe „Phase D ✅ DONE 16.05.2026" oben.
-> Mapping zur tatsächlichen Implementierung:
-
-12. **Strategie-DSL** → `extensions/services/finance-guru-api/app/strategies/dsl.py` ✅
-13. **`llm_generated.py` Loader** → `extensions/services/finance-guru-api/app/strategies/llm_generated.py` ✅
-14. **n8n `12-finance-strategy-genesis.json`** → `config/n8n/12-finance-strategy-genesis.json` ✅
-    (mit Quota-Gate aus dem Phase-D-Follow-up unten + dem `dream finance` CLI)
-
 ### Phase E — Kausalketten (7–10 Tage, parallel zu D möglich) ✅ DONE 16.05.2026
 
 15. **`finance_relations`-Collection** ✅ vorhanden seit Phase B
@@ -802,8 +750,7 @@ dream finance status smoke3
     * **Verifier (relations)**:
       * filtert Symbole gegen die Live-Universe (Symbole, die nicht
         existieren, werden aus der Liste *entfernt* — aber das Thema
-        bleibt erhalten, solange noch verifizierte Symbole *oder*
-        Evidence-IDs übrig sind),
+        bleibt erhalten, solange noch verifizierte Symbole/Evidence-IDs übrig sind),
       * filtert `evidence_ids` auf die tatsächlich übergebenen News-IDs
         des Briefs,
       * verwirft Themen mit `confidence < 0.3` oder ohne jedes
@@ -850,7 +797,7 @@ curl -s "http://192.168.178.110:8098/history/news?hours=6&min_urgency=2&limit=5"
 #    verifier → if → POST /rag/relation (mehrfach) → Report OK
 
 # 3) finance_relations enthält neue Einträge:
-TOKEN=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+TOKEN=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2)
 curl -s -X POST http://192.168.178.110:8098/rag/relations \
   -H "Content-Type: application/json" \
   -d '{"query":"macro themes affecting multiple symbols","limit":5,"min_confidence":0.3}' \
@@ -966,7 +913,7 @@ curl -s "http://192.168.178.110:8098/cycles?kind=builtin&limit=5" \
   | jq '.cycles[] | {strategy, kind, bt_pnl_pct, status}'
 
 # 3) Promote-Gate (beide Bedingungen):
-TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2)
 # a) zu wenig pct → 412
 curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://192.168.178.110:8098/strategies/promote \
   -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
@@ -1127,3 +1074,727 @@ Gesamt: ~30 d AI-Agent-Arbeit, parallelisierbar in 3 Tracks
   Tabs eingetauscht; falls nötig kommt eine `UBreadcrumb` als
   Sekundärnavigation.
 
+---
+
+# Iteration 2 — Operator-Feedback 05/2026 (Phasen H–M)
+
+> Quelle: Operator-Review nach Phase G-Deploy. Adressiert fünf
+> konkrete Beobachtungen aus dem Live-Betrieb:
+>
+> 1. Strategien deployen nur ~30 % des Cash-Buckets pro Cycle, der
+>    Rest liegt brach (Symptom: `equity_eur ≈ seed_eur + ε` selbst
+>    bei steigenden Märkten).
+> 2. Sell-Logik realisiert Verluste auf eine einzelne negative
+>    Headline hin, ohne Re-Verifikation gegen News-/RAG-Stand und
+>    ohne Mindesthaltedauer.
+> 3. `_rag_evidence()` macht pro Trade-Signal **drei** sequentielle
+>    Qdrant-Calls. Latenz im Decide-Loop unnötig hoch.
+> 4. Sechs Qdrant-Collections — sind es zu viele? (Antwort vorweg:
+>    nein, die Trennung ist korrekt, aber die *Nutzung* muss
+>    konsolidiert werden, s. Phase J.)
+> 5. Vorbereitung Live-Trading (Trade Republic via `pytr`,
+>    Binance via `ccxt`) ohne sofortige Ausführung.
+> 6. Neuer RAG-Knoten: Geo-/Rohstoff-Exposure pro Asset und pro
+>    Land (Produktion vs. Import).
+
+## H. Sizing & Cash-Utilization (3–4 d)
+
+**Problem.** `max_position_frac=0.10` × `MAX_FRESH_BUYS=3` pro
+Cycle ⇒ höchstens 30 % Cash je Strategie + Cycle in den Markt; bei
+ruhigen News-Tagen 0 %. Verkäufe füllen Cash auf, der dann erst im
+nächsten Cycle (Cron `*/5 min` für `news_sentiment`) re-investiert
+wird — und auch dann wieder nur zu 30 %. Effektive Investitions­quote
+typischerweise **15–40 %**, das +10 %-WoW-Gate ist mathematisch
+kaum erreichbar.
+
+**Plan.**
+
+H-1. **Cash-Utilization-Target im Orchestrator.** Neuer Config-Wert
+   `FINANCE_GURU_TARGET_INVESTED_FRAC=0.85` (Default; 0 = aus). Nach
+   `decide()` rechnet `orchestrator._fill_to_target()`:
+   * `invested = Σ(positions.qty × latest_price)`
+   * `equity   = invested + cash`
+   * `gap_eur  = max(0, equity × target − invested)`
+   * Wenn `gap_eur > 0`, **upscalt** der Orchestrator die bereits
+     emittierten Buy-Signals proportional ihrer `confidence`, bis
+     entweder das Target erreicht oder der per-Position-Cap
+     (`max_position_frac × equity`, NICHT mehr nur × `cash`)
+     getroffen ist. Keine Konstruktion neuer Symbole — das bleibt
+     die Hoheit der Strategie.
+
+H-2. **Sizing auf Equity statt Cash.** `_size_buy()` benutzt aktuell
+   `ctx.cash_eur × max_frac`. Das schrumpft mit jedem Kauf. Wechsel
+   auf `ctx.equity_eur × max_frac` (siehe H-1 oben). `DecisionContext`
+   bekommt `equity_eur: float`. Bestehende Strategien spüren das
+   transparent; nur die Sentinel `eur_target == "max_position_frac"`
+   wird neu ausgewertet.
+
+H-3. **Kelly-Lite Sizing als opt-in.** Neuer Sizing-Modus
+   `kelly_lite` in `dsl.py` und im Orchestrator:
+   `frac = clip(confidence − risk, 0, 1) × max_position_frac`.
+   Builtin-Strategien bleiben auf `max_position_frac`,
+   LLM-generierte können `kelly_lite` wählen — ohne den Hot-Path
+   alter Strategien anzufassen.
+
+H-4. **MAX_FRESH_BUYS rauf, mit Diversifikationsgate.** `news_
+   sentiment` und `social_buzz` heben `MAX_FRESH_BUYS` auf 8 an,
+   aber per Symbol max.   1 Buy pro Cycle (steht schon implizit drin) UND per Sektor max. 2 (neu, via `ctx.asset_types` +
+   späteres `ctx.asset_sectors` aus Phase K).
+
+H-5. **Re-Balance-Cycle**, separater Cron (`*/30 min`):
+   `POST /strategies/{name}/rebalance` deployt ungenutzten Cash
+   in bestehende Positionen mit `confidence ≥ 0.7` ohne neue
+   Symbole zu öffnen. Defensiv: aktiv nur, wenn
+   `cash / equity > 1 − target × 0.9`.
+
+**DoD H.** Nach 24 h Laufzeit: median `invested / equity ≥ 0.7`
+über alle live-Strategien (sichtbar im neuen
+`/strategies/portfolio`-Endpoint). `total_pnl_pct` korreliert mit
+Marktrendite statt um 0 zu pendeln.
+
+---
+
+## I. Sell-Verifier & Loss-Discipline (3 d)
+
+**Problem.** `news_sentiment` verkauft auf eine einzelne Headline
+mit `sentiment ≤ -0.5`. `momentum_breakout` schließt auf 20-bar-Low.
+Beide ignorieren (a) den aktuellen Buchverlust, (b) ob die Headline
+ein Duplikat / Re-Print ist, (c) ob die News-Quelle reliability
+< 0.5 hat (Quellen-Reliability liegt seit Phase B vor, wird aber
+nicht im Sell-Pfad konsumiert).
+
+**Plan.**
+
+I-1. **Hard-Stop vs. Soft-Stop trennen.**
+   * Hard-Stop: `pnl_pct ≤ FINANCE_GURU_STOP_LOSS_PCT` (Default
+     −8 %) → Sell ohne weitere Prüfung, immer.
+   * Soft-Stop (negative News, momentum-Bruch): nur ausführen, wenn
+     **alle** zutreffen:
+     - mindestens **2 distinkte Quellen** in `news` mit
+       `sentiment ≤ −0.5` in den letzten 60 min, ODER
+     - eine Quelle mit `reliability ≥ 0.7` (via
+       `ctx.get_source_weight`).
+     - Position hält ≥ `FINANCE_GURU_MIN_HOLD_MINUTES` (Default 90).
+     - Mindestens 1 `finance_relations`-Treffer mit
+       `mechanism` ≠ "noise" für das Symbol.
+
+I-2. **Loss-Realisation-Gate.** Wenn ein Sell **gleichzeitig**
+   Soft-Stop UND `pnl_pct < 0` ist, schickt der Orchestrator das
+   Signal an `verifier.confirm_loss_sell()`. Diese ruft `llm.chat`
+   mit `model='default'` (nicht `reasoning` — Kostendisziplin §10
+   AGENT-OPS), `max_tokens=200`, JSON-Output
+   `{"verdict": "sell" | "hold", "reason": "..."}`.
+   Eingaben: aktuelle Headlines, RAG-Evidence-Bundle (s. Phase J),
+   Position-Detail. Verdict `hold` ⇒ Skip, vermerkt in
+   `cycle_log.payload.skipped[].why = "verifier_held_loss"`.
+
+I-3. **Cooldown nach Sell.** Pro Symbol 30 min keine neuen
+   Buy-Signals nach einem Sell — vermeidet Wash-Trade-Pattern.
+   Implementierung: `ledger.last_sell_ts(strategy, symbol)`
+   wird in `_build_context()` mitgeladen, Strategien filtern.
+
+I-4. **Take-Profit gestaffelt.** Statt einmalig +5 % all-out
+   ein Trailing-System: 50 % der Position bei +5 %, weitere 25 %
+   bei +10 %, Rest läuft mit Stop bei Break-Even. Implementiert
+   in der Strategie, nicht im Orchestrator (jede Strategie kann
+   ihre eigene Treppe haben).
+
+**DoD I.** `cycle_log` zeigt für jeden Loss-Sell mindestens einen
+`verifier_*`-Eintrag. Hard-Stop-Frequenz ≤ 1× pro Strategie pro
+Woche (Audit-Metrik in `/strategies/audit`).
+
+---
+
+## J. Unified RAG Evidence (2 d)
+
+**Problem.** `news_sentiment._rag_evidence()` macht 3 Qdrant-Calls
+sequentiell pro Signal. Bei 8 Signalen × 3 Strategien × ~80 ms pro
+Call = **~1.9 s zusätzliche Decide-Latenz** pro Cycle.
+
+**Warum nicht eine Collection?** Drei harte technische Gründe:
+
+| Collection                | Schreibrate     | Retention     | Payload-Schema |
+|---------------------------|-----------------|---------------|----------------|
+| `finance_news`            | ~2k/Tag         | 30 d (TTL)    | title, source, urgency, sentiment, symbols[] |
+| `finance_social`          | ~5k/Tag         | 14 d          | platform, score, sentiment, symbols[] |
+| `finance_asset_analysis`  | ~500/Tag        | 365 d         | summary, confidence, ts |
+| `finance_relations`       | ~50/Tag         | 365 d         | theme, mechanism, entities, symbols, sectors |
+| `finance_strategy_lessons`| ~5/Woche        | unbegrenzt    | strategy, outcome, pnl_pct, lesson |
+| `finance_assets`          | 1×/Tag rebuild  | bis Refresh   | hq, sector, isin |
+
+Mischen würde alle Payload-Indexe auf den Lowest-Common-Denominator
+zwingen und Retention wäre nicht mehr per-Domain steuerbar. Wir
+behalten also sechs Collections.
+
+**Was wir stattdessen tun:**
+
+J-1. **`POST /rag/evidence`** — neuer Server-Endpoint, der pro
+   Aufruf parallel (`asyncio.gather`) über N Collections sucht und
+   ein **eines** JSON-Bundle zurückliefert:
+   ```json
+   {
+     "symbol": "AAPL",
+     "seed": "iPhone 17 demand soft",
+     "analyses": [...], "news": [...], "relations": [...],
+     "social": [...], "lessons": [...]
+   }
+   ```
+   Filters pro Collection (z. B. `since` für news, `min_confidence`
+   für relations) sind im Request-Body durchreichbar.
+
+J-2. **`qdrant_rag.search_evidence(symbol, seed, blocks=...)`**
+   Python-Helper, der intern `asyncio.gather` macht. `_rag_evidence`
+   in `news_sentiment` und allen kommenden Strategien wird auf
+   diesen Helper umgestellt → 1 Round-Trip statt 3.
+
+J-3. **Per-Cycle-Cache.** `DecisionContext` bekommt einen
+   `evidence_cache: dict[(symbol, seed_key), bundle]` mit TTL =
+   1 Cycle. Bei wiederholten Buy- und Sell-Lookups zum gleichen
+   Symbol → 0 zusätzliche Qdrant-Calls.
+
+J-4. **Reranker als opt-in.** Bei `?rerank=true` läuft das
+   gemergte Result-Set durch BGE-Reranker (TEI ist schon deployed,
+   `text-rerank` Service). Default off, nur für Reasoning-Calls
+   (Workflow 12 Genesis) sinnvoll.
+
+J-5. **Doku-Update**: `docs/RAG-FINANCE.md` Sektion „Multi-Collection
+   Retrieval Pattern" beschreibt warum 6 Collections + wann
+   `/rag/evidence` vs. die granularen Endpoints zu wählen sind.
+
+**DoD J.** `news_sentiment` Decide-Cycle-Median sinkt um ≥ 50 %
+(Prometheus-Histogram `finance_guru_decide_seconds`). Keine
+funktionalen Regressionen in `extra.rag`-Shape.
+
+---
+
+## K. Geo & Resource Graph (5–7 d)
+
+**Problem.** „Iran-Konflikt → Brent +X %" lässt sich heute nur
+über Volltext-Match in `finance_news` finden. Wir wissen aber
+nicht, welche Assets eine Geo-Exposure zu Iran oder zum Persischen
+Golf haben, oder welches Land wie viel Öl importiert/produziert.
+
+**Plan.**
+
+K-1. **`finance_assets` Payload-Erweiterung.** `finance-vector/
+   seeder.py` zieht zusätzlich pro Symbol (yfinance + openfigi
+   fallback):
+   * `hq_country`, `hq_region` (ISO 3166-1 alpha-2 + UN region)
+   * `exchange_country`
+   * `revenue_geo_split` (best-effort aus 10-K / yfinance
+     `info.country`), Format: `[{"country":"US","frac":0.62}, …]`
+   * `sector_gics` und `industry_gics`
+   * `commodity_exposure`: `[{"commodity":"oil_brent","direction":"long"}]`
+     (kuratierte Heuristik aus `config/finance/commodity-map.json`,
+     z. B. `XOM → oil_brent long`, `LH → oil_brent short`).
+   Neue Payload-Indexe in `qdrant_rag.ensure_assets_collection()`:
+   `hq_country`, `sector_gics`, `commodity_exposure.commodity`.
+
+K-2. **Neue Tabelle (Timescale)** `finance.country_resources`
+   * `(country_iso2, commodity, role, units_per_year, year, source)`
+   * `role ∈ {producer, importer, exporter, reserves_holder}`
+   * Erste Bestückung aus statischen Datasets (CIA Factbook
+     Snapshot, USGS Mineral Commodity Summaries, World Bank
+     Energy Statistics, EU Critical Raw Materials Act 2023 List).
+   * Migration: `migrations/20260516_country_resources.sql`.
+   * Refresh-Job (`finance-vector-refresh.json` erweitern,
+     1×/Quartal) lädt neue Snapshots.
+
+K-3. **Neue Qdrant-Collection `finance_geo_facts`**
+   * Payload: `country_iso2`, `topic` (politik/handel/sanktionen/
+     konflikt), `events[]` (`{ts, source, headline, sentiment}`)
+   * Schreiber: neuer n8n-Workflow `14-finance-geo-events.json`
+     (Cron `0 */6 h`), feedet aus `finance_news` mit Country-NER
+     (Spacy/`en_core_web_sm` reicht; läuft im CPU-Profil).
+
+K-4. **Causal-Extractor (Workflow 13) erweitern.**
+   * Briefing-Schritt zieht zusätzlich
+     `POST /rag/geo-facts {query: <theme>, limit:5}` und
+     `GET /country/resources?commodity=<X>` für betroffene
+     Rohstoffe.
+   * LLM-Prompt bekommt explizite Geo-/Commodity-Felder
+     (`affected_countries[]`, `commodities[]`).
+   * Output-Schema von `relations` um genau diese Felder erweitert,
+     mit Verifier (Whitelist gegen `country_resources` und
+     `finance_assets.hq_country`).
+
+K-5. **DSL-Signale neu.** In `dsl.py`:
+   * `geo.country_exposure` → `{symbol, country_iso2}` boolean.
+   * `geo.commodity_exposure` → `{symbol, commodity}` boolean.
+   * `geo.relations_count_country` → analog
+     `rag.relations_count` aber gefiltert auf Country-Tag.
+
+K-6. **Sektor- und Geo-Diversifikations-Cap.** Strategie-Output
+   wird vom Orchestrator nach Equity-Anteil pro `sector_gics` und
+   pro `hq_country` gecapt (Defaults: 25 % je Sektor, 40 % je
+   Country). Verhindert dass „Long Halbleiter"-Strategien implizit
+   100 % Taiwan-Exposure aufbauen.
+
+**DoD K.** `/rag/evidence` für ein Öl-Symbol liefert mindestens
+einen `relations`-Treffer mit `commodities=["oil_brent"]` und
+einen `geo_facts`-Treffer für mindestens ein produzierendes Land.
+DSL-Catalog zeigt die drei neuen Signale.
+
+---
+
+## L. Live-Broker-Adapter (Skeleton, 4–5 d, KEINE Real-Orders)
+
+**Problem.** `ledger.execute_trade()` ist hardcoded Paper.
+Wechsel zu live wird hektisch wenn nicht vorbereitet. Wir bauen
+**jetzt** das Interface + zwei Adapter im Read-only-Modus.
+
+**Plan.**
+
+L-1. **`app/brokers/base.py`** — `class Broker(Protocol)`:
+   ```python
+   def get_cash(strategy: str) -> float
+   def get_positions(strategy: str) -> list[Position]
+   def submit(order: Order) -> ExecutionReport      # may raise BrokerDryRun
+   def cancel(order_id: str) -> bool
+   def healthcheck() -> dict
+   ```
+
+L-2. **`app/brokers/paper.py`** — wrapt das bestehende
+   `ledger.execute_trade` 1:1. Default-Broker.
+
+L-3. **`app/brokers/trade_republic.py`** — Wrapper um `pytr`
+   (https://pypi.org/project/pytr/). **Nur** `get_cash`,
+   `get_positions`, `healthcheck` implementiert; `submit` raised
+   `BrokerDryRun("TR live submit disabled by config")` bis
+   `FINANCE_GURU_TR_LIVE=1` AND `FINANCE_GURU_TR_PIN` gesetzt.
+   2FA-Flow: Operator macht `dream finance tr login` (CLI ruft
+   `pytr.login`), Refresh-Token wird in `/data/secrets/tr.json`
+   gespeichert (chmod 600, `.gitignore`d).
+
+L-4. **`app/brokers/binance.py`** — Wrapper um `ccxt.binance`
+   (oder `python-binance`); analoge Read-only-Implementierung,
+   `submit` initial gegen `binance.testnet` möglich, gegen
+   Prod hartes Flag `FINANCE_GURU_BINANCE_LIVE=1` plus
+   `BINANCE_API_KEY/SECRET` aus `.env`.
+
+L-5. **Orchestrator-Auswahl.** `StrategyDef.broker: str = "paper"`.
+   `run_strategy_once()` resolved via `brokers.get(name)`. Builtins
+   und Genesis-Output bleiben paper. Operator promotet zu live per
+   `POST /strategies/{name}/broker {to: "trade_republic_live"}`,
+   das setzt `strategies_meta.broker` UND validiert
+   `broker.healthcheck()` + Backtest-Gate (`bt_pnl_pct ≥ target`)
+   UND fragt ein zweites Approval-Token aus `.env`
+   (`FINANCE_GURU_LIVE_APPROVAL_TOKEN`).
+
+L-6. **Kill-Switch.** Datei `/data/STOP_LIVE_TRADING` (touch via
+   `dream finance kill-live`). Orchestrator prüft am Anfang jedes
+   Cycles; wenn da, schaltet ALLE non-paper Brokers für diesen
+   Cycle auf `paper` und logged Warning. Reset nur per
+   `rm` + Container-Restart, damit unfallartiges Re-Enable
+   unmöglich ist.
+
+L-7. **Dependency-Footprint.** `pytr` und `ccxt` werden als
+   `extras=["live"]` im requirements gepinnt; default-Image
+   installiert sie nicht. Erst beim Operator-Opt-in
+   (`FINANCE_GURU_BROKER_EXTRAS=live`) baut das Compose-Profil
+   ein neues `finance-guru-api-live`-Image. Hält das normale
+   Image schlank und CVE-Surface klein.
+
+**DoD L.** `dream finance broker status` zeigt `paper: ok`,
+`trade_republic: read-only ok` (sofern Login durchgeführt),
+`binance: read-only ok`. Kein einziger `submit`-Call gegen einen
+echten Broker passiert ohne explizites Operator-Opt-in. CI-Test
+prüft, dass `BrokerDryRun` per default geraised wird.
+
+---
+
+## M. Workflow-Intervalle & UX (2 d)
+
+**Problem.** Cron-Slots sind historisch gewachsen. Aktuell:
+
+| Workflow                      | Cron      | Lohnt sich? |
+|-------------------------------|-----------|--------------|
+| 09 finance-asset-behaviour    | `*/2 min` | ja, aber 5 Items/Run reichen |
+| 10 finance-source-reliability | `0 * * *` | ok |
+| 11 finance-strategy-audit     | Mo 00:05  | ok |
+| 12 finance-strategy-genesis   | `0 */6 h` | borderline (Cost) |
+| 13 finance-causal-extraction  | `*/15 min`| **zu viel** (96/Tag, ~3.5k Token/Run) |
+| finance-vector-refresh        | `0 4 * * *` | ok |
+
+**Plan.**
+
+M-1. **Workflow 13 auf adaptiven Cron.** Statt `*/15` fester
+   Slot, neuer Server-Endpoint `GET /news/throughput?window=1h`,
+   der Headlines/h liefert. Workflow 13 reagiert:
+   * `< 20 headlines/h` → skip diesen Tick.
+   * `20–100` → normal.
+   * `> 100` (Breaking) → 2× pro Slot.
+   Erwartete Einsparung: 40–50 % LLM-Calls bei gleichem Recall.
+
+M-2. **Strategie-Decide-Cron pro Strategie.** Aktuell APScheduler
+   global. Pro Strategie eigener Cron in `strategies_meta.cron`
+   (Default ererbt). Erlaubt z. B. `social_buzz` auf `*/2 min`
+   während `momentum_breakout` auf `*/10 min` bleibt.
+
+M-3. **Dashboard-Panel `PortfolioUtilizationPanel.vue`**
+   * Equity / Cash / Invested-Ringdiagramm pro Strategie.
+   * Heatmap-Zelle „pro Sektor/Geo Exposure" (nach Phase K).
+   * Warn-Badge wenn `cash/equity > 0.5` für 3 Cycles in Folge
+     (Symptom des Plan-H-Problems).
+
+M-4. **Polling-Budget.** `useFinanceGuru.ts` setzt `usePolling`-
+   Intervalle:
+   * Strategien-Lifecycle: 60 s
+   * Cycle-Log: 30 s (war: 15 s)
+   * RAG-Insights: 90 s
+   * Portfolio-Utilization: 30 s (neu)
+   Mit ETag-Support (war Phase A.4 deferred). Reduziert
+   API-Last um ~40 %.
+
+M-5. **Sidebar-Badges.** `finance-guru.trading` zeigt rotes
+   `UBadge` wenn (a) ≥ 1 Strategie im letzten Cycle gescheitert,
+   (b) Cash-Utilization < 30 % für 2 h, oder (c) Hard-Stop
+   gefeuert.
+
+**DoD M.** Workflow 13 macht im 24-h-Schnitt < 60 LLM-Calls.
+Cycle-Log-Polling-Last (Prometheus `http_requests_total{path="/cycles"}`)
+sinkt ≥ 30 %. Portfolio-Panel rendert für jede live-Strategie.
+
+---
+
+## N. Reihenfolge & Abhängigkeiten Iteration 2
+
+| Phase | Inhalt                                       | Aufwand | Abhängig    |
+|-------|----------------------------------------------|---------|-------------|
+| H     | Sizing & Cash-Utilization                    | 3–4 d   | —           |
+| I     | Sell-Verifier & Loss-Discipline              | 3 d     | H           |
+| J     | Unified RAG Evidence Endpoint                | 2 d     | —           |
+| K     | Geo & Resource Graph                         | 5–7 d   | J           |
+| L     | Live-Broker-Adapter (skeleton)               | 4–5 d   | —           |
+| M     | Workflow-Intervalle & UX                     | 2 d     | H, K        |
+
+Gesamt: ~20 d AI-Agent-Arbeit, parallelisierbar in 3 Tracks
+(H+I+M Risk/UX, J+K RAG-Erweiterung, L Broker).
+
+## O. Was wir bewusst auch in Iteration 2 NICHT tun
+
+* **Echte Live-Orders ohne Operator-Opt-in.** Phase L liefert nur
+  Read-only-Adapter und ein hartes Approval-Gate.
+* **Reinforcement Learning auf Sizing.** Cash-Utilization-Target
+  ist eine deterministische Heuristik. Wenn das nicht reicht,
+  kommt Bayesian Sizing — nicht RL.
+* **Eigene NER für Geo (Phase K).** Spacy `en_core_web_sm` reicht;
+  Custom-Model erst wenn Recall < 70 %.
+* **Multi-Collection-Merge in Qdrant.** Sechs Collections bleiben;
+  Phase J liefert nur ein Multi-Search-API.
+* **Dashboard-Echtzeit-WS.** Polling-Pattern bleibt; WS erst wenn
+  Polling-Budget gesprengt wird.
+
+---
+
+# Iteration 2.5 — Daten-Wachstum & Price-Move-Learning (Phase P)
+
+> Auslöser: Operator-Beobachtung 16.05.2026 22:20 CEST — „1 h vergangen
+> und in Qdrant hat sich nichts verändert." Diagnose ergab eine
+> Kaskade von **Silent-Skips** in fast allen Lern-Workflows + einen
+> fehlenden Workflow für event-basiertes Lernen aus Kursbewegungen.
+
+## P-0. Diagnose-Snapshot (16.05.2026, Samstag 22:20 CEST)
+
+| Symptom                                                      | Root Cause |
+|--------------------------------------------------------------|------------|
+| `finance_asset_analysis` steht bei 102, Workflow 09 skipped alle 2 min | `next-candidate-batch` bekommt `universe` aus `/history/symbols?hours=168`. **Stocks**: leer (Markt zu am WE, `RESPECT_MARKET_HOURS=true`). **Crypto**: 100 Symbole, alle bereits innerhalb 168 h analysiert → 0 stale → skip. |
+| `finance_relations` steht bei 1                              | Workflow 13 Verifier filtert Stock-Symbole raus weil Universe leer → alle Themen verlieren ihre Anker → 0 Upserts. Keine `enrichment_runs`-Reports, weil die Filter-Reject vor dem Report-Node greift. |
+| `finance_social` Collection existiert nicht (0 Punkte)       | `finance-social` läuft, aber `WARNING Reddit credentials missing — skipping fetch` jeden Cycle. Qdrant-Collection wird erst beim ersten Upsert erzeugt. |
+| `finance-prices` _stocks_async = market closed seit Fr.-Abend | Erwartetes Verhalten, aber die nachgelagerten Lern-Workflows dürfen **nicht** davon abhängen. |
+| n8n `/api/v1/workflows`-Aufrufe schlugen fehl (`X-N8N-API-KEY required`) | Operator-Diagnostik: API-Key in `.env` muss explizit gesetzt sein, sonst `dream` CLI kann Workflows nicht inspizieren. |
+
+**Quintessenz.** Die Lern-Pipelines (Workflow 09 + 13) nutzen die
+**aktive Preis-Universe** als Symbol-Anker. Das ist falsch: die
+**kanonische Universe** lebt in Qdrant `finance_assets` und ist
+markt­zeit­unabhängig. Wochenenden und After-Hours haben das
+gesamte Lernen schweigend abgeschaltet.
+
+## P-1. Universe-Quelle entkoppeln (1 d, höchste Priorität)
+
+P-1.1. **Neuer Endpoint `GET /assets/canonical`** in
+  `finance-guru-api`. Liefert die volle Symbol-Liste (mit
+  `asset_type`, `hq_country` sobald Phase K landet) aus Qdrant
+  `finance_assets`. Cached 5 min in-process.
+  Implementierung: `qdrant_rag.list_assets(limit=2000)`.
+
+P-1.2. **Workflow 09** (`09-finance-asset-behaviour.json`) ersetzt
+  `GET universe (stocks)` + `GET universe (crypto)` durch einen
+  einzigen `GET /assets/canonical` und filtert clientseitig auf
+  `asset_type`. So gibt es auch am Wochenende stale Symbole zum
+  Analysieren (Stock-Behaviour über 6 Monate Historie braucht
+  keinen Live-Tick).
+
+P-1.3. **Workflow 13** (`13-finance-causal-extraction.json`)
+  übernimmt das gleiche. Verifier-Universe = canonical, nicht
+  active.
+
+P-1.4. **Workflow 12** (Genesis): Universe-Lookup ebenfalls
+  umstellen. Bonus: Backtests bekommen jetzt deterministisch
+  immer denselben Symbol-Pool, unabhängig vom Wochentag.
+
+P-1.5. **`next-candidate-batch` Stale-Default senken** von
+  `168 h` (7 d) auf `48 h` (2 d). Wir wollen Symbole 2–3× pro
+  Woche neu durchleuchten, nicht 1×.
+
+**DoD P-1.** Workflow 09 produziert auch am Samstag mindestens
+1 `asset_behaviour: ok` Report pro 2-min-Slot, solange mindestens
+ein Symbol > 48 h alt ist. Workflow 13 erzeugt am Wochenende
+mindestens 1 `finance_relations`-Upsert pro Tag.
+
+## P-2. Sichtbarkeit: Silent-Skips brüllen lassen (0.5 d)
+
+P-2.1. **`enrichment_runs` mit `note`-Pflicht für skipped.**
+  Workflow 09 schreibt aktuell `note: "no stale candidate"`. Das
+  ist gut, aber wir brauchen auch:
+  * Workflow 13 → `note: "no theme survived verifier"` /
+    `note: "universe empty"`.
+  * Workflow 14/15 (neu) analog.
+
+P-2.2. **Neuer Endpoint `GET /enrichment/health`** liefert pro
+  Workflow die letzten 24 h: `runs_total, ok, skipped, error,
+  last_ok_ts`. Dashboard-Panel `EnrichmentHealthCard.vue` zeigt
+  rote Badges wenn `last_ok_ts > 6h` ago.
+
+P-2.3. **Prometheus-Metriken**:
+  `finance_enrichment_runs_total{workflow,status}` Counter,
+  `finance_qdrant_points{collection}` Gauge (5-min scrape via
+  bestehende `/rag/status`). Reduziert manuelles
+  `docker logs`-Polling.
+
+**DoD P-2.** `GET /enrichment/health` zeigt für jeden der vier
+finance-Workflows `last_ok_ts` der letzten 24 h. Dashboard-Card
+zeigt grün/gelb/rot pro Workflow.
+
+## P-3. Reddit/Social-Pfad reanimieren (0.5 d)
+
+P-3.1. **Doku-Patch in `docs/RAG-FINANCE.md`** + Service-README:
+  exakte `.env`-Keys für Reddit-OAuth-App
+  (`FINANCE_SOCIAL_REDDIT_CLIENT_ID`,
+  `FINANCE_SOCIAL_REDDIT_CLIENT_SECRET`,
+  `FINANCE_SOCIAL_REDDIT_USER_AGENT=DreamServerFinance/1.0 by
+  <reddit_user>`).
+
+P-3.2. **Fallback-Quelle StockTwits.** `finance-social/qdrant_sink.py`
+  als zweite Quelle hinter Reddit. Macht das System unabhängig von der Reddit-API-Verfügbarkeit (die
+  in den letzten 12 Monaten zweimal still gebrochen war).
+
+P-3.3. **`finance_social` Collection-Bootstrap**: `finance-social/
+  qdrant_sink.py` ruft `ensure_collection` defensiv bei jedem
+  Service-Start, nicht erst beim ersten Upsert. Dann zeigt
+  `/rag/status` `exists: true, points: 0` statt `exists: false`
+  und die Dashboard-Card wird grün-mit-Hinweis statt rot.
+
+**DoD P-3.** `finance_social` Collection existiert nach
+Service-Restart auch ohne Reddit-Login. Sobald Creds gesetzt
+sind, wächst sie um ≥ 20 Punkte/h.
+
+## P-4. **Neuer Workflow 15 — Price-Move-Causal-Explainer** (3–4 d)
+
+> Beantwortet die Operator-Frage:
+> „Gibt es einen Workflow, der die History eines Kurses unter die
+> Lupe nimmt und nach Relationen für Schwankungen sucht und diese
+> dann als Learning verbindet?"
+>
+> Workflow 09 macht das bereits für **eine 6-Monats-Periode pro
+> Symbol** (deep-dive). Was fehlt ist die **event-driven**
+> Variante: sobald ein Symbol kurzfristig stark bewegt, das warum
+> sofort extrahieren und als Relation persistieren.
+
+### Architektur
+
+```
+APScheduler (alle 10 min)              ┌── finance_news (lookback 90 min)
+         │                              │
+         ▼                              ▼
+ /assets/movers?window=1h&min_pct=3 → POST /llm explain(...)  → Verifier
+   (neuer Server-Endpoint)             (model='default')        (Symbols & news_ids)
+         │                                                            │
+         └─ liefert [{symbol, return_pct,                              ▼
+            volume_ratio, ts}]                              POST /rag/relation
+                                                            (theme="price_move:<SYM>")
+                                                                       │
+                                                                       ▼
+                                                            POST /enrichment/run
+                                                            workflow="price_move_learn"
+```
+
+P-4.1. **Server-Endpoint `GET /assets/movers`**:
+  Query: `window=1h|4h|1d`, `min_pct=2.5` (Default 3 %),
+  `asset_type=stock|crypto|all`, `limit=10`.
+  Liefert pro Symbol: `return_pct`, `volume_ratio` (vs. Median
+  der gleichen Stunde der letzten 7 Tage), `latest_ts`,
+  `latest_price`. Datenquelle: `finance.prices_intraday`,
+  SQL ist günstig (Continuous Aggregate auf Timescale, ggf. neu
+  als `ca_prices_1h`).
+
+P-4.2. **n8n-Workflow `15-finance-price-move-explainer.json`**:
+  * Cron `*/10 min` (anpassen je nach LLM-Budget).
+  * Schritt 1: `GET /assets/movers?window=1h&min_pct=3` → bis zu
+    10 Mover.
+  * Schritt 2: Pro Mover (Per-Item, ähnlich WF 09 A.2):
+    `GET /history/news?symbol=<X>&hours=4&min_urgency=0&limit=20`
+    plus `POST /rag/evidence` (Phase J Endpoint) für das gleiche
+    Symbol als RAG-Kontext.
+  * Schritt 3: **LLM `default`** Prompt:
+    ```
+    System: You explain why <SYM> moved <±X%> in the last <Y>h.
+    Use ONLY the supplied headlines and RAG snippets. Output
+    strict JSON: {"mechanism":..., "drivers":[{"source":..,
+    "headline":..,"weight":0..1}], "regime":"news_driven|
+    technical|sympathy|unknown", "confidence":0..1,
+    "evidence_ids":[news_id,...]}.
+    ```
+  * Schritt 4: **Verifier** (JS): `evidence_ids` ⊂ übergebene
+    News-IDs; `mechanism` non-empty; `confidence ≥ 0.3` → sonst
+    reject.
+  * Schritt 5: **`POST /rag/relation`** mit
+    `theme=price_move:<SYM>:<ts_bucket>`,
+    `mechanism=<llm.mechanism>`,
+    `symbols=[<SYM>]`,
+    `sectors=[<asset.sector_gics>]` (falls Phase K),
+    `evidence_ids=<verified>`,
+    `confidence=<llm.confidence>`,
+    `extra={return_pct, volume_ratio, regime}`.
+  * Schritt 6: `POST /enrichment/run` mit
+    `workflow="price_move_learn"`.
+
+P-4.3. **Lessons-Schleife.** Wenn der Verifier `regime="unknown"`
+  oder `confidence<0.3` wirft, wird das nicht als Failure verbucht
+  sondern als `finance_strategy_lessons`-Eintrag mit
+  `outcome="unexplained_move"` — der nächste Genesis-Cycle sieht
+  damit, welche Movers sich nicht aus News erklären lassen
+  (Sympathy-Trades, Index-Rebalance, Whale-Moves). Pattern, das
+  später eine eigene Strategie wert sein kann.
+
+P-4.4. **Anti-Spam-Bucket.** Pro Symbol max. 1 Explainer pro
+  60-min-Bucket. Im Server-Endpoint `/assets/movers` deduplizieren
+  (`ts_bucket = floor(ts, 60min)` + Existenz-Check in
+  `finance_relations` Payload). Verhindert dass eine
+  Range-Bound-Krypto bei jedem Cron-Tick einen neuen Explainer
+  triggert.
+
+P-4.5. **Strategie-Konsum.** `news_sentiment` und `social_buzz`
+  ziehen via `_rag_evidence` jetzt automatisch `finance_relations`
+  mit `theme: "price_move:<SYM>:*"` — Phase B's Bundle-Builder
+  füllt sich auch für Symbole ohne aktive Causal-Themes, weil
+  jeder relevante Mover binnen 10 min in Relations landet.
+
+**DoD P-4.** Nach 24 h Laufzeit:
+* `finance_relations` enthält mindestens `n_movers × 0.7`
+  `price_move:`-Themen.
+* Pro Cron-Tick werden max. 10 LLM-Calls gemacht (Budget-Cap).
+* Dashboard-Panel `MoversExplainerPanel.vue` listet Top-10
+  Mover der letzten 24 h mit Mechanism-Snippet.
+
+## P-5. Workflow-Aktivitäts-Smoke pro Tag (0.5 d, läuft täglich)
+
+P-5.1. **APScheduler-Job `workflow_smoke`** in `finance-guru-api`
+  (Cron `0 5 * * *`, vor dem `auto_archive` 04:10):
+  ```python
+  for wf in ("asset_behaviour","source_reliability",
+             "causal_extraction","price_move_learn"):
+      r = enrichment.list_runs(workflow=wf, limit=1)
+      if not r or _hours_since(r[0]["ts"]) > 24:
+          alerts.append(f"{wf} stale: last={r[0]['ts'] if r else 'never'}")
+  if alerts:
+      llm.chat(..., model='fast', max_tokens=80)  # one-line summary
+      ledger.append_alert(...)                     # surfaces in dashboard
+  ```
+
+P-5.2. **Sidebar-Badge `EnrichmentHealthBadge.vue`** rotes
+  Symbol wenn (a) ≥ 1 Strategie im letzten Cycle gescheitert,
+  (b) Cash-Utilization < 30 % für 2 h, oder (c) Hard-Stop
+  gefeuert.
+
+**DoD P-5.** Wenn ein finance-Workflow > 24 h keinen Report
+geschrieben hat, sehen wir das innerhalb von 5 min im Dashboard.
+
+## P. Reihenfolge & Aufwand
+
+| Step  | Inhalt                                            | Aufwand | Abhängig |
+|-------|---------------------------------------------------|---------|----------|
+| P-1   | Universe-Quelle entkoppeln (canonical aus Qdrant) | 1 d     | —        |
+| P-2   | Silent-Skip-Sichtbarkeit + `/enrichment/health`   | 0.5 d   | —        |
+| P-3   | Reddit/StockTwits + Collection-Bootstrap          | 0.5 d   | —        |
+| P-4   | **Workflow 15: Price-Move-Explainer**             | 3–4 d   | P-1, J   |
+| P-5   | Daily-Smoke + Sidebar-Badge auf
+  `/enrichment/health.verdict`.
+
+Gesamt: ~5–6 d. **P-1 + P-2 + P-3 sollten innerhalb des nächsten
+Deploy-Slots laufen**, weil ohne sie keine der Iteration-2-
+Verbesserungen wirklich Lernfortschritt zeigt — alles weitere
+ist auf wachsende Collections angewiesen.
+
+## P. Was wir in Phase P bewusst NICHT tun
+
+* **Echte Live-Orders ohne Operator-Opt-in.** Phase L liefert nur
+  Read-only-Adapter und ein hartes Approval-Gate.
+* **Reinforcement Learning auf Sizing.** Cash-Utilization-Target
+  ist eine deterministische Heuristik. Wenn das nicht reicht,
+  kommt Bayesian Sizing — nicht RL.
+* **Eigene NER für Geo (Phase K).** Spacy `en_core_web_sm` reicht;
+  Custom-Model erst wenn Recall < 70 %.
+* **Multi-Collection-Merge in Qdrant.** Sechs Collections bleiben;
+  Phase J liefert nur ein Multi-Search-API.
+* **Dashboard-Echtzeit-WS.** Polling-Pattern bleibt; WS erst wenn
+  Polling-Budget gesprengt wird.
+
+---
+
+# Iteration 2.5 — Phase P · Deploy-Status
+
+### P-1 (Canonical-Universe) — **DEPLOYED 2026-05-16**
+
+* `qdrant_rag.list_assets(asset_type, limit)` (Scroll, kein Embed) +
+  `GET /assets/canonical?asset_type=&limit=&only_with_prices=&detail=`
+  liefern marktzeit-unabhängig die Stammdaten aus `finance_assets`
+  mit dreistufigem Fallback (Qdrant → enrichment-SQLite →
+  `history/symbols` 90 d).
+* `only_with_prices=true` schneidet die kanonische Liste mit dem
+  Preis-History-Universum — verhindert WF09/13-Churn auf Symbolen,
+  für die `finance-prices` nie Ticks gezogen hat (z. B. `2Z`,
+  `1INCH` als Aktie).
+* `enrichment.next_candidate{,_batch}` Default `stale_after_hours`
+  168 h → 48 h (P-1.5).
+* n8n-Workflows **09 / 12 / 13** auf
+  `/assets/canonical?…&only_with_prices=true` umgestellt und via
+  `scripts/n8n-import-workflows.sh --activate` re-importiert.
+* **Verifikation (21:42 UTC, post-deploy):**
+  `…stock&only_with_prices=true` → 0 (finance-prices hat seit
+  ≥ 90 d keine Stock-Ticks geschrieben — Folge-Issue, s. unten);
+  `…crypto&only_with_prices=true` → 101; WF09-Tick gibt jetzt sauber
+  `skipped: no stale candidate` statt der vorherigen Silent-Skips.
+
+**Follow-up (neu sichtbar dank P-2):** finance-prices schreibt 0
+Stock-Ticks in den letzten 90 d. Vorher unsichtbar, weil die
+Universe-Quelle dieselbe leere DB war. Eigener Fix-Track:
+Yahoo-Finance/Polygon-Adapter prüfen, Wochenend-Backfill.
+
+### P-2.1 (Silent-Skip-Visibility) — **DEPLOYED 2026-05-16**
+
+* `GET /enrichment/health?window_hours=` aggregiert pro Workflow:
+  `runs / ok / skip / error / skip_ratio / last_ts / last_ok_ts /
+  last_skip_note / verdict ∈ {healthy, silent-skip, errors, no-progress}`.
+* Erkennt Skip-Pattern aus `status` UND `note`
+  (`"no stale candidate"`, `"empty universe"` …), damit
+  Workflow-09-artige „läuft, tut aber nichts"-Zustände nicht mehr
+  leise verschwinden.
+
+### P-3.3 (Defensiver Social-Bootstrap) — **DEPLOYED 2026-05-16**
+
+* `qdrant_rag.ensure_social_collection(dim=None)` läuft im
+  FastAPI-`lifespan` und probt `finance_news → finance_assets →
+  finance_asset_analysis` für die korrekte Dimension (Fallback 768).
+* `/rag/status` zeigt jetzt alle 6 Collections (`finance_social
+  exists=true dim=768 points=0`) statt der vorherigen leeren Zeile.
+
+### Offen aus Phase P (nächster Slot)
+
+* **P-1.x stocks**: finance-prices-Stock-Pipeline reparieren (vorher
+  durch Universe-Coupling maskiert).
+* **P-3.2**: StockTwits-Fallback in `finance-social`, sobald Reddit
+  weiter ohne Credentials bleibt.
+* **P-4**: Workflow 15 — Price-Move-Causal-Explainer (Spec steht).
+* **P-5**: Daily-Smoke + Sidebar-Badge auf
+  `/enrichment/health.verdict`.

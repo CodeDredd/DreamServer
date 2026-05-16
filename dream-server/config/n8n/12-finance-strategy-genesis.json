@@ -17,7 +17,10 @@
       "name": "Every 6 h",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [200, 320]
+      "position": [
+        200,
+        320
+      ]
     },
     {
       "parameters": {},
@@ -25,7 +28,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [200, 520]
+      "position": [
+        200,
+        520
+      ]
     },
     {
       "parameters": {
@@ -33,14 +39,22 @@
         "url": "http://finance-guru-api:8098/strategies/dsl/catalog",
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_catalog",
       "name": "GET DSL catalog",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [440, 320]
+      "position": [
+        440,
+        320
+      ]
     },
     {
       "parameters": {
@@ -49,41 +63,66 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "window", "value": "7" },
-            { "name": "limit",  "value": "50" }
+            {
+              "name": "window",
+              "value": "7"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
           ]
         },
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_leaderboard",
       "name": "GET leaderboard (7d)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 320]
+      "position": [
+        680,
+        320
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "http://finance-guru-api:8098/history/symbols",
+        "url": "http://finance-guru-api:8098/assets/canonical",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "hours", "value": "168" }
+            {
+              "name": "only_with_prices",
+              "value": "true"
+            }
           ]
         },
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_universe",
       "name": "GET universe (7d)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [920, 320]
+      "position": [
+        920,
+        320
+      ]
     },
     {
       "parameters": {
@@ -92,7 +131,10 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -100,14 +142,22 @@
         "jsonBody": "={{ JSON.stringify({ query: 'biggest sentiment drivers in the last week', limit: 12, min_confidence: 0.4 }) }}",
         "options": {
           "timeout": 12000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "rag_analysis",
       "name": "RAG: asset analyses",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1160, 200]
+      "position": [
+        1160,
+        200
+      ]
     },
     {
       "parameters": {
@@ -116,7 +166,10 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -124,14 +177,22 @@
         "jsonBody": "={{ JSON.stringify({ query: 'macro themes affecting multiple symbols this week', limit: 12, min_confidence: 0.3 }) }}",
         "options": {
           "timeout": 12000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "rag_relations",
       "name": "RAG: relations",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1160, 320]
+      "position": [
+        1160,
+        320
+      ]
     },
     {
       "parameters": {
@@ -140,7 +201,10 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -148,14 +212,22 @@
         "jsonBody": "={{ JSON.stringify({ query: 'why recent generated strategies failed or were archived', limit: 12 }) }}",
         "options": {
           "timeout": 12000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "rag_lessons",
       "name": "RAG: strategy lessons",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1160, 440]
+      "position": [
+        1160,
+        440
+      ]
     },
     {
       "parameters": {
@@ -165,17 +237,26 @@
       "name": "Build brief",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1420, 320]
+      "position": [
+        1420,
+        320
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.skip }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -185,7 +266,10 @@
       "name": "Has brief?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1660, 320]
+      "position": [
+        1660,
+        320
+      ]
     },
     {
       "parameters": {
@@ -194,8 +278,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization",  "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",   "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -203,14 +293,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'skipped', note: 'strategy_genesis: ' + ($json.reason || 'no-op') }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "log_skip",
       "name": "Log skip",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1900, 500]
+      "position": [
+        1900,
+        500
+      ]
     },
     {
       "parameters": {
@@ -219,8 +317,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -228,14 +332,22 @@
         "jsonBody": "={{ JSON.stringify({ model: 'reasoning', temperature: 0.2, max_tokens: 2400, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You design paper-trade strategies for a self-learning system. Output STRICT JSON: { \"proposals\": [ { \"description\": string<=200, \"asset_types\": string[], \"max_position_frac\": number_in_(0,1] | null, \"universe_filter\": { \"symbols\": string[] } | null, \"rules\": [ { \"id\": string, \"action\": \"buy\"|\"sell\", \"when\": <boolean tree>, \"sizing\": { \"mode\": \"max_position_frac\"|\"fixed_eur\", \"eur\": number | null }, \"reason\": string<=160 } ] } ] }. Each proposal MUST contain at least one buy rule. ONLY use signal names from the supplied catalog. ONLY reference symbols from the supplied universe (if you reference any). Each <boolean tree> is either { \"all\": [...] }, { \"any\": [...] }, or { \"signal\": <name>, \"op\": <op>, \"value\": <number|bool>, optional params }. Keep proposals diverse: 1\u20133 candidates per call. Avoid re-proposing patterns that the lessons section already flagged as failures. Do NOT include markdown. Do NOT include any commentary outside the JSON object.' }, { role: 'user', content: 'DSL signal catalog: ' + JSON.stringify($json.catalog.signals) + '\\nOperators: ' + JSON.stringify($json.catalog.ops) + '\\nActions: ' + JSON.stringify($json.catalog.actions) + '\\nSizing modes: ' + JSON.stringify($json.catalog.sizing) + '\\nLimits: ' + JSON.stringify($json.catalog.limits) + '\\nPromotion gate: ' + JSON.stringify($json.catalog.gate) + '\\nUniverse (you may only reference these symbols): ' + JSON.stringify($json.universe) + '\\nRecent leaderboard (7d): ' + JSON.stringify($json.brief.leaderboard) + '\\nRecent asset analyses (vector hits): ' + JSON.stringify($json.brief.analyses) + '\\nRecent causal relations: ' + JSON.stringify($json.brief.relations) + '\\nRecent strategy lessons (avoid these patterns): ' + JSON.stringify($json.brief.lessons) + '\\nReturn ONLY the JSON object with the proposals array now.' } ] }) }}",
         "options": {
           "timeout": 600000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "llm_genesis",
       "name": "reasoning \u2014 propose DSL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1900, 200]
+      "position": [
+        1900,
+        200
+      ]
     },
     {
       "parameters": {
@@ -245,17 +357,26 @@
       "name": "Verifier (DSL)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2160, 200]
+      "position": [
+        2160,
+        200
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.skip }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -265,7 +386,10 @@
       "name": "Accepted?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [2420, 200]
+      "position": [
+        2420,
+        200
+      ]
     },
     {
       "parameters": {
@@ -274,8 +398,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -283,14 +413,22 @@
         "jsonBody": "={{ JSON.stringify({ name: $json.name, source: $json.source }) }}",
         "options": {
           "timeout": 20000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "post_propose",
       "name": "POST /strategies/propose",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2660, 120]
+      "position": [
+        2660,
+        120
+      ]
     },
     {
       "parameters": {
@@ -299,8 +437,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -308,14 +452,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($('Verifier (DSL)').item.json && $('Verifier (DSL)').item.json.name) || null, status: 'ok', note: 'strategy_genesis: proposed' }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_ok",
       "name": "Report OK",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2900, 120]
+      "position": [
+        2900,
+        120
+      ]
     },
     {
       "parameters": {
@@ -324,8 +476,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -333,14 +491,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'error', note: 'strategy_genesis: ' + ($json.reason || 'rejected') }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_reject",
       "name": "Report reject",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2660, 300]
+      "position": [
+        2660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -351,66 +517,213 @@
       "name": "Cooldown 60s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [3160, 200]
+      "position": [
+        3160,
+        200
+      ]
     }
   ],
   "connections": {
     "Every 6 h": {
-      "main": [[{ "node": "GET DSL catalog", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET DSL catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Manual Trigger": {
-      "main": [[{ "node": "GET DSL catalog", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET DSL catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GET DSL catalog": {
-      "main": [[{ "node": "GET leaderboard (7d)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET leaderboard (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GET leaderboard (7d)": {
-      "main": [[{ "node": "GET universe (7d)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET universe (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GET universe (7d)": {
-      "main": [[{ "node": "RAG: asset analyses", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "RAG: asset analyses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "RAG: asset analyses": {
-      "main": [[{ "node": "RAG: relations", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "RAG: relations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "RAG: relations": {
-      "main": [[{ "node": "RAG: strategy lessons", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "RAG: strategy lessons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "RAG: strategy lessons": {
-      "main": [[{ "node": "Build brief", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build brief": {
-      "main": [[{ "node": "Has brief?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Has brief?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Has brief?": {
       "main": [
-        [{ "node": "reasoning \u2014 propose DSL", "type": "main", "index": 0 }],
-        [{ "node": "Log skip", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "reasoning \u2014 propose DSL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "reasoning \u2014 propose DSL": {
-      "main": [[{ "node": "Verifier (DSL)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Verifier (DSL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Verifier (DSL)": {
-      "main": [[{ "node": "Accepted?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Accepted?": {
       "main": [
-        [{ "node": "POST /strategies/propose", "type": "main", "index": 0 }],
-        [{ "node": "Report reject", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "POST /strategies/propose",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "POST /strategies/propose": {
-      "main": [[{ "node": "Report OK", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Report OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Report OK": {
-      "main": [[{ "node": "Cooldown 60s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Cooldown 60s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Report reject": {
-      "main": [[{ "node": "Cooldown 60s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Cooldown 60s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Log skip": {
-      "main": [[{ "node": "Cooldown 60s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Cooldown 60s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -421,4 +734,3 @@
     "saveDataErrorExecution": "all"
   }
 }
-

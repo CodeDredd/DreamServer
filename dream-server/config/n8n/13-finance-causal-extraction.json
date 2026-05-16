@@ -1,12 +1,15 @@
 {
   "id": "FinCausalExtract001",
-  "name": "Finance Causal Extraction (news → themes → finance_relations)",
+  "name": "Finance Causal Extraction (news \u2192 themes \u2192 finance_relations)",
   "nodes": [
     {
       "parameters": {
         "rule": {
           "interval": [
-            { "field": "cronExpression", "expression": "0 */15 * * * *" }
+            {
+              "field": "cronExpression",
+              "expression": "0 */15 * * * *"
+            }
           ]
         }
       },
@@ -14,7 +17,10 @@
       "name": "Every 15 min",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [200, 320]
+      "position": [
+        200,
+        320
+      ]
     },
     {
       "parameters": {},
@@ -22,7 +28,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [200, 520]
+      "position": [
+        200,
+        520
+      ]
     },
     {
       "parameters": {
@@ -31,62 +40,99 @@
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "hours",       "value": "6" },
-            { "name": "min_urgency", "value": "2" },
-            { "name": "limit",       "value": "120" }
+            {
+              "name": "hours",
+              "value": "6"
+            },
+            {
+              "name": "min_urgency",
+              "value": "2"
+            },
+            {
+              "name": "limit",
+              "value": "120"
+            }
           ]
         },
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_news",
-      "name": "GET recent news (6h, urgency≥2)",
+      "name": "GET recent news (6h, urgency\u22652)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [440, 320]
+      "position": [
+        440,
+        320
+      ]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "http://finance-guru-api:8098/history/symbols",
+        "url": "http://finance-guru-api:8098/assets/canonical",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "hours", "value": "168" }
+            {
+              "name": "only_with_prices",
+              "value": "true"
+            }
           ]
         },
         "options": {
           "timeout": 8000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "get_universe",
       "name": "GET universe (7d)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [680, 320]
+      "position": [
+        680,
+        320
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Build the causal-extraction brief.\n// We trim each headline tightly (title only, no body), cap at 24 items,\n// and pass the live universe so the LLM is *biased* toward valid symbols.\n// The verifier still re-checks every symbol after extraction.\nconst news     = $('GET recent news (6h, urgency≥2)').first()?.json?.rows || [];\nconst universe = ($('GET universe (7d)').first()?.json?.symbols || [])\n                   .map(s => String(s).toUpperCase());\n\nif (!news.length) {\n  return [{ json: { skip: true, reason: 'no news in window (6h, urgency≥2)' } }];\n}\nif (!universe.length) {\n  return [{ json: { skip: true, reason: 'universe empty (no recent ticks)' } }];\n}\n\n// Deduplicate near-identical titles within the same source (poor man's\n// near-dup filter — same first 80 chars + same source = one item).\nconst seen = new Set();\nconst items = [];\nfor (const r of news) {\n  const key = String(r.source || '').toLowerCase() + '|' + String(r.title || '').slice(0, 80).toLowerCase();\n  if (seen.has(key)) continue;\n  seen.add(key);\n  items.push({\n    id:        r.id,\n    ts:        r.ts,\n    source:    r.source,\n    symbols:   Array.isArray(r.symbols) ? r.symbols.slice(0, 6) : [],\n    sentiment: r.sentiment,\n    urgency:   r.urgency,\n    title:     String(r.title || '').slice(0, 240),\n  });\n  if (items.length >= 24) break;\n}\n\nreturn [{ json: {\n  skip: false,\n  brief_items: items,\n  universe,\n} }];"
+        "jsCode": "// Build the causal-extraction brief.\n// We trim each headline tightly (title only, no body), cap at 24 items,\n// and pass the live universe so the LLM is *biased* toward valid symbols.\n// The verifier still re-checks every symbol after extraction.\nconst news     = $('GET recent news (6h, urgency\u22652)').first()?.json?.rows || [];\nconst universe = ($('GET universe (7d)').first()?.json?.symbols || [])\n                   .map(s => String(s).toUpperCase());\n\nif (!news.length) {\n  return [{ json: { skip: true, reason: 'no news in window (6h, urgency\u22652)' } }];\n}\nif (!universe.length) {\n  return [{ json: { skip: true, reason: 'universe empty (no recent ticks)' } }];\n}\n\n// Deduplicate near-identical titles within the same source (poor man's\n// near-dup filter \u2014 same first 80 chars + same source = one item).\nconst seen = new Set();\nconst items = [];\nfor (const r of news) {\n  const key = String(r.source || '').toLowerCase() + '|' + String(r.title || '').slice(0, 80).toLowerCase();\n  if (seen.has(key)) continue;\n  seen.add(key);\n  items.push({\n    id:        r.id,\n    ts:        r.ts,\n    source:    r.source,\n    symbols:   Array.isArray(r.symbols) ? r.symbols.slice(0, 6) : [],\n    sentiment: r.sentiment,\n    urgency:   r.urgency,\n    title:     String(r.title || '').slice(0, 240),\n  });\n  if (items.length >= 24) break;\n}\n\nreturn [{ json: {\n  skip: false,\n  brief_items: items,\n  universe,\n} }];"
       },
       "id": "build_brief",
       "name": "Build brief",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 320]
+      "position": [
+        920,
+        320
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.skip }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -96,7 +142,10 @@
       "name": "Has news?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1160, 320]
+      "position": [
+        1160,
+        320
+      ]
     },
     {
       "parameters": {
@@ -105,8 +154,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -114,14 +169,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'causal_extraction', target: null, status: 'skipped', note: 'causal_extraction: ' + ($json.reason || 'no-op') }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "log_skip",
       "name": "Log skip",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1400, 500]
+      "position": [
+        1400,
+        500
+      ]
     },
     {
       "parameters": {
@@ -130,43 +193,66 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'default', temperature: 0.1, max_tokens: 1800, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You extract macro causal chains from finance headlines. Output STRICT JSON: { \"themes\": [ { \"theme\": string<=80, \"mechanism\": string<=180, \"summary\": string<=280, \"entities\": string[]<=10, \"sectors\": string[]<=6, \"symbols\": string[]<=12, \"evidence_ids\": (string|number)[]<=8, \"confidence\": number_in_[0,1] } ] }. ONLY use symbols from the supplied universe. Group several related headlines into ONE theme (deduplicate). Skip noise (PR fluff, opinion). At most 6 themes per call. Mechanism = short causal sentence (\"event X drives demand for Y in sector Z\"). Confidence reflects evidence strength + agreement across sources. Do NOT include markdown or commentary outside the JSON object.' }, { role: 'user', content: 'Universe (you may only reference these symbols): ' + JSON.stringify($json.universe) + '\\nRecent headlines (urgency≥2, last 6h): ' + JSON.stringify($json.brief_items) + '\\nReturn ONLY the JSON object with the themes array now.' } ] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'default', temperature: 0.1, max_tokens: 1800, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You extract macro causal chains from finance headlines. Output STRICT JSON: { \"themes\": [ { \"theme\": string<=80, \"mechanism\": string<=180, \"summary\": string<=280, \"entities\": string[]<=10, \"sectors\": string[]<=6, \"symbols\": string[]<=12, \"evidence_ids\": (string|number)[]<=8, \"confidence\": number_in_[0,1] } ] }. ONLY use symbols from the supplied universe. Group several related headlines into ONE theme (deduplicate). Skip noise (PR fluff, opinion). At most 6 themes per call. Mechanism = short causal sentence (\"event X drives demand for Y in sector Z\"). Confidence reflects evidence strength + agreement across sources. Do NOT include markdown or commentary outside the JSON object.' }, { role: 'user', content: 'Universe (you may only reference these symbols): ' + JSON.stringify($json.universe) + '\\nRecent headlines (urgency\u22652, last 6h): ' + JSON.stringify($json.brief_items) + '\\nReturn ONLY the JSON object with the themes array now.' } ] }) }}",
         "options": {
           "timeout": 300000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "llm_extract",
-      "name": "default — extract themes",
+      "name": "default \u2014 extract themes",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1400, 200]
+      "position": [
+        1400,
+        200
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Verifier: parse JSON, validate every theme, drop symbols that aren't\n// in the live universe (instead of rejecting the whole theme — partial\n// extraction is more useful than nothing). Emits one item per accepted\n// theme so the next HTTP node posts each separately to /rag/relation.\nconst brief    = $('Build brief').item.json;\nconst universe = new Set((brief.universe || []).map(s => String(s).toUpperCase()));\nconst evidenceById = new Set((brief.brief_items || []).map(it => String(it.id)));\n\nconst llmResp = $json;\nlet raw = '';\nlet parsed = null;\ntry {\n  raw = String(llmResp?.choices?.[0]?.message?.content || '').trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { skip: true, reason: 'invalid JSON from LLM', raw: raw.slice(0, 800) } }];\n}\nconst themes = Array.isArray(parsed?.themes) ? parsed.themes : [];\nif (!themes.length) {\n  return [{ json: { skip: true, reason: 'no themes returned', raw: raw.slice(0, 600) } }];\n}\n\nconst accepted = [];\nconst rejected = [];\nfor (let i = 0; i < themes.length && accepted.length < 6; i++) {\n  const t = themes[i] || {};\n  const errors = [];\n  const theme = String(t.theme || '').trim();\n  if (!theme) errors.push('empty theme');\n  if (theme.length > 80) errors.push('theme too long');\n  const conf = Number(t.confidence);\n  if (!(conf >= 0 && conf <= 1)) errors.push('confidence out of range');\n  // Hard floor: skip very low-confidence noise.\n  if (conf < 0.3) errors.push('confidence < 0.3');\n  if (errors.length) {\n    rejected.push({ index: i, theme, errors });\n    continue;\n  }\n  // Filter symbols to the live universe (do NOT reject the theme over this).\n  const rawSyms = Array.isArray(t.symbols) ? t.symbols : [];\n  const symbols = rawSyms\n    .map(s => String(s).toUpperCase().trim())\n    .filter(s => s && universe.has(s))\n    .slice(0, 12);\n  // Same for evidence_ids — must come from our brief.\n  const evidence = (Array.isArray(t.evidence_ids) ? t.evidence_ids : [])\n    .map(x => String(x))\n    .filter(x => evidenceById.has(x))\n    .slice(0, 8);\n  // A theme with no verified symbols AND no verified evidence is too weak\n  // to be a 'causal chain'; treat as noise.\n  if (!symbols.length && !evidence.length) {\n    rejected.push({ index: i, theme, errors: ['no verified symbols or evidence'] });\n    continue;\n  }\n  accepted.push({ json: {\n    skip: false,\n    theme,\n    payload: {\n      theme,\n      mechanism:    String(t.mechanism || '').slice(0, 180) || null,\n      summary:      String(t.summary   || '').slice(0, 280),\n      entities:     (Array.isArray(t.entities) ? t.entities : []).map(s => String(s).trim()).filter(Boolean).slice(0, 10),\n      sectors:      (Array.isArray(t.sectors)  ? t.sectors  : []).map(s => String(s).trim()).filter(Boolean).slice(0, 6),\n      symbols,\n      evidence_ids: evidence,\n      confidence:   conf,\n      model:        'default',\n    },\n  } });\n}\nif (!accepted.length) {\n  return [{ json: { skip: true, reason: 'all themes rejected', rejected, raw: raw.slice(0, 600) } }];\n}\nreturn accepted;"
+        "jsCode": "// Verifier: parse JSON, validate every theme, drop symbols that aren't\n// in the live universe (instead of rejecting the whole theme \u2014 partial\n// extraction is more useful than nothing). Emits one item per accepted\n// theme so the next HTTP node posts each separately to /rag/relation.\nconst brief    = $('Build brief').item.json;\nconst universe = new Set((brief.universe || []).map(s => String(s).toUpperCase()));\nconst evidenceById = new Set((brief.brief_items || []).map(it => String(it.id)));\n\nconst llmResp = $json;\nlet raw = '';\nlet parsed = null;\ntry {\n  raw = String(llmResp?.choices?.[0]?.message?.content || '').trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { skip: true, reason: 'invalid JSON from LLM', raw: raw.slice(0, 800) } }];\n}\nconst themes = Array.isArray(parsed?.themes) ? parsed.themes : [];\nif (!themes.length) {\n  return [{ json: { skip: true, reason: 'no themes returned', raw: raw.slice(0, 600) } }];\n}\n\nconst accepted = [];\nconst rejected = [];\nfor (let i = 0; i < themes.length && accepted.length < 6; i++) {\n  const t = themes[i] || {};\n  const errors = [];\n  const theme = String(t.theme || '').trim();\n  if (!theme) errors.push('empty theme');\n  if (theme.length > 80) errors.push('theme too long');\n  const conf = Number(t.confidence);\n  if (!(conf >= 0 && conf <= 1)) errors.push('confidence out of range');\n  // Hard floor: skip very low-confidence noise.\n  if (conf < 0.3) errors.push('confidence < 0.3');\n  if (errors.length) {\n    rejected.push({ index: i, theme, errors });\n    continue;\n  }\n  // Filter symbols to the live universe (do NOT reject the theme over this).\n  const rawSyms = Array.isArray(t.symbols) ? t.symbols : [];\n  const symbols = rawSyms\n    .map(s => String(s).toUpperCase().trim())\n    .filter(s => s && universe.has(s))\n    .slice(0, 12);\n  // Same for evidence_ids \u2014 must come from our brief.\n  const evidence = (Array.isArray(t.evidence_ids) ? t.evidence_ids : [])\n    .map(x => String(x))\n    .filter(x => evidenceById.has(x))\n    .slice(0, 8);\n  // A theme with no verified symbols AND no verified evidence is too weak\n  // to be a 'causal chain'; treat as noise.\n  if (!symbols.length && !evidence.length) {\n    rejected.push({ index: i, theme, errors: ['no verified symbols or evidence'] });\n    continue;\n  }\n  accepted.push({ json: {\n    skip: false,\n    theme,\n    payload: {\n      theme,\n      mechanism:    String(t.mechanism || '').slice(0, 180) || null,\n      summary:      String(t.summary   || '').slice(0, 280),\n      entities:     (Array.isArray(t.entities) ? t.entities : []).map(s => String(s).trim()).filter(Boolean).slice(0, 10),\n      sectors:      (Array.isArray(t.sectors)  ? t.sectors  : []).map(s => String(s).trim()).filter(Boolean).slice(0, 6),\n      symbols,\n      evidence_ids: evidence,\n      confidence:   conf,\n      model:        'default',\n    },\n  } });\n}\nif (!accepted.length) {\n  return [{ json: { skip: true, reason: 'all themes rejected', rejected, raw: raw.slice(0, 600) } }];\n}\nreturn accepted;"
       },
       "id": "verify",
       "name": "Verifier (relations)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1660, 200]
+      "position": [
+        1660,
+        200
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "leftValue": "={{ $json.skip }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
             }
           ],
           "combinator": "and"
@@ -176,7 +262,10 @@
       "name": "Accepted?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1920, 200]
+      "position": [
+        1920,
+        200
+      ]
     },
     {
       "parameters": {
@@ -185,8 +274,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -194,14 +289,22 @@
         "jsonBody": "={{ JSON.stringify($json.payload) }}",
         "options": {
           "timeout": 12000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "post_relation",
       "name": "POST /rag/relation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2160, 120]
+      "position": [
+        2160,
+        120
+      ]
     },
     {
       "parameters": {
@@ -210,8 +313,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -219,14 +328,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'causal_extraction', target: ($('Verifier (relations)').item.json && $('Verifier (relations)').item.json.theme) || null, status: 'ok', note: 'causal_extraction: stored' }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_ok",
       "name": "Report OK",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2400, 120]
+      "position": [
+        2400,
+        120
+      ]
     },
     {
       "parameters": {
@@ -235,8 +352,14 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
-            { "name": "Content-Type",  "value": "application/json" }
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -244,14 +367,22 @@
         "jsonBody": "={{ JSON.stringify({ workflow: 'causal_extraction', target: null, status: 'error', note: 'causal_extraction: ' + ($json.reason || 'rejected') }) }}",
         "options": {
           "timeout": 5000,
-          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "id": "report_reject",
       "name": "Report reject",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2160, 300]
+      "position": [
+        2160,
+        300
+      ]
     },
     {
       "parameters": {
@@ -262,54 +393,169 @@
       "name": "Cooldown 30s",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [2660, 200]
+      "position": [
+        2660,
+        200
+      ]
     }
   ],
   "connections": {
     "Every 15 min": {
-      "main": [[{ "node": "GET recent news (6h, urgency≥2)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET recent news (6h, urgency\u22652)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Manual Trigger": {
-      "main": [[{ "node": "GET recent news (6h, urgency≥2)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "GET recent news (6h, urgency\u22652)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
-    "GET recent news (6h, urgency≥2)": {
-      "main": [[{ "node": "GET universe (7d)", "type": "main", "index": 0 }]]
+    "GET recent news (6h, urgency\u22652)": {
+      "main": [
+        [
+          {
+            "node": "GET universe (7d)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "GET universe (7d)": {
-      "main": [[{ "node": "Build brief", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Build brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Build brief": {
-      "main": [[{ "node": "Has news?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Has news?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Has news?": {
       "main": [
-        [{ "node": "default — extract themes", "type": "main", "index": 0 }],
-        [{ "node": "Log skip", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "default \u2014 extract themes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "default — extract themes": {
-      "main": [[{ "node": "Verifier (relations)", "type": "main", "index": 0 }]]
+    "default \u2014 extract themes": {
+      "main": [
+        [
+          {
+            "node": "Verifier (relations)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Verifier (relations)": {
-      "main": [[{ "node": "Accepted?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Accepted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Accepted?": {
       "main": [
-        [{ "node": "POST /rag/relation", "type": "main", "index": 0 }],
-        [{ "node": "Report reject", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "POST /rag/relation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "POST /rag/relation": {
-      "main": [[{ "node": "Report OK", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Report OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Report OK": {
-      "main": [[{ "node": "Cooldown 30s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Cooldown 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Report reject": {
-      "main": [[{ "node": "Cooldown 30s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Cooldown 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Log skip": {
-      "main": [[{ "node": "Cooldown 30s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Cooldown 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -320,4 +566,3 @@
     "saveDataErrorExecution": "all"
   }
 }
-

@@ -134,8 +134,65 @@ def _embed_or_empty(query: str) -> list[float] | None:
 
 
 # --------------------------------------------------------------------------- #
-# Collection bootstrap — for the two collections owned here.
+# Collection bootstrap — for the two collections owned here, plus
+# defensive bootstrap for sibling-owned collections so RAG status &
+# filtered scrolls don't fail when an upstream service hasn't written
+# its first point yet (Phase P-3.3).
 # --------------------------------------------------------------------------- #
+def ensure_social_collection(dim: int | None = None) -> None:
+    """Defensive bootstrap so /rag/status, /assets/canonical and the
+    Phase P-2 health endpoint don't return error-shaped rows just
+    because finance-social hasn't seen a single Reddit/StockTwits post
+    yet (e.g. missing credentials). Idempotent; safe to call repeatedly.
+
+    When `dim` is None we probe a sibling collection (`finance_news`
+    then `finance_assets`) to inherit the live embedding dimension, so
+    a future real finance-social upsert against TEI won't fail with a
+    dim mismatch. Falls back to 768 if no sibling exists yet.
+    """
+    client = get_client()
+    if client.collection_exists(CFG.social_collection):
+        return
+    if dim is None:
+        for probe in (CFG.news_collection, CFG.assets_collection,
+                      CFG.analysis_collection):
+            try:
+                if client.collection_exists(probe):
+                    info = client.get_collection(probe)
+                    if (info.config and info.config.params
+                            and info.config.params.vectors):
+                        dim = int(info.config.params.vectors.size)
+                        log.info("ensure_social_collection: inherited dim=%d from %s",
+                                 dim, probe)
+                        break
+            except Exception:  # noqa: BLE001
+                continue
+    if dim is None:
+        dim = 768  # safe default matching the BGE base used by TEI
+    log.info("Creating Qdrant collection %s (defensive bootstrap, dim=%d, cosine)",
+             CFG.social_collection, dim)
+    try:
+        client.create_collection(
+            collection_name=CFG.social_collection,
+            vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
+        )
+        for field_name, schema in (
+            ("symbols",  qm.PayloadSchemaType.KEYWORD),
+            ("source",   qm.PayloadSchemaType.KEYWORD),
+            ("score",    qm.PayloadSchemaType.INTEGER),
+            ("ts_unix",  qm.PayloadSchemaType.INTEGER),
+        ):
+            try:
+                client.create_payload_index(
+                    CFG.social_collection, field_name=field_name, field_schema=schema,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("payload index %s/%s: %s",
+                          CFG.social_collection, field_name, exc)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ensure_social_collection failed: %s", exc)
+
+
 def ensure_relations_collection(dim: int) -> None:
     client = get_client()
     if client.collection_exists(CFG.relations_collection):
@@ -296,6 +353,67 @@ def upsert_relation(
     except Exception as exc:  # noqa: BLE001
         log.warning("relation upsert failed for theme=%s: %s", theme, exc)
         return False
+
+
+# --------------------------------------------------------------------------- #
+# Canonical universe — Phase P-1
+# --------------------------------------------------------------------------- #
+def list_assets(*, asset_type: str | None = None,
+                limit: int = 2000) -> list[dict]:
+    """Scroll the `finance_assets` collection and return the canonical
+    universe — symbol/name/sector/country/type — *independent* of
+    market hours, finance-prices cron, or any live-tick freshness.
+
+    This is the source of truth for n8n workflows that pick which
+    assets to enrich/cluster/causally-extract. Replaces the prior
+    `GET /history/symbols?hours=168` coupling that silently emptied
+    the stock universe on weekends + holidays + after-hours
+    (Phase P-1 of FINANCE-GURU-IMPROVEMENT-PLAN.md).
+
+    Returns an empty list on any Qdrant outage (best-effort, like every
+    other RAG read here)."""
+    try:
+        client = get_client()
+        if not client.collection_exists(CFG.assets_collection):
+            return []
+        must: list = []
+        if asset_type:
+            must.append(qm.FieldCondition(
+                key="type",
+                match=qm.MatchValue(value=asset_type.strip().lower())))
+        flt = qm.Filter(must=must) if must else None
+        out: list[dict] = []
+        next_offset = None
+        page = max(64, min(int(limit), 1000))
+        while True:
+            points, next_offset = client.scroll(
+                collection_name=CFG.assets_collection,
+                scroll_filter=flt,
+                limit=page,
+                with_payload=True,
+                with_vectors=False,
+                offset=next_offset,
+            )
+            for p in points:
+                pl = p.payload or {}
+                sym = (pl.get("symbol") or "").strip().upper()
+                if not sym:
+                    continue
+                out.append({
+                    "symbol":     sym,
+                    "name":       pl.get("name"),
+                    "type":       pl.get("type"),
+                    "sector":     pl.get("sector"),
+                    "country":    pl.get("country"),
+                    "market_cap": pl.get("market_cap"),
+                })
+                if len(out) >= int(limit):
+                    return out
+            if next_offset is None or not points:
+                return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("list_assets(asset_type=%s) failed: %s", asset_type, exc)
+        return []
 
 
 # --------------------------------------------------------------------------- #

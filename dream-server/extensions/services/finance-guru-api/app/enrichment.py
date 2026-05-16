@@ -297,7 +297,83 @@ def list_runs(workflow: str | None = None, limit: int = 100) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def next_candidate(asset_type: str | None = None, stale_after_hours: int = 24 * 7,
+def run_health(window_hours: int = 24) -> list[dict]:
+    """Phase P-2.1: per-workflow run summary over the last `window_hours`.
+
+    Returns rows shaped for the dashboard health-tile and operator
+    `dream doctor` checks. Distinguishes successful runs (`ok`),
+    silent-skip runs (`status in ('skip','noop')` or a note that
+    matches *no.*candidate|empty.universe|skip*), and errors. Makes
+    P-1 regressions visible: a workflow that silently skips for >1h
+    on a weekday is a red flag operators were previously blind to.
+    """
+    cutoff = (dt.datetime.now(dt.timezone.utc)
+              - dt.timedelta(hours=max(1, int(window_hours)))).isoformat()
+    out: dict[str, dict] = {}
+    with ledger.conn() as c:
+        rows = c.execute(
+            "SELECT workflow, status, note, ts, duration_ms "
+            "FROM enrichment_runs WHERE ts >= ? ORDER BY ts DESC",
+            (cutoff,),
+        ).fetchall()
+    for r in rows:
+        wf = r["workflow"] or "unknown"
+        bucket = out.setdefault(wf, {
+            "workflow":   wf,
+            "runs":       0,
+            "ok":         0,
+            "skip":       0,
+            "error":      0,
+            "last_ts":    None,
+            "last_ok_ts": None,
+            "last_skip_note": None,
+            "avg_ms":     0.0,
+            "_dur_sum":   0,
+            "_dur_n":     0,
+        })
+        bucket["runs"] += 1
+        if not bucket["last_ts"]:
+            bucket["last_ts"] = r["ts"]
+        status = (r["status"] or "").lower()
+        note = (r["note"] or "").lower()
+        skip_hit = (status in ("skip", "noop", "empty")
+                    or "no stale candidate" in note
+                    or "empty universe" in note
+                    or "no candidate" in note
+                    or note.startswith("skip"))
+        if status == "ok" and not skip_hit:
+            bucket["ok"] += 1
+            if not bucket["last_ok_ts"]:
+                bucket["last_ok_ts"] = r["ts"]
+        elif skip_hit:
+            bucket["skip"] += 1
+            if not bucket["last_skip_note"]:
+                bucket["last_skip_note"] = (r["note"] or status)[:160]
+        else:
+            bucket["error"] += 1
+        if r["duration_ms"]:
+            bucket["_dur_sum"] += int(r["duration_ms"])
+            bucket["_dur_n"]   += 1
+    for b in out.values():
+        if b["_dur_n"]:
+            b["avg_ms"] = round(b["_dur_sum"] / b["_dur_n"], 1)
+        b.pop("_dur_sum", None)
+        b.pop("_dur_n", None)
+        b["skip_ratio"] = round(b["skip"] / b["runs"], 3) if b["runs"] else 0.0
+        # Heuristic verdict — surfaces silent-skip anti-pattern in one
+        # field the dashboard can colour.
+        if b["error"] and b["error"] / max(b["runs"], 1) > 0.25:
+            b["verdict"] = "errors"
+        elif b["skip_ratio"] >= 0.9 and b["runs"] >= 3:
+            b["verdict"] = "silent-skip"
+        elif b["ok"] == 0:
+            b["verdict"] = "no-progress"
+        else:
+            b["verdict"] = "healthy"
+    return sorted(out.values(), key=lambda x: x["workflow"])
+
+
+def next_candidate(asset_type: str | None = None, stale_after_hours: int = 48,
                    universe: list[str] | None = None) -> str | None:
     """Picks the symbol whose analysis is stalest (or has none at all).
     The n8n workflow calls this to find what to enrich next.
@@ -329,7 +405,7 @@ def next_candidate(asset_type: str | None = None, stale_after_hours: int = 24 * 
 
 
 def next_candidate_batch(asset_type: str | None = None,
-                         stale_after_hours: int = 24 * 7,
+                         stale_after_hours: int = 48,
                          universe: list[str] | None = None,
                          limit: int = 3) -> list[str]:
     """Batched variant of next_candidate() — returns up to `limit`
