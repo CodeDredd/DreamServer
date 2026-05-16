@@ -4242,18 +4242,19 @@ PROPOSE_USAGE
             local qs="?limit=${limit}"
             [[ -n "$kind"  ]] && qs="${qs}&kind=${kind}"
             [[ -n "$stat"  ]] && qs="${qs}&status=${stat}"
-            # /strategies/lifecycle returns a bare JSON array, not {strategies:[…]}
+            # /strategies/lifecycle returns {count, strategies:[…]}
             _finance_curl GET "/strategies/lifecycle${qs}" "" --no-auth \
-                | jq '.[] | {name, kind, status, bt_pnl_pct, bt_n_trades, created_at}'
+                | jq '.strategies[] | {name, kind, status, bt_pnl_pct, bt_n_trades, created_at}'
             ;;
         status|info)
             local name="${1:-}"
             [[ -n "$name" ]] || error "usage: dream finance status <name>"
             local meta audits
             meta="$(_finance_curl GET "/strategies/lifecycle?limit=500" "" --no-auth \
-                    | jq --arg n "$name" 'map(select(.name==$n)) | .[0] // null')"
+                    | jq --arg n "$name" '.strategies[] | select(.name==$n)')"
             audits="$(_finance_curl GET "/strategies/audits?strategy=${name}&limit=20" "" --no-auth)"
-            # Default to empty JSON values so jq --argjson never sees "".
+            # Default to literal JSON values so jq --argjson never sees an empty string
+            # (which would happen for a not-yet-known strategy or an audits 404).
             [[ -z "$meta"   ]] && meta='null'
             [[ -z "$audits" ]] && audits='[]'
             jq -n --argjson m "$meta" --argjson a "$audits" \
