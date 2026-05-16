@@ -4242,17 +4242,21 @@ PROPOSE_USAGE
             local qs="?limit=${limit}"
             [[ -n "$kind"  ]] && qs="${qs}&kind=${kind}"
             [[ -n "$stat"  ]] && qs="${qs}&status=${stat}"
+            # /strategies/lifecycle returns a bare JSON array, not {strategies:[…]}
             _finance_curl GET "/strategies/lifecycle${qs}" "" --no-auth \
-                | jq '.strategies[] | {name, kind, status, bt_pnl_pct, bt_n_trades, created_at}'
+                | jq '.[] | {name, kind, status, bt_pnl_pct, bt_n_trades, created_at}'
             ;;
         status|info)
             local name="${1:-}"
             [[ -n "$name" ]] || error "usage: dream finance status <name>"
             local meta audits
             meta="$(_finance_curl GET "/strategies/lifecycle?limit=500" "" --no-auth \
-                    | jq --arg n "$name" '.strategies[] | select(.name==$n)')"
+                    | jq --arg n "$name" 'map(select(.name==$n)) | .[0] // null')"
             audits="$(_finance_curl GET "/strategies/audits?strategy=${name}&limit=20" "" --no-auth)"
-            jq -n --argjson m "${meta:-null}" --argjson a "${audits:-{}}" \
+            # Default to empty JSON values so jq --argjson never sees "".
+            [[ -z "$meta"   ]] && meta='null'
+            [[ -z "$audits" ]] && audits='[]'
+            jq -n --argjson m "$meta" --argjson a "$audits" \
                 '{meta:$m, audits:$a}'
             ;;
         help|--help|-h|"")
