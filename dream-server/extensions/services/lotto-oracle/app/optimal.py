@@ -94,6 +94,11 @@ def _generate_field(game_id: str, strategy_name: str | None, history: list[dict]
     if not tips:
         raise RuntimeError(f"strategy {strategy_name!r} produced no tip")
     tip = tips[0]
+    # Flatten payload to top-level so the UI can read tip['Hauptzahlen']
+    # or tip['digits'] directly (mirrors store.latest_tip_run shape).
+    payload = tip.pop("payload", None) or {}
+    for k, v in payload.items():
+        tip.setdefault(k, v)
     tip["game"] = game_id
     return tip
 
