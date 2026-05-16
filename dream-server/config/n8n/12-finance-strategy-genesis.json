@@ -1,0 +1,424 @@
+{
+  "id": "FinStratGenesis001",
+  "name": "Finance Strategy Genesis (LLM \u2192 DSL \u2192 backtest)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 */6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Every 6 h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 320]
+    },
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 520]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-guru-api:8098/strategies/dsl/catalog",
+        "options": {
+          "timeout": 8000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "get_catalog",
+      "name": "GET DSL catalog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 320]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-guru-api:8098/strategies/leaderboard",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "window", "value": "7" },
+            { "name": "limit",  "value": "50" }
+          ]
+        },
+        "options": {
+          "timeout": 8000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "get_leaderboard",
+      "name": "GET leaderboard (7d)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 320]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-guru-api:8098/history/symbols",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "hours", "value": "168" }
+          ]
+        },
+        "options": {
+          "timeout": 8000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "get_universe",
+      "name": "GET universe (7d)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/rag/asset-analysis",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'biggest sentiment drivers in the last week', limit: 12, min_confidence: 0.4 }) }}",
+        "options": {
+          "timeout": 12000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "rag_analysis",
+      "name": "RAG: asset analyses",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/rag/relations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'macro themes affecting multiple symbols this week', limit: 12, min_confidence: 0.3 }) }}",
+        "options": {
+          "timeout": 12000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "rag_relations",
+      "name": "RAG: relations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/rag/strategy-lessons",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: 'why recent generated strategies failed or were archived', limit: 12 }) }}",
+        "options": {
+          "timeout": 12000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "rag_lessons",
+      "name": "RAG: strategy lessons",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1160, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble the LLM brief from the four upstream responses.\n// We deliberately trim every block to small payloads so the reasoning\n// model (Qwen3.5-122B-A10B) doesn't drown in tokens \u2014 the DSL catalog\n// is authoritative; lessons + RAG hits are inspiration.\nconst catalog    = $('GET DSL catalog').first()?.json || {};\nconst leaderRows = ($('GET leaderboard (7d)').first()?.json?.rows || []).slice(0, 25);\nconst universe   = ($('GET universe (7d)').first()?.json?.symbols || []).slice(0, 80);\nconst analyses   = ($('RAG: asset analyses').first()?.json?.hits || []).slice(0, 8);\nconst relations  = ($('RAG: relations').first()?.json?.hits || []).slice(0, 8);\nconst lessons    = ($('RAG: strategy lessons').first()?.json?.hits || []).slice(0, 6);\n\nconst trimmedAnalyses = analyses.map(h => ({\n  symbol:      h.symbol,\n  confidence:  h.confidence,\n  summary:     (h.summary || '').slice(0, 220),\n  keywords:    (h.keywords || []).slice(0, 6),\n}));\nconst trimmedRelations = relations.map(h => ({\n  theme:      h.theme,\n  mechanism:  h.mechanism,\n  confidence: h.confidence,\n  symbols:    (h.symbols || []).slice(0, 8),\n  sectors:    (h.sectors || []).slice(0, 6),\n  summary:    (h.summary || '').slice(0, 180),\n}));\nconst trimmedLessons = lessons.map(h => ({\n  strategy: h.strategy,\n  outcome:  h.outcome,\n  pnl_pct:  h.pnl_pct,\n  lesson:   (h.lesson || '').slice(0, 260),\n}));\nconst leaderboardSummary = leaderRows.map(r => ({\n  name:           r.name,\n  kind:           r.kind,\n  status:         r.status,\n  window_pnl_pct: r.window_pnl_pct,\n  window_cycles:  r.window_cycles,\n  retire_reason:  (r.retire_reason || '').slice(0, 120),\n}));\n\nif (!universe.length) {\n  return [{ json: { skip: true, reason: 'universe empty (no recent ticks)' } }];\n}\n\nconst now      = new Date().toISOString().slice(0, 19).replace('T','-').replace(/:/g,'');\nconst seed     = Math.random().toString(36).slice(2, 6);\nconst basename = 'gen_' + now + '_' + seed;\n\nreturn [{ json: {\n  skip: false,\n  catalog,\n  basename,\n  universe,\n  brief: {\n    leaderboard:  leaderboardSummary,\n    analyses:     trimmedAnalyses,\n    relations:    trimmedRelations,\n    lessons:      trimmedLessons,\n  },\n} }];"
+      },
+      "id": "build_brief",
+      "name": "Build brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1420, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "guard_skip",
+      "name": "Has brief?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1660, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization",  "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",   "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'skipped', note: 'strategy_genesis: ' + ($json.reason || 'no-op') }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "log_skip",
+      "name": "Log skip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://litellm:4000/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'reasoning', temperature: 0.2, max_tokens: 2400, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You design paper-trade strategies for a self-learning system. Output STRICT JSON: { \"proposals\": [ { \"description\": string<=200, \"asset_types\": string[], \"max_position_frac\": number_in_(0,1] | null, \"universe_filter\": { \"symbols\": string[] } | null, \"rules\": [ { \"id\": string, \"action\": \"buy\"|\"sell\", \"when\": <boolean tree>, \"sizing\": { \"mode\": \"max_position_frac\"|\"fixed_eur\", \"eur\": number | null }, \"reason\": string<=160 } ] } ] }. Each proposal MUST contain at least one buy rule. ONLY use signal names from the supplied catalog. ONLY reference symbols from the supplied universe (if you reference any). Each <boolean tree> is either { \"all\": [...] }, { \"any\": [...] }, or { \"signal\": <name>, \"op\": <op>, \"value\": <number|bool>, optional params }. Keep proposals diverse: 1\u20133 candidates per call. Avoid re-proposing patterns that the lessons section already flagged as failures. Do NOT include markdown. Do NOT include any commentary outside the JSON object.' }, { role: 'user', content: 'DSL signal catalog: ' + JSON.stringify($json.catalog.signals) + '\\nOperators: ' + JSON.stringify($json.catalog.ops) + '\\nActions: ' + JSON.stringify($json.catalog.actions) + '\\nSizing modes: ' + JSON.stringify($json.catalog.sizing) + '\\nLimits: ' + JSON.stringify($json.catalog.limits) + '\\nPromotion gate: ' + JSON.stringify($json.catalog.gate) + '\\nUniverse (you may only reference these symbols): ' + JSON.stringify($json.universe) + '\\nRecent leaderboard (7d): ' + JSON.stringify($json.brief.leaderboard) + '\\nRecent asset analyses (vector hits): ' + JSON.stringify($json.brief.analyses) + '\\nRecent causal relations: ' + JSON.stringify($json.brief.relations) + '\\nRecent strategy lessons (avoid these patterns): ' + JSON.stringify($json.brief.lessons) + '\\nReturn ONLY the JSON object with the proposals array now.' } ] }) }}",
+        "options": {
+          "timeout": 600000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "llm_genesis",
+      "name": "reasoning \u2014 propose DSL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifier: parse JSON, validate every proposal against the catalog\n// + universe. Emits one item per accepted proposal so SplitInBatches\n// (or built-in per-item handling) can post each to /strategies/propose.\nconst brief    = $('Build brief').item.json;\nconst catalog  = brief.catalog || {};\nconst universe = new Set((brief.universe || []).map(s => String(s).toUpperCase()));\nconst allowedSignals = new Set(Object.keys(catalog.signals || {}));\nconst allowedOps     = new Set(catalog.ops || []);\nconst allowedActions = new Set(catalog.actions || []);\nconst allowedSizing  = new Set(catalog.sizing || []);\nconst limits         = catalog.limits || { max_rules: 12, max_predicates_per_rule: 8, max_nesting_depth: 4 };\nconst basename       = brief.basename || ('gen_' + Date.now());\n\nconst llmResp = $json;\nlet raw = '';\nlet parsed = null;\ntry {\n  raw = String(llmResp?.choices?.[0]?.message?.content || '').trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { skip: true, reason: 'invalid JSON from LLM', raw: raw.slice(0, 800) } }];\n}\nconst proposals = Array.isArray(parsed?.proposals) ? parsed.proposals : [];\nif (!proposals.length) {\n  return [{ json: { skip: true, reason: 'no proposals returned', raw: raw.slice(0, 800) } }];\n}\n\nfunction validateWhen(node, depth) {\n  if (depth > limits.max_nesting_depth) return 'nesting too deep';\n  if (!node || typeof node !== 'object') return 'predicate not object';\n  if (Array.isArray(node.all) || Array.isArray(node.any)) {\n    const key  = node.all ? 'all' : 'any';\n    const kids = node[key];\n    if (!Array.isArray(kids) || !kids.length) return key + ' empty';\n    if (kids.length > limits.max_predicates_per_rule) return key + ' too many predicates';\n    for (const k of kids) {\n      const err = validateWhen(k, depth + 1);\n      if (err) return err;\n    }\n    return null;\n  }\n  if (!allowedSignals.has(node.signal)) return 'signal ' + node.signal + ' not allowed';\n  if (!allowedOps.has(node.op))         return 'op ' + node.op + ' not allowed';\n  if (typeof node.value === 'undefined') return 'value missing';\n  return null;\n}\n\nfunction collectSymbolRefs(spec) {\n  const refs = new Set();\n  if (spec.universe_filter && Array.isArray(spec.universe_filter.symbols)) {\n    for (const s of spec.universe_filter.symbols) refs.add(String(s).toUpperCase());\n  }\n  for (const r of (spec.rules || [])) {\n    if (Array.isArray(r.symbols)) for (const s of r.symbols) refs.add(String(s).toUpperCase());\n  }\n  return refs;\n}\n\nconst accepted = [];\nconst rejected = [];\nfor (let i = 0; i < proposals.length; i++) {\n  const p = proposals[i] || {};\n  const errors = [];\n  if (!Array.isArray(p.rules) || !p.rules.length)        errors.push('rules empty');\n  if (p.rules && p.rules.length > limits.max_rules)      errors.push('too many rules');\n  const atypes = Array.isArray(p.asset_types) ? p.asset_types : ['stock','crypto'];\n  for (const a of atypes) if (a !== 'stock' && a !== 'crypto') errors.push('bad asset_type ' + a);\n  let hasBuy = false;\n  const seenIds = new Set();\n  for (let j = 0; j < (p.rules || []).length; j++) {\n    const r = p.rules[j];\n    if (!r || typeof r !== 'object')                     { errors.push('rule '+j+' not object'); continue; }\n    if (!allowedActions.has(r.action))                    errors.push('rule '+j+'.action invalid');\n    if (r.action === 'buy')                              hasBuy = true;\n    if (r.id) {\n      if (seenIds.has(r.id))                              errors.push('rule '+j+'.id duplicate');\n      seenIds.add(r.id);\n    }\n    const whenErr = r.when ? validateWhen(r.when, 0) : 'when missing';\n    if (whenErr)                                          errors.push('rule '+j+'.when: ' + whenErr);\n    const sizing = r.sizing || { mode: 'max_position_frac' };\n    if (!allowedSizing.has(sizing.mode))                  errors.push('rule '+j+'.sizing.mode invalid');\n    if (sizing.mode === 'fixed_eur' && !(Number(sizing.eur) > 0)) errors.push('rule '+j+'.sizing.eur missing');\n  }\n  if (!hasBuy)                                            errors.push('no buy rule');\n  if (p.max_position_frac !== undefined && p.max_position_frac !== null) {\n    const mpf = Number(p.max_position_frac);\n    if (!(mpf > 0 && mpf <= 1))                           errors.push('max_position_frac out of range');\n  }\n  // Universe check: any referenced symbol must be in the live universe.\n  const refs = collectSymbolRefs(p);\n  for (const s of refs) if (!universe.has(s)) errors.push('symbol ' + s + ' not in universe');\n\n  if (errors.length) {\n    rejected.push({ index: i, errors: errors.slice(0, 5) });\n    continue;\n  }\n  const name = basename + '_' + (i + 1);\n  accepted.push({ json: {\n    skip: false,\n    name,\n    source: {\n      version: 1,\n      description: String(p.description || 'LLM-generated DSL strategy').slice(0, 200),\n      asset_types: atypes,\n      max_position_frac: p.max_position_frac ?? null,\n      universe_filter:   p.universe_filter || null,\n      rules:             p.rules,\n      generated_at:      new Date().toISOString(),\n      generator:         'n8n:12-finance-strategy-genesis',\n    },\n  } });\n}\nif (!accepted.length) {\n  return [{ json: { skip: true, reason: 'all proposals rejected', rejected, raw: raw.slice(0, 600) } }];\n}\nreturn accepted;"
+      },
+      "id": "verify",
+      "name": "Verifier (DSL)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2160, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "guard_verify",
+      "name": "Accepted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2420, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/strategies/propose",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $json.name, source: $json.source }) }}",
+        "options": {
+          "timeout": 20000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "post_propose",
+      "name": "POST /strategies/propose",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($('Verifier (DSL)').item.json && $('Verifier (DSL)').item.json.name) || null, status: 'ok', note: 'strategy_genesis: proposed' }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "report_ok",
+      "name": "Report OK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2900, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'error', note: 'strategy_genesis: ' + ($json.reason || 'rejected') }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "report_reject",
+      "name": "Report reject",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "cooldown",
+      "name": "Cooldown 60s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [3160, 200]
+    }
+  ],
+  "connections": {
+    "Every 6 h": {
+      "main": [[{ "node": "GET DSL catalog", "type": "main", "index": 0 }]]
+    },
+    "Manual Trigger": {
+      "main": [[{ "node": "GET DSL catalog", "type": "main", "index": 0 }]]
+    },
+    "GET DSL catalog": {
+      "main": [[{ "node": "GET leaderboard (7d)", "type": "main", "index": 0 }]]
+    },
+    "GET leaderboard (7d)": {
+      "main": [[{ "node": "GET universe (7d)", "type": "main", "index": 0 }]]
+    },
+    "GET universe (7d)": {
+      "main": [[{ "node": "RAG: asset analyses", "type": "main", "index": 0 }]]
+    },
+    "RAG: asset analyses": {
+      "main": [[{ "node": "RAG: relations", "type": "main", "index": 0 }]]
+    },
+    "RAG: relations": {
+      "main": [[{ "node": "RAG: strategy lessons", "type": "main", "index": 0 }]]
+    },
+    "RAG: strategy lessons": {
+      "main": [[{ "node": "Build brief", "type": "main", "index": 0 }]]
+    },
+    "Build brief": {
+      "main": [[{ "node": "Has brief?", "type": "main", "index": 0 }]]
+    },
+    "Has brief?": {
+      "main": [
+        [{ "node": "reasoning \u2014 propose DSL", "type": "main", "index": 0 }],
+        [{ "node": "Log skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "reasoning \u2014 propose DSL": {
+      "main": [[{ "node": "Verifier (DSL)", "type": "main", "index": 0 }]]
+    },
+    "Verifier (DSL)": {
+      "main": [[{ "node": "Accepted?", "type": "main", "index": 0 }]]
+    },
+    "Accepted?": {
+      "main": [
+        [{ "node": "POST /strategies/propose", "type": "main", "index": 0 }],
+        [{ "node": "Report reject", "type": "main", "index": 0 }]
+      ]
+    },
+    "POST /strategies/propose": {
+      "main": [[{ "node": "Report OK", "type": "main", "index": 0 }]]
+    },
+    "Report OK": {
+      "main": [[{ "node": "Cooldown 60s", "type": "main", "index": 0 }]]
+    },
+    "Report reject": {
+      "main": [[{ "node": "Cooldown 60s", "type": "main", "index": 0 }]]
+    },
+    "Log skip": {
+      "main": [[{ "node": "Cooldown 60s", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 1500,
+    "saveExecutionProgress": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}
+

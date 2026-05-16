@@ -1,6 +1,6 @@
 # Finance Guru — Verbesserungsplan (Paper-Trading, RAG, Qdrant, UI)
 
-> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ deployed
+> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ · Phase D ✅ deployed
 > Verantwortlich: AI-Agent + Operator
 > Bezugspunkte: `AGENT-OPERATIONS.md §11–§14`, `extensions/services/finance-guru-api/`,
 > `extensions/services/finance-{vector,news,social,prices}/`, `extensions/services/dashboard-nuxt/`
@@ -592,7 +592,154 @@ curl -s -X POST http://127.0.0.1:8098/rag/strategy-lessons \
 
 
 
-### Phase D — Strategie-Generator (7–10 Tage)
+### Phase D — Strategie-Generator (7–10 Tage) ✅ DONE 16.05.2026
+
+12. ✅ **Strategie-DSL** in `app/strategies/dsl.py`:
+    JSON-Schema v1 mit Bausteinen `when/all/any`,
+    `signal/op/value`-Predicates aus einer fixen Whitelist
+    (`news.sentiment_max`, `news.urgency_max`, `news.count`,
+    `social.sentiment_mean`, `social.count`,
+    `price.return_pct/breakout_high/volume_ratio`,
+    `position.holds/pnl_pct`, `rag.relations_count`),
+    `action: buy|sell`, `sizing: max_position_frac|fixed_eur`.
+    Compiler erzeugt eine `StrategyDef` mit per-Cycle-Cache, sodass
+    eine 10-Regel-Strategie über 200 Symbole maximal **einmal** je
+    Datenquelle ruft (news/social/price/relations RAG). `validate_spec`
+    rejected freie Symbol-Referenzen, die nicht in der Universe sind
+    (anti-hallucination am Propose-Endpoint).
+13. ✅ **`app/strategies/llm_generated.py`** — Loader liest
+    `strategies_meta.kind='generated' AND status='live'` und mountet
+    jede DSL-Zeile als pseudo-`StrategyDef` in den `REGISTRY` (kein
+    extra Python-File pro Strategie). `register_generated()` ist die
+    Hot-Path-Funktion, die der Genesis-Backtest unmittelbar nach
+    Promote ruft → neue Strategien laufen ab dem nächsten Cron-Tick,
+    ohne Container-Restart.
+14. ✅ **`app/genesis.py` + `/strategies/propose?auto_backtest=true`
+    (Default)** — Propose validiert die DSL synchron (`HTTP 400` bei
+    Schema-Fehler) und plant per BackgroundTask einen Backtest über
+    `FINANCE_GURU_GENESIS_BT_DAYS` (Default 30) mit
+    `FINANCE_GURU_GENESIS_BT_STEP_MIN` (Default 60 min).
+    `total_pnl_pct ≥ FINANCE_GURU_GENESIS_MIN_BT_PCT` (4.0 %) **und**
+    `n_trades ≥ FINANCE_GURU_GENESIS_MIN_BT_TRADES` (5) → automatisch
+    promotet (`lifecycle.promote` + `register_generated`); sonst
+    archiviert mit deterministischer Begründung **plus** einem
+    `finance_strategy_lessons`-Sink-Eintrag, damit der nächste Genesis-
+    Cycle das Muster nicht erneut vorschlägt. Manueller Re-Run via
+    `POST /strategies/{name}/evaluate?sync=true` (Bearer).
+15. ✅ **`GET /strategies/dsl/catalog`** — exponiert Signal-Whitelist,
+    Operatoren, Sizing-Modi, Limits und das Promotion-Gate, damit der
+    Genesis-Workflow + die zukünftige Dashboard-DSL-Editor-UI exakt das
+    gleiche Vokabular sehen wie der Server. Keine Auth — read-only,
+    dream-network intern.
+16. ✅ **n8n-Workflow `12-finance-strategy-genesis.json`** (Cron
+    `0 0 */6 * * *`):
+    1. `GET /strategies/dsl/catalog` + `/strategies/leaderboard?window=7`
+       + `/history/symbols?hours=168`.
+    2. `POST /rag/asset-analysis`, `/rag/relations`,
+       `/rag/strategy-lessons` (Top-8/8/6 Treffer pro Aufruf).
+    3. **Build brief**-Code-Node trimmt jeden Block auf <8 Felder
+       pro Eintrag, damit der `reasoning`-Prompt nicht explodiert.
+    4. `POST /v1/chat/completions` mit `model: 'reasoning'`
+       (Qwen3.5-122B-A10B), `response_format: json_object`,
+       `temperature: 0.2`. System-Prompt erzwingt die DSL-Shape
+       inklusive `proposals[]`.
+    5. **Verifier-Node** (JS) prüft jede `proposals[]`-Zeile gegen die
+       Catalog-Whitelists (Signals, Ops, Sizing, Universe-Symbole).
+       Rejected proposals werden gezählt und im
+       `enrichment_runs`-Log unter `strategy_genesis`-Note vermerkt.
+    6. Pro accepted proposal: `POST /strategies/propose` (Bearer) →
+       Server feuert dann den Genesis-Backtest selbst.
+    7. `Cooldown 60s` (kostendiszipliniert — der Cron-Slot ist
+       alle 6 h, aber bei manuellem Re-Run verhindert das einen
+       Burst).
+17. ✅ **Lifespan-Hook** — `main.lifespan()` ruft nach
+    `discover_strategies()` einmalig `llm_generated.load_generated_
+    strategies(statuses=("live",))`, damit beim Container-Start jede
+    bereits promotete generierte Strategie wieder in den REGISTRY
+    geladen wird.
+18. ✅ **Catalog-Eintrag** (`config/n8n/catalog.json`): neue Workflow-
+    Karte `finance-strategy-genesis` + neue Kategorie `finance` für
+    konsistente Filterung im Dashboard-n8n-Browser.
+
+**Lessons learned aus Phase D:**
+
+* **DSL-Whitelist > LLM-Freiheit.** Die erste Idee war ein freier
+  Python-Closure-Generator über `code`-Modell — verworfen: der einzige
+  Weg, eine LLM-generierte Strategie deterministisch zu auditieren ist
+  eine geschlossene Predicate-DSL. Side-Effekt: Promotion-Gate-Bypass
+  wird unmöglich, weil keine Strategie eigene Sizing-/Trade-Logik
+  über den Whitelist hinaus ausdrücken kann.
+* **Backtest vor Promote, nicht parallel.** Der Plan §6 hatte
+  `propose → backtest → promote OR archive` als drei separate
+  n8n-Steps. Reorg: Backtest **lebt im Service** (BackgroundTask) →
+  n8n bleibt dumm. Vorteile: (a) Auth-Header nur einmal an
+  `/strategies/propose`, nicht doppelt; (b) der Backtest sieht die
+  exakte Python-Welt, die später live laufen wird (gleiche
+  `DecisionContext`-Helpers, gleiche `latest_prices`-Pfade); (c) bei
+  n8n-Outage bleibt der Genesis-Cycle einfach aus statt teilweise
+  halbe Lifecycle-Rows zu hinterlassen.
+* **Universe-Mismatch-Falle.** Ein Proposal mit `universe_filter`
+  auf z.B. `[BNTX, MRNA]` lieferte 0 Trades im Backtest weil
+  `prices_intraday` aktuell nur S&P-Top-200 hält. Lösung:
+  Verifier-Node lehnt unbekannte Symbole bereits ab; `validate_spec`
+  am Endpoint ist **ohne** Universe-Check tolerant (damit kurzfristige
+  Universe-Ausfälle keine ganze Strategie killen), aber der Backtest-
+  Gate kümmert sich um die wirtschaftliche Realität.
+* **`reasoning`-Latenz.** Eine Genesis-Execution braucht ~3–4 min für
+  den 122B-Call. Der Cron ist `*/6 h`, also locker im Budget, aber
+  `executionTimeout: 1500 s` macht den Workflow robust gegen
+  Modell-Pre-Warm-Effekte.
+* **Lesson-Loop schließt sich.** Archivierte Proposals embedden ihre
+  Reject-Begründung als `outcome='archived'`-Lesson; der Verifier des
+  nächsten Cycles bekommt das im RAG-Block der Brief-Sektion zu sehen
+  → die LLM-genesis ist selbst-korrigierend, ohne RL.
+
+**Smoke-Test-Checkliste (Phase D):**
+
+```
+# 1) DSL catalog erreichbar:
+curl -s http://127.0.0.1:8098/strategies/dsl/catalog | jq '.signals | keys | length, .gate'
+
+# 2) Propose mit absichtlich-ungültiger DSL → HTTP 400:
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+curl -s -o /dev/stderr -w "%{http_code}\n" -X POST http://127.0.0.1:8098/strategies/propose \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"bad","source":{"version":1,"rules":[]}}'
+# erwartet: 400
+
+# 3) Propose einer minimal-validen DSL → 201 + queued_backtest=true:
+curl -s -X POST http://127.0.0.1:8098/strategies/propose \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"smoke_phaseD","source":{"version":1,"description":"smoke","rules":[
+    {"id":"buy","action":"buy","when":{"all":[{"signal":"news.sentiment_max","lookback_h":4,"op":">=","value":0.5}]},"sizing":{"mode":"max_position_frac"}},
+    {"id":"sell","action":"sell","when":{"all":[{"signal":"position.pnl_pct","op":">=","value":0.05}]}}
+  ]}}' | jq
+
+# 4) Nach ~30 s (kurzer Backtest): Lifecycle-Status sollte 'archived'
+# (zu wenig Trades) ODER 'live' sein, NIE mehr 'proposed':
+sleep 60 && curl -s "http://127.0.0.1:8098/strategies/lifecycle?kind=generated" | jq '.strategies[] | {name, status, bt_pnl_pct, bt_n_trades}'
+
+# 5) Audit-Trail dokumentiert die Transition:
+curl -s "http://127.0.0.1:8098/strategies/audits?strategy=smoke_phaseD" | jq
+
+# 6) n8n: workflow 12 importieren, einmal manuell triggern, Logs prüfen:
+n8n UI → Executions → FinStratGenesis001 → letzte Execution:
+  - reasoning — propose DSL: HTTP 200 mit JSON object
+  - Verifier (DSL): accepted ≥ 1 ODER skip=true mit Begründung
+  - POST /strategies/propose: HTTP 201 mit queued_backtest=true
+  - Cooldown 60s
+```
+
+### Phase D Roadmap-Reste (für später)
+
+* **Cycle-Log-Filter `kind=generated`** im Dashboard — wird Teil von
+  Phase F (Dashboard-Panels).
+* **Operator-CLI** `dream finance-propose <file.json>` — Nice-to-have,
+  kein Blocker; das Bearer-`curl` aus dem Smoke-Test reicht.
+* **Genesis-Quota** (max N proposed/Woche) — frühestens wenn das
+  Lifecycle-Backlog tatsächlich auf 100+ archived-Rows wächst.
+
+### Phase D — Strategie-Generator (legacy plan section)
 
 12. **Strategie-DSL** in `app/strategies/dsl.py`:
     JSON-Schema mit erlaubten Bausteinen

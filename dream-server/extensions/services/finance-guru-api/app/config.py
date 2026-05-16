@@ -62,6 +62,25 @@ class GuruConfig:
     lesson_llm_timeout: int = field(default_factory=lambda: int(os.getenv(
         "FINANCE_GURU_LESSON_LLM_TIMEOUT", "300")))
 
+    # ── Strategy genesis (Phase D) ─────────────────────────────────────
+    # When n8n posts a DSL proposal, finance-guru-api auto-backtests it
+    # over the last N days. If the realised PnL clears the gate AND
+    # produced enough trades, the strategy gets auto-promoted to live;
+    # otherwise it's archived with a deterministic reason. Set
+    # genesis_min_backtest_pct to a NEGATIVE number to disable the
+    # promotion gate (every proposal becomes live — useful for the
+    # initial run when no relations have been built yet).
+    genesis_backtest_days: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_GENESIS_BT_DAYS", "30")))
+    genesis_backtest_step_minutes: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_GENESIS_BT_STEP_MIN", "60")))
+    genesis_backtest_universe_limit: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_GENESIS_BT_UNIVERSE", "40")))
+    genesis_min_backtest_pct: float = field(default_factory=lambda: float(os.getenv(
+        "FINANCE_GURU_GENESIS_MIN_BT_PCT", "4.0")))
+    genesis_min_backtest_trades: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_GENESIS_MIN_BT_TRADES", "5")))
+
     @property
     def enabled_strategies(self) -> set[str] | None:
         """Returns the explicit allow-list, or None for 'all'."""

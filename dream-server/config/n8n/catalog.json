@@ -737,6 +737,21 @@
       ],
       "setupTime": "1 minute",
       "featured": false
+    },
+    {
+      "id": "finance-strategy-genesis",
+      "file": "12-finance-strategy-genesis.json",
+      "name": "Finance Strategy Genesis (LLM \u2192 DSL)",
+      "description": "Every 6h: queries the DSL catalog, leaderboard, asset-analysis RAG, causal-relations RAG and strategy-lessons RAG, asks the reasoning model (Qwen3.5-122B-A10B) for 1\u20133 candidate strategies as JSON DSL patches, then validates each one against the signal whitelist + live universe before POSTing to /strategies/propose. finance-guru-api auto-backtests every proposal over the last 30 days and either promotes (>= 4% gate) or archives + lessons-embeds it. Pure read-only RAG consumer; no direct ledger writes.",
+      "icon": "Sparkles",
+      "category": "finance",
+      "dependencies": [
+        "finance-guru-api",
+        "litellm",
+        "qdrant"
+      ],
+      "setupTime": "1 minute",
+      "featured": true
     }
   ],
   "categories": {
@@ -771,6 +786,10 @@
     "sync": {
       "name": "Sync",
       "description": "Two-way synchronization between external services and Dream Server"
+    },
+    "finance": {
+      "name": "Finance",
+      "description": "Paper-trade strategy engine, enrichment workflows and DSL strategy genesis"
     }
   }
 }

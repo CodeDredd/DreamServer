@@ -36,9 +36,11 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from . import backtest, cycle_log, data, enrichment, ledger, lifecycle, orchestrator, qdrant_rag, qdrant_sink
+from . import backtest, cycle_log, data, enrichment, genesis, ledger, lifecycle, orchestrator, qdrant_rag, qdrant_sink
 from .config import CFG
 from .strategies import REGISTRY, discover_strategies
+from .strategies import dsl as strategy_dsl
+from .strategies import llm_generated
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -145,6 +147,24 @@ async def _auto_archive_async() -> None:
     await asyncio.to_thread(_auto_archive_blocking)
 
 
+# --------------------------------------------------------------------------- #
+# Phase D — genesis backtest is dispatched via FastAPI BackgroundTasks so
+# the HTTP caller (n8n) gets an immediate 201. The blocking variant lives
+# here so the same function can also be called from /strategies/{name}/
+# evaluate?sync=true. The result is implicit (lifecycle row + audit trail);
+# the dashboard renders it from GET /strategies/audits.
+# --------------------------------------------------------------------------- #
+def _genesis_evaluate_blocking(name: str) -> dict:
+    try:
+        out = genesis.evaluate_proposal(name, actor="genesis")
+        log.info("genesis evaluate %s → %s (%s)",
+                 name, out.get("outcome"), out.get("note") or "")
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.exception("genesis evaluate failed for %s", name)
+        return {"strategy": name, "outcome": "error", "note": str(exc)}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Initialising ledger at %s", CFG.ledger_path)
@@ -165,6 +185,17 @@ async def lifespan(app: FastAPI):
         # POST /strategies/propose → /strategies/promote and never hit
         # this loop.
         lifecycle.ensure_meta(sd.name, kind="builtin", status="live")
+    # Phase D: pick up every live DSL-generated strategy from
+    # strategies_meta and register it in REGISTRY so the next cron tick
+    # schedules it. Done AFTER ensure_meta on builtins so the lifecycle
+    # table is fully primed.
+    try:
+        gen_loaded = llm_generated.load_generated_strategies(statuses=("live",))
+        if gen_loaded:
+            log.info("Phase D: %d generated strategies live (%s)",
+                     len(gen_loaded), ",".join(sorted(gen_loaded)))
+    except Exception:  # noqa: BLE001
+        log.exception("load_generated_strategies failed — continuing without them")
 
     if not data.wait_until_ready():
         log.error("TimescaleDB never became reachable — running anyway")
@@ -764,15 +795,82 @@ def lifecycle_audits(strategy: str | None = Query(default=None),
 
 @app.post("/strategies/propose", status_code=status.HTTP_201_CREATED)
 def lifecycle_propose(payload: ProposeStrategyIn,
-                      authorization: str | None = Header(default=None)) -> dict:
+                      background: BackgroundTasks,
+                      authorization: str | None = Header(default=None),
+                      auto_backtest: bool = Query(True, description=(
+                          "If true (default), run the genesis backtest "
+                          "in the background and auto-promote/archive "
+                          "the proposal. Set false for an ops dry-run "
+                          "that just records the row.")),
+                      ) -> dict:
     _check_token(authorization)
+    name = payload.name.strip()
+    # Validate DSL up-front so the caller (n8n verifier) gets a 400 on
+    # malformed proposals without us writing a row that will never run.
+    # Universe whitelist is intentionally NOT enforced here — the
+    # backtest will simply produce 0 trades if the symbols don't exist
+    # in TimescaleDB and the gate will archive it with the right note.
     try:
-        meta = lifecycle.propose(name=payload.name.strip(),
+        strategy_dsl.validate_spec(payload.source)
+    except strategy_dsl.DslError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"DSL validation failed: {exc}")
+    try:
+        meta = lifecycle.propose(name=name,
                                   source=payload.source,
                                   parent_id=payload.parent_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
-    return meta
+    queued = False
+    if auto_backtest:
+        background.add_task(_genesis_evaluate_blocking, name)
+        queued = True
+    return dict(meta) | {"queued_backtest": queued}
+
+
+@app.post("/strategies/{name}/evaluate", status_code=status.HTTP_202_ACCEPTED)
+def lifecycle_evaluate(name: str, background: BackgroundTasks,
+                       authorization: str | None = Header(default=None),
+                       sync: bool = Query(False, description=(
+                           "When true, run the genesis evaluation "
+                           "synchronously and return its outcome; "
+                           "otherwise dispatch as a background task.")),
+                       ) -> dict:
+    """Manual trigger for the genesis backtest+promote pipeline. Used
+    by the n8n genesis workflow on retries and by operators to re-run
+    a proposal that was archived during a Timescale outage."""
+    _check_token(authorization)
+    if sync:
+        return genesis.evaluate_proposal(name.strip(), actor="manual")
+    background.add_task(_genesis_evaluate_blocking, name.strip())
+    return {"accepted": True, "strategy": name.strip(),
+            "queued_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+
+
+@app.get("/strategies/dsl/catalog")
+def lifecycle_dsl_catalog() -> dict:
+    """Surface the DSL signal whitelist + operator/sizing lists so the
+    n8n genesis workflow (and the future dashboard editor) always speak
+    the exact same vocabulary as the server."""
+    return {
+        "version":   strategy_dsl.DSL_VERSION,
+        "signals":   strategy_dsl.signal_catalog(),
+        "ops":       sorted(strategy_dsl.ALLOWED_OPS),
+        "actions":   sorted(strategy_dsl.ALLOWED_ACTIONS),
+        "sizing":    sorted(strategy_dsl.ALLOWED_SIZING),
+        "limits":    {
+            "max_rules":               strategy_dsl.MAX_RULES,
+            "max_predicates_per_rule": strategy_dsl.MAX_PREDICATES_PER_RULE,
+            "max_nesting_depth":       strategy_dsl.MAX_NESTING_DEPTH,
+        },
+        "gate":      {
+            "min_backtest_pct":    CFG.genesis_min_backtest_pct,
+            "min_backtest_trades": CFG.genesis_min_backtest_trades,
+            "backtest_days":       CFG.genesis_backtest_days,
+            "backtest_step_min":   CFG.genesis_backtest_step_minutes,
+            "universe_limit":      CFG.genesis_backtest_universe_limit,
+        },
+    }
 
 
 @app.post("/strategies/promote")
