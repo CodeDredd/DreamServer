@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS cycle_runs (
 
 CREATE INDEX IF NOT EXISTS idx_cycle_runs_strategy_ts ON cycle_runs (strategy, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_cycle_runs_ts          ON cycle_runs (ts DESC);
-CREATE INDEX IF NOT EXISTS idx_cycle_runs_kind_ts     ON cycle_runs (kind, ts DESC);
+-- The (kind, ts) index is created by _ensure_extra_columns AFTER the
+-- ALTER TABLE that may need to add the column on legacy installs;
+-- leaving it here would break startup on upgrades because executescript
+-- runs sequentially and the column doesn't exist yet at that point.
 """
 
 
