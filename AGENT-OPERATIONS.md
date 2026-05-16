@@ -462,6 +462,76 @@ Everything follows the existing service contract (`compose.yaml`,
 `manifest.yaml`, `installers/phases/08-images.sh` pin, `dream sync`
 behaviour). No new ops surface for the operator.
 
+### 11a. Cycle log + enrichment (added 05/2026)
+
+The first version of finance-guru-api only kept the *last* per-strategy
+result in memory. Two additions made the loop observable and gave n8n
+a sane place to write LLM-derived enrichment back to:
+
+* **`cycle_log` (SQLite table inside the ledger DB)** — every
+  `orchestrator.run_strategy_once()` call now appends `(ts, strategy,
+  trigger, duration_ms, universe, signals, executed, skipped,
+  equity_eur, cash_eur, pnl_pct, status, error)`. New endpoints
+  `GET /cycles?strategy=&status=&limit=` and
+  `GET /equity-history?strategy=&days=` feed the dashboard's
+  cycle-log table and equity sparkline.
+* **`enrichment_*` tables** — store **`asset_analysis`** (per
+  (symbol, period) LLM verdict + keywords + drivers + confidence +
+  contradictions + raw response) and **`source_reliability`** (per
+  source `reliability∈[0,1]`, `weight∈[0,2]`, sample_size,
+  methodology). Plus an audit log `enrichment_runs`. Endpoints under
+  `/enrichment/*` are bearer-guarded write + open read.
+* **History query endpoints** (`/history/symbols`, `/history/prices`,
+  `/history/news`) let n8n pull windowed time-series without needing
+  direct Postgres credentials.
+
+### 11b. n8n enrichment workflows
+
+Two workflows ship in `config/n8n/` and are listed in
+`catalog.json`. Both use **LiteLLM alias `default`** (qwen3.6).
+
+| Workflow file | Cadence | What it does |
+|---|---|---|
+| `09-finance-asset-behaviour.json` | every 5 min + 5 min cooldown | Picks the stalest analysed symbol from the live universe, fetches 6 months of OHLCV + headlines, asks the LLM to explain the *biggest pre-computed* daily moves, extract ≤12 keywords and emit per-driver `news_ids`. **Verifier step rejects any driver whose date isn't in `biggest_moves` or whose `news_ids` aren't in the input news list** (anti-hallucination). Confidence is penalised by 0.15 per contradiction. |
+| `10-finance-source-reliability.json` | every 6h + 5 min cooldown | Aggregates 30d-news per source (sample_size, symbol_hit_rate, sentiment_coverage, avg_abs_sentiment, avg_urgency), asks the LLM for a `reliability∈[0,1]` + one-line methodology, then **deterministically** recomputes `weight = reliability * min(1, sample_size/50) * 2`. Drops any source the LLM invented. |
+
+Both workflows:
+
+* `executionTimeout: 600s`, `coalesce`-equivalent (5-min cron picks
+  exactly one stale candidate per run; if none, "skipped" is logged).
+* Always finish with a `Cooldown 5 min` `Wait` node so the next
+  cron tick truly is 5 min away even on fast successes — keeps the
+  CPU free for live strategies.
+* Report every run to `/enrichment/run` (ok / skipped / error), so
+  the dashboard's "Enrichment-Workflows" panel shows the heartbeat.
+
+Operator setup:
+
+```bash
+ssh sky-net@192.168.178.110 'dream sync --pull --auto-restart'
+# in n8n UI: import 09-finance-asset-behaviour.json + 10-finance-source-reliability.json
+# both are tagged "finance" + "enrichment" for easy filtering
+```
+
+### 11c. Dashboard restructure
+
+The Nuxt `pages/finance-guru.vue → StrategiesTab.vue` was reorganised:
+
+* Aggregate KPI strip now has a **5th card** showing cycles-in-last-24h
+  + total errors.
+* `EquityChart.vue` (nuxt-charts `LineChart`) renders the selected
+  strategy's equity + cash over 30 days.
+* Open positions + trades use `UTable` instead of hand-rolled tables
+  (sortable headers, sticky scroll).
+* `CycleLogTable.vue` — full UTable with filter inputs (strategy,
+  status, free-text search via VueUse `refDebounced`) and a UModal
+  drill-down for cycle details.
+* `EnrichmentRunsTable.vue` — shows last `asset_behaviour` /
+  `source_reliability` workflow run + history table.
+
+Composable `useFinanceGuru.ts` fetches all of the above in parallel
+on the existing 30s `usePolling` loop.
+
 ## 12. Quick-paste prompt for new sessions
 
 > I'm working on the DreamServer fork at

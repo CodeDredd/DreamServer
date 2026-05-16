@@ -513,6 +513,108 @@ export interface FinanceDecideResponse {
   detail?: string
 }
 
+// ---------- /api/finance-guru/cycles, /equity-history --------------------
+
+export interface FinanceCycleRow {
+  id: number
+  ts: string
+  strategy: string
+  trigger: 'scheduler' | 'manual' | 'backtest' | string
+  duration_ms: number
+  universe: number
+  signals: number
+  executed: number
+  skipped: number
+  equity_eur?: number | null
+  cash_eur?: number | null
+  pnl_pct?: number | null
+  status: 'ok' | 'empty' | 'error' | string
+  error?: string | null
+}
+
+export interface FinanceCycleSummary {
+  total: number
+  errors: number
+  last_24h: number
+  last?: {
+    ts: string
+    status: string
+    signals: number
+    executed: number
+    error?: string | null
+  } | null
+}
+
+export interface FinanceCyclesResponse {
+  summary: FinanceCycleSummary
+  next_run?: string | null
+  cycles: FinanceCycleRow[]
+}
+
+export interface FinanceEquityPoint {
+  ts: string
+  equity_eur: number
+  cash_eur?: number | null
+  pnl_pct?: number | null
+}
+
+export interface FinanceEquityResponse {
+  strategy: string
+  since: string
+  points: FinanceEquityPoint[]
+}
+
+// ---------- /api/finance-guru/enrichment/* -------------------------------
+
+export interface FinanceAssetAnalysis {
+  id: number
+  ts: string
+  symbol: string
+  asset_type: 'stock' | 'crypto' | string
+  period_start: string
+  period_end: string
+  summary: string
+  keywords: string[]
+  drivers: Array<{
+    date?: string
+    move_pct?: number
+    reason?: string
+    news_ids?: Array<string | number>
+  }>
+  news_ids: Array<string | number>
+  confidence: number
+  contradictions?: string | null
+  model: string
+}
+
+export interface FinanceCoverageRow {
+  symbol: string
+  asset_type: string
+  last_ts: string
+  n: number
+  avg_confidence: number
+}
+
+export interface FinanceSourceReliability {
+  source: string
+  reliability: number
+  weight: number
+  sample_size: number
+  methodology: string
+  last_evaluated_at: string
+  model: string
+}
+
+export interface FinanceEnrichmentRun {
+  id: number
+  ts: string
+  workflow: 'asset_behaviour' | 'source_reliability' | string
+  target?: string | null
+  status: 'ok' | 'error' | 'skipped' | string
+  duration_ms: number
+  note?: string | null
+}
+
 // ---------------------------------------------------------------------------
 // Lotto Oracle (Phase 4 Welle C.1b). Pendant zu /api/lotto/* —
 // dashboard-api proxied lotto-oracle.

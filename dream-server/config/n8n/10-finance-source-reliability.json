@@ -1,0 +1,261 @@
+{
+  "name": "Finance News Source Reliability",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 17 */6 * * *" }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 320]
+    },
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 520]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-guru-api:8098/history/news",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "days",  "value": "30" },
+            { "name": "limit", "value": "1000" }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "get_news",
+      "name": "GET 30d news",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Compute deterministic per-source statistics. The LLM step is only\n// asked to *interpret* these (e.g. weight, methodology one-liner) —\n// it is NEVER allowed to invent a reliability number from thin air.\nconst news = $json.rows || [];\nconst bySource = {};\nfor (const n of news) {\n  const s = String(n.source || 'unknown').toLowerCase().trim();\n  const bs = bySource[s] || (bySource[s] = {\n    source: s, n: 0, n_with_symbol: 0, n_with_sentiment: 0,\n    sum_abs_sent: 0, sum_urgency: 0, sample_titles: [],\n  });\n  bs.n += 1;\n  if (Array.isArray(n.symbols) && n.symbols.length) bs.n_with_symbol += 1;\n  if (n.sentiment !== null && n.sentiment !== undefined) {\n    bs.n_with_sentiment += 1;\n    bs.sum_abs_sent += Math.abs(Number(n.sentiment));\n  }\n  if (n.urgency !== null && n.urgency !== undefined) bs.sum_urgency += Number(n.urgency);\n  if (bs.sample_titles.length < 5 && n.title) bs.sample_titles.push(n.title.slice(0, 140));\n}\n// Drop sources with < 5 samples — too noisy.\nconst rows = Object.values(bySource)\n  .filter(bs => bs.n >= 5)\n  .map(bs => ({\n    source: bs.source,\n    sample_size: bs.n,\n    symbol_hit_rate: bs.n_with_symbol / bs.n,\n    sentiment_coverage: bs.n_with_sentiment / bs.n,\n    avg_abs_sentiment: bs.n_with_sentiment ? bs.sum_abs_sent / bs.n_with_sentiment : 0,\n    avg_urgency: bs.n ? bs.sum_urgency / bs.n : 0,\n    sample_titles: bs.sample_titles,\n  }));\n// Hard cap on prompt size — top 30 by sample size.\nrows.sort((a, b) => b.sample_size - a.sample_size);\nconst batch = rows.slice(0, 30);\nreturn [{ json: { sources: batch, total_input_sources: rows.length } }];"
+      },
+      "id": "prep_stats",
+      "name": "Aggregate per source",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.sources || []).length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "guard_sources",
+      "name": "Has sources?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [980, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://litellm:4000/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'default', temperature: 0.0, max_tokens: 1500, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You score financial-news sources for reliability and weighting. RULES: (1) Use ONLY the provided statistics (sample_size, symbol_hit_rate, sentiment_coverage, avg_abs_sentiment, avg_urgency) plus your prior knowledge of the source domain to judge editorial standards. (2) Never invent sources that are not in the input list. (3) Output STRICT JSON: { \"scores\": [ { \"source\": string, \"reliability\": number_in_[0,1], \"weight\": number_in_[0,2], \"methodology\": string<=200 } ] }. (4) reliability scale: 0.9 reuters/bloomberg/handelsblatt-level; 0.7 mainstream outlets; 0.5 niche/specialist; 0.3 forums/blogs; 0.0 spam/unknown. (5) weight = reliability * (sample_size_factor); sample_size_factor = min(1, sample_size/50). (6) methodology MUST cite the metrics (e.g. \"reuters: known wire, 0.92 symbol_hit_rate, n=120\"). No markdown.' }, { role: 'user', content: 'Sources to score:\\n' + JSON.stringify($json.sources) } ] }) }}",
+        "options": {
+          "timeout": 240000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "llm_score",
+      "name": "qwen3.6 — score sources",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Anti-hallucination verifier: drop any source the LLM invented and\n// recompute weight deterministically from sample_size to prevent the\n// model from inflating it.\nconst llm = $items()[0].json;\nconst src = $node['Aggregate per source'].json.sources || [];\nconst allowed = new Map(src.map(s => [s.source.toLowerCase(), s]));\nlet parsed = null;\nlet raw = '';\ntry {\n  const c = llm?.choices?.[0]?.message?.content || '';\n  raw = String(c).trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { fatal: true, reason: 'invalid JSON from LLM', raw: raw.slice(0, 500) } }];\n}\nconst scores = Array.isArray(parsed?.scores) ? parsed.scores : [];\nconst out = [];\nconst dropped = [];\nfor (const s of scores) {\n  const key = String(s.source || '').toLowerCase().trim();\n  const meta = allowed.get(key);\n  if (!meta) { dropped.push(key); continue; }\n  const rel = Math.max(0, Math.min(1, Number(s.reliability ?? 0.5)));\n  // Deterministic weight = reliability * sample-size factor.\n  const sizeFactor = Math.min(1, meta.sample_size / 50);\n  const weight = Math.round(rel * sizeFactor * 100) / 100 * 2; // 0..2\n  out.push({\n    source: key,\n    reliability: rel,\n    weight: Math.max(0, Math.min(2, weight)),\n    sample_size: meta.sample_size,\n    methodology: String(s.methodology || '').slice(0, 300),\n  });\n}\nreturn [{ json: { fatal: false, scores: out, dropped, raw: raw.slice(0, 4000) } }];"
+      },
+      "id": "verify_scores",
+      "name": "Verify + recompute weight",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 320]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.fatal }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "guard_fatal",
+      "name": "Verifier OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1760, 320]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "scores",
+        "options": { "includeBinary": false }
+      },
+      "id": "split",
+      "name": "Split per source",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [2020, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/source-reliability",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } },
+          "batching": { "batch": { "batchSize": 1, "batchInterval": 200 } }
+        }
+      },
+      "id": "store_each",
+      "name": "Store reliability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2280, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: 'batch', status: 'ok', duration_ms: Date.now() - $execution.startedAt.getTime(), note: 'scored=' + ($node['Verify + recompute weight'].json.scores || []).length + ' dropped=' + ($node['Verify + recompute weight'].json.dropped || []).length }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "report_ok",
+      "name": "Report OK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2540, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'source_reliability', target: null, status: ($json.fatal ? 'error' : 'skipped'), duration_ms: Date.now() - $execution.startedAt.getTime(), note: $json.reason || 'no sources or verifier rejected' }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": { "response": { "neverError": true, "responseFormat": "json" } }
+        }
+      },
+      "id": "report_skipped",
+      "name": "Report skipped/error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 580]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "minutes"
+      },
+      "id": "cooldown",
+      "name": "Cooldown 5 min",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2780, 420]
+    }
+  ],
+  "connections": {
+    "Every 6h":                  { "main": [[{ "node": "GET 30d news", "type": "main", "index": 0 }]] },
+    "Manual Trigger":            { "main": [[{ "node": "GET 30d news", "type": "main", "index": 0 }]] },
+    "GET 30d news":              { "main": [[{ "node": "Aggregate per source", "type": "main", "index": 0 }]] },
+    "Aggregate per source":      { "main": [[{ "node": "Has sources?", "type": "main", "index": 0 }]] },
+    "Has sources?":              { "main": [
+                                     [{ "node": "qwen3.6 — score sources", "type": "main", "index": 0 }],
+                                     [{ "node": "Report skipped/error",   "type": "main", "index": 0 }]
+                                   ] },
+    "qwen3.6 — score sources":   { "main": [[{ "node": "Verify + recompute weight", "type": "main", "index": 0 }]] },
+    "Verify + recompute weight": { "main": [[{ "node": "Verifier OK?", "type": "main", "index": 0 }]] },
+    "Verifier OK?":              { "main": [
+                                     [{ "node": "Split per source",      "type": "main", "index": 0 }],
+                                     [{ "node": "Report skipped/error",  "type": "main", "index": 0 }]
+                                   ] },
+    "Split per source":          { "main": [[{ "node": "Store reliability", "type": "main", "index": 0 }]] },
+    "Store reliability":         { "main": [[{ "node": "Report OK", "type": "main", "index": 0 }]] },
+    "Report OK":                 { "main": [[{ "node": "Cooldown 5 min", "type": "main", "index": 0 }]] },
+    "Report skipped/error":      { "main": [[{ "node": "Cooldown 5 min", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 600,
+    "saveExecutionProgress": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "tags": ["finance", "enrichment"]
+}
+

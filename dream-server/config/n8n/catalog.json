@@ -640,46 +640,90 @@
     {
       "id": "github-issue-to-vikunja-task",
       "file": "github-issue-to-vikunja-task.json",
-      "name": "GitHub Issue → Vikunja Task",
-      "description": "Receives GitHub Issue webhooks and creates corresponding tasks in a Vikunja project. Repo→Project mapping is configurable.",
+      "name": "GitHub Issue \u2192 Vikunja Task",
+      "description": "Receives GitHub Issue webhooks and creates corresponding tasks in a Vikunja project. Repo\u2192Project mapping is configurable.",
       "icon": "GitPullRequest",
       "category": "sync",
-      "dependencies": ["vikunja", "n8n"],
+      "dependencies": [
+        "vikunja",
+        "n8n"
+      ],
       "setupTime": "5 minutes",
       "featured": true
     },
     {
       "id": "github-issue-closed-to-vikunja-done",
       "file": "github-issue-closed-to-vikunja-done.json",
-      "name": "GitHub Issue Closed → Vikunja Done",
+      "name": "GitHub Issue Closed \u2192 Vikunja Done",
       "description": "Closes the matching Vikunja task when its source GitHub issue is closed. Pairs with the create-flow.",
       "icon": "CheckCircle",
       "category": "sync",
-      "dependencies": ["vikunja", "n8n"],
+      "dependencies": [
+        "vikunja",
+        "n8n"
+      ],
       "setupTime": "2 minutes",
       "featured": false
     },
     {
       "id": "vikunja-done-to-github-close",
       "file": "vikunja-done-to-github-close.json",
-      "name": "Vikunja Task Done → GitHub Issue Close",
+      "name": "Vikunja Task Done \u2192 GitHub Issue Close",
       "description": "Reverse-direction sync: Vikunja outgoing webhook closes the linked GitHub issue when a task is marked done.",
       "icon": "GitMerge",
       "category": "sync",
-      "dependencies": ["vikunja", "n8n"],
+      "dependencies": [
+        "vikunja",
+        "n8n"
+      ],
       "setupTime": "3 minutes",
       "featured": false
     },
     {
       "id": "vikunja-task-to-coding-agent",
       "file": "vikunja-task-to-coding-agent.json",
-      "name": "Vikunja Task → Coding Agent (Open Claw)",
+      "name": "Vikunja Task \u2192 Coding Agent (Open Claw)",
       "description": "Dispatches Vikunja tasks tagged with the `agent` label to Open Claw's OpenAI-compatible API and posts the response back as a task comment.",
       "icon": "Bot",
       "category": "agents",
-      "dependencies": ["vikunja", "openclaw", "n8n"],
+      "dependencies": [
+        "vikunja",
+        "openclaw",
+        "n8n"
+      ],
       "setupTime": "5 minutes",
       "featured": true
+    },
+    {
+      "id": "finance-asset-behaviour",
+      "file": "09-finance-asset-behaviour.json",
+      "name": "Finance Asset Behaviour Analysis (6mo)",
+      "description": "Picks the stalest asset (stock or crypto), pulls 6mo prices+news, asks qwen3.6 to explain the biggest moves and extract keywords. Anti-hallucination verifier rejects any driver that does not reference a real news_id or biggest_move date. Throttled: 5min cron + 5min cooldown.",
+      "icon": "TrendingUp",
+      "category": "finance",
+      "dependencies": [
+        "finance-guru-api",
+        "finance-prices",
+        "finance-news",
+        "litellm"
+      ],
+      "setupTime": "1 minute",
+      "featured": true
+    },
+    {
+      "id": "finance-source-reliability",
+      "file": "10-finance-source-reliability.json",
+      "name": "Finance News Source Reliability",
+      "description": "Aggregates per-source statistics (sample size, symbol hit rate, sentiment coverage) over the last 30 days and asks qwen3.6 to assign a reliability score (0..1) and weight (0..2). Verifier drops invented sources and recomputes the weight deterministically. Runs every 6h.",
+      "icon": "ShieldCheck",
+      "category": "finance",
+      "dependencies": [
+        "finance-guru-api",
+        "finance-news",
+        "litellm"
+      ],
+      "setupTime": "1 minute",
+      "featured": false
     }
   ],
   "categories": {

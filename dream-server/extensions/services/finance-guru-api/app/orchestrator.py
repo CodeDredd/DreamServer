@@ -6,7 +6,7 @@ import datetime as dt
 import logging
 from typing import Iterable
 
-from . import data, ledger
+from . import cycle_log, data, ledger
 from .config import CFG
 from .strategies import DecisionContext, Signal, StrategyDef
 
@@ -52,9 +52,11 @@ def _size_buy(signal: Signal, ctx: DecisionContext, max_frac: float) -> float:
     return round(units, 6)
 
 
-def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str]) -> dict:
+def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
+                      *, trigger: str = "scheduler") -> dict:
     ledger.ensure_strategy(sd.name, sd.description)
     ctx = _build_context(sd.name, sd.asset_types, asset_type_map)
+    started = ctx.now
 
     log.info("[%s] cycle: universe=%d cash=%.2f positions=%d",
              sd.name, len(ctx.universe), ctx.cash_eur, len(ctx.positions))
@@ -64,8 +66,16 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str]) -> dict:
         signals = sd.decide(ctx) or []
     except Exception as exc:  # noqa: BLE001
         log.exception("[%s] decide() crashed", sd.name)
-        return {"strategy": sd.name, "error": str(exc),
-                "signals": 0, "executed": 0}
+        finished = dt.datetime.now(dt.timezone.utc)
+        result = {"strategy": sd.name, "error": str(exc),
+                  "signals": 0, "executed": [], "skipped": [],
+                  "universe": len(ctx.universe), "ts": started.isoformat()}
+        try:
+            cycle_log.record(strategy=sd.name, started=started, finished=finished,
+                             trigger=trigger, result=result, error=str(exc))
+        except Exception:  # noqa: BLE001
+            log.exception("cycle_log.record failed (decide crash)")
+        return result
 
     max_frac = sd.max_position_frac if sd.max_position_frac is not None else CFG.max_position_frac
 
@@ -124,14 +134,22 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str]) -> dict:
              sd.name, len(signals), len(executed), len(skipped),
              kpi["equity_eur"], kpi["total_pnl_pct"] or 0.0)
 
-    return {
+    result = {
         "strategy": sd.name,
         "ts":       ctx.now.isoformat(),
+        "universe": len(ctx.universe),
         "signals":  len(signals),
         "executed": executed,
         "skipped":  skipped,
         "kpi":      kpi,
     }
+    try:
+        cycle_log.record(strategy=sd.name, started=started,
+                         finished=dt.datetime.now(dt.timezone.utc),
+                         trigger=trigger, result=result)
+    except Exception:  # noqa: BLE001
+        log.exception("cycle_log.record failed")
+    return result
 
 
 def asset_type_map() -> dict[str, str]:

@@ -147,3 +147,82 @@ async def trigger_backtest(
     """Replay history for one strategy. Body: {"strategy": str, "days": int}."""
     return await _guru_request("POST", "/backtest", json=body, bearer=True)
 
+
+# --- Cycle log / equity history -------------------------------------------
+
+@router.get("/api/finance-guru/cycles")
+async def list_cycles(
+    strategy: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    api_key: str = Depends(verify_api_key),
+):
+    """Persistent log of every decide-cycle the scheduler ran."""
+    params: dict = {"limit": limit}
+    if strategy:
+        params["strategy"] = strategy
+    if status:
+        params["status"] = status
+    return await _guru_request("GET", "/cycles", params=params)
+
+
+@router.get("/api/finance-guru/equity-history")
+async def equity_history(
+    strategy: str = Query(..., min_length=1),
+    days: int = Query(default=30, ge=1, le=365),
+    limit: int = Query(default=500, ge=10, le=5000),
+    api_key: str = Depends(verify_api_key),
+):
+    """Time-series of (ts, equity_eur, pnl_pct) for the equity chart."""
+    return await _guru_request(
+        "GET", "/equity-history",
+        params={"strategy": strategy, "days": days, "limit": limit},
+    )
+
+
+# --- Enrichment (read-only proxy — n8n posts directly upstream) ----------
+
+@router.get("/api/finance-guru/enrichment/asset-analysis")
+async def enrichment_asset_analysis(
+    symbol: str = Query(..., min_length=1),
+    limit: int = Query(default=10, ge=1, le=100),
+    api_key: str = Depends(verify_api_key),
+):
+    return await _guru_request(
+        "GET", "/enrichment/asset-analysis",
+        params={"symbol": symbol, "limit": limit},
+    )
+
+
+@router.get("/api/finance-guru/enrichment/asset-analysis/coverage")
+async def enrichment_coverage(
+    limit: int = Query(default=200, ge=1, le=1000),
+    api_key: str = Depends(verify_api_key),
+):
+    return await _guru_request(
+        "GET", "/enrichment/asset-analysis/coverage", params={"limit": limit},
+    )
+
+
+@router.get("/api/finance-guru/enrichment/source-reliability")
+async def enrichment_source_reliability(
+    limit: int = Query(default=200, ge=1, le=1000),
+    api_key: str = Depends(verify_api_key),
+):
+    return await _guru_request(
+        "GET", "/enrichment/source-reliability", params={"limit": limit},
+    )
+
+
+@router.get("/api/finance-guru/enrichment/runs")
+async def enrichment_runs(
+    workflow: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    api_key: str = Depends(verify_api_key),
+):
+    params: dict = {"limit": limit}
+    if workflow:
+        params["workflow"] = workflow
+    return await _guru_request("GET", "/enrichment/runs", params=params)
+
+

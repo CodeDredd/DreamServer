@@ -8,16 +8,25 @@ import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { useApi } from '~/composables/useApi'
 import { usePolling } from '~/composables/usePolling'
 import type {
+  FinanceCycleRow,
+  FinanceCycleSummary,
+  FinanceCyclesResponse,
   FinanceDecideResponse,
+  FinanceEnrichmentRun,
+  FinanceEquityPoint,
+  FinanceEquityResponse,
+  FinanceHistoryExtent,
   FinanceLedger,
   FinanceSchedule,
   FinanceStatus,
   FinanceStrategiesResponse,
   FinanceStrategy,
-  FinanceHistoryExtent,
 } from '~/types/api'
 
 const POLL_INTERVAL = 30_000
+const EQUITY_DAYS = 30
+const CYCLE_LIMIT = 60
+const ENRICHMENT_RUNS_LIMIT = 50
 
 const status: Ref<FinanceStatus | null> = ref(null)
 const strategies: Ref<FinanceStrategy[]> = ref([])
@@ -25,6 +34,10 @@ const schedule: Ref<FinanceSchedule | null> = ref(null)
 const nextRun: Ref<string | null> = ref(null)
 const historyExtent: Ref<FinanceHistoryExtent | null> = ref(null)
 const ledgers: Ref<Record<string, FinanceLedger>> = ref({})
+const cycleSummary: Ref<FinanceCycleSummary | null> = ref(null)
+const cycles: Ref<FinanceCycleRow[]> = ref([])
+const equity: Ref<Record<string, FinanceEquityPoint[]>> = ref({})
+const enrichmentRuns: Ref<FinanceEnrichmentRun[]> = ref([])
 const loading = ref(true)
 const error: Ref<string | null> = ref(null)
 
@@ -81,6 +94,48 @@ export function useFinanceGuru() {
         }),
       )
       ledgers.value = Object.fromEntries(entries)
+
+      // Equity history per strategy (parallel small payloads).
+      const equityEntries = await Promise.all(
+        list.map(async (s) => {
+          try {
+            const res = await api.get<FinanceEquityResponse>(
+              `/api/finance-guru/equity-history?strategy=${encodeURIComponent(s.name)}&days=${EQUITY_DAYS}`,
+            )
+            return [s.name, res.points || []] as const
+          }
+          catch {
+            return [s.name, []] as const
+          }
+        }),
+      )
+      equity.value = Object.fromEntries(equityEntries)
+
+      // Global cycle log (across all strategies; UI may filter).
+      try {
+        const cy = await api.get<FinanceCyclesResponse>(
+          `/api/finance-guru/cycles?limit=${CYCLE_LIMIT}`,
+        )
+        cycles.value = cy.cycles || []
+        cycleSummary.value = cy.summary || null
+        nextRun.value = cy.next_run ?? nextRun.value
+      }
+      catch {
+        // Older finance-guru-api builds may not expose /cycles yet.
+        cycles.value = []
+        cycleSummary.value = null
+      }
+
+      try {
+        const enr = await api.get<{ runs: FinanceEnrichmentRun[] }>(
+          `/api/finance-guru/enrichment/runs?limit=${ENRICHMENT_RUNS_LIMIT}`,
+        )
+        enrichmentRuns.value = enr.runs || []
+      }
+      catch {
+        enrichmentRuns.value = []
+      }
+
       error.value = null
     }
     catch (e: unknown) {
@@ -125,6 +180,10 @@ export function useFinanceGuru() {
     nextRun,
     historyExtent,
     ledgers,
+    cycles,
+    cycleSummary,
+    equity,
+    enrichmentRuns,
     loading,
     error,
     aggregate,
