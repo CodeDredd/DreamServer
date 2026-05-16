@@ -156,6 +156,12 @@ function nextDrawFor(gid: string): string | null {
                 class="inline-flex items-center justify-center w-6 h-8 rounded bg-elevated border border-default text-sm"
               >{{ d }}</span>
             </div>
+            <p
+              v-if="(f as { rationale?: string }).rationale"
+              class="mt-1 text-[10px] leading-snug text-muted"
+            >
+              {{ (f as { rationale?: string }).rationale }}
+            </p>
           </div>
         </div>
       </div>

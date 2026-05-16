@@ -669,19 +669,100 @@ def make_recency_strategy(game_id: str, k: int) -> Strategy:
             _strat_recency_exclude(g_, h, rng=rng, rows=rows, exclude_last_k=_k))
 
 
+# --------------------------------------------------------------------------- #
+# History guard (combinatorial)
+# --------------------------------------------------------------------------- #
+# Lotto 6 aus 49 hat C(49,6) ≈ 1.4e7 mögliche Hauptzahl-Kombinationen,
+# Eurojackpot C(50,5)·C(12,2) ≈ 1.4e8 — bei nur ~5 000 bzw. ~1 500
+# historischen Ziehungen ist die Wahrscheinlichkeit, *exakt* eine alte
+# Voll-Kombination zu raten, mikroskopisch (0.036 % bzw. 0.001 %).
+# Der statistische Edge ist also vernachlässigbar; trotzdem ist es ein
+# kostenloses Komfort-Feature — analog zum ``unique_history`` für die
+# Digit-Spiele schließen wir nach jeder Strategie aus, dass der Tipp
+# 1:1 einer historischen Ziehung entspricht. Wird via Rationale-Suffix
+# transparent gemacht.
+HISTORY_GUARD_MAX_RETRIES = 12
+
+
+def _combo_signature(payload: dict, g: Game) -> tuple:
+    parts = []
+    for p in g.pools:
+        v = payload.get(p.name) if isinstance(payload, dict) else None
+        if not isinstance(v, (list, tuple)) or len(v) != p.pick:
+            return ()
+        parts.append((p.name, tuple(sorted(int(x) for x in v))))
+    return tuple(parts)
+
+
+def _historical_combo_set(g: Game, history: list[dict]) -> set[tuple]:
+    sigs: set[tuple] = set()
+    for h in history:
+        sig = _combo_signature(h, g)
+        if sig:
+            sigs.add(sig)
+    return sigs
+
+
+def _apply_history_guard_combo(g: Game, tips: list[dict], history_set: set[tuple],
+                               *, regen: Callable[[], list[dict]]) -> list[dict]:
+    if not history_set:
+        return tips
+    n_hist = len(history_set)
+    out: list[dict] = []
+    for tip in tips:
+        cur = tip
+        sig = _combo_signature(cur.get("payload") or {}, g)
+        retries = 0
+        while sig and sig in history_set and retries < HISTORY_GUARD_MAX_RETRIES:
+            retries += 1
+            try:
+                replacement = regen() or []
+            except Exception:  # noqa: BLE001
+                break
+            if not replacement:
+                break
+            cur = replacement[0]
+            sig = _combo_signature(cur.get("payload") or {}, g)
+        note: str | None = None
+        if sig and sig in history_set:
+            note = f"⚠ historische Wiederholung nicht vermeidbar (Pool zu klein, {n_hist} hist. Ziehungen)"
+        else:
+            note = f"schließt {n_hist} historische Voll-Kombinationen aus"
+            if retries:
+                note += f" ({retries}× neu gezogen)"
+        r = (cur.get("rationale") or "").strip()
+        cur["rationale"] = f"{r} · {note}" if r else note
+        out.append(cur)
+    return out
+
+
 def generate_tips(game_id: str, history: list[dict],
                   *, rows_per_strategy: int = 2,
                   recency_k: int = RECENCY_K_DEFAULT,
                   rng: random.Random | None = None) -> list[dict]:
-    """Run every strategy and return a flat list of tip dicts."""
+    """Run every strategy and return a flat list of tip dicts.
+
+    For combinatorial games every emitted tip is post-filtered through
+    the history guard: if the tip's full payload matches any historical
+    draw, the strategy is re-rolled (up to ``HISTORY_GUARD_MAX_RETRIES``)
+    so we never recommend a 1:1 repeat.
+    """
     g = GAMES[game_id]
     rng = rng or random.Random()
+    history_set = _historical_combo_set(g, history) if g.kind == "combinatorial" else set()
     tips: list[dict] = []
     for s in strategies_for(game_id, recency_k=recency_k):
         try:
-            tips.extend(s.fn(g, history, rng, rows_per_strategy))
+            emitted = s.fn(g, history, rng, rows_per_strategy)
         except Exception as exc:  # noqa: BLE001
             log.exception("strategy %s for %s crashed: %s", s.name, game_id, exc)
+            continue
+        if history_set:
+            emitted = _apply_history_guard_combo(
+                g, emitted, history_set,
+                regen=lambda _s=s: _s.fn(g, history, rng, 1),
+            )
+        tips.extend(emitted)
     return tips
 
 
@@ -715,6 +796,13 @@ def run_strategy(game_id: str, name: str, history: list[dict], *,
     if not s:
         raise ValueError(f"unknown strategy {name!r} for {game_id!r}")
     rng = rng or random.Random()
-    return s.fn(g, history, rng, rows)
+    emitted = s.fn(g, history, rng, rows)
+    if g.kind == "combinatorial":
+        history_set = _historical_combo_set(g, history)
+        emitted = _apply_history_guard_combo(
+            g, emitted, history_set,
+            regen=lambda: s.fn(g, history, rng, 1),
+        )
+    return emitted
 
 
