@@ -59,6 +59,19 @@ services:
       - FINANCE_STRATEGY_LESSONS_COLLECTION=${FINANCE_STRATEGY_LESSONS_COLLECTION:-finance_strategy_lessons}
       - FINANCE_GURU_RAG_TOPK=${FINANCE_GURU_RAG_TOPK:-10}
       - FINANCE_GURU_QDRANT_SINK=${FINANCE_GURU_QDRANT_SINK:-1}
+      # ── Strategy lifecycle / weekly audit (Phase C) ────────────────
+      # Default: sundays 23:55 in the service TZ. Strategies whose 7d
+      # equity-history PnL stays below FINANCE_GURU_TARGET_WEEK_PCT
+      # (default 10%) get retired + a Qdrant lesson embedded via the
+      # `reasoning` alias (heavy model, but only fires for actually
+      # failing strategies, capped at <= 1 call per retired strategy
+      # per week — see AGENT-OPERATIONS.md §10 cost discipline).
+      - FINANCE_GURU_WEEKLY_AUDIT_CRON=${FINANCE_GURU_WEEKLY_AUDIT_CRON:-55 23 * * 0}
+      - FINANCE_GURU_TARGET_WEEK_PCT=${FINANCE_GURU_TARGET_WEEK_PCT:-10.0}
+      - FINANCE_GURU_AUDIT_MIN_SAMPLES=${FINANCE_GURU_AUDIT_MIN_SAMPLES:-50}
+      - FINANCE_GURU_AUTO_ARCHIVE_CRON=${FINANCE_GURU_AUTO_ARCHIVE_CRON:-10 4 * * *}
+      - FINANCE_GURU_LESSON_LLM_MODEL=${FINANCE_GURU_LESSON_LLM_MODEL:-reasoning}
+      - FINANCE_GURU_LESSON_LLM_TIMEOUT=${FINANCE_GURU_LESSON_LLM_TIMEOUT:-300}
     volumes:
       - ./data/finance-guru-api:/data
     ports:

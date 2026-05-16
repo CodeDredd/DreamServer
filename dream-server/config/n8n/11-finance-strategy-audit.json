@@ -1,0 +1,261 @@
+{
+  "id": "FinStratAudit001",
+  "name": "Finance Strategy Audit (weekly fallback)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5 0 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Mondays 00:05",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-guru-api:8098/strategies/audit/last",
+        "options": {
+          "timeout": 8000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get_last",
+      "name": "GET last audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fire the API-side audit only if the in-service APScheduler\n// missed its Sunday 23:55 slot. Heuristic: if last_audit.ts is more\n// than 25 hours old (safe margin past the Sunday slot), or null, the\n// scheduler was down across the window. Re-trigger so a weekly audit\n// always fires at least once.\nconst last = $json || {};\nconst lastTs = last.ts ? new Date(last.ts).getTime() : 0;\nconst ageH = lastTs ? (Date.now() - lastTs) / (3600 * 1000) : 9999;\nconst needsRun = ageH >= 25;\nreturn [{ json: {\n  skip: !needsRun,\n  reason: needsRun ? ('last audit ' + ageH.toFixed(1) + 'h old')\n                    : ('last audit ' + ageH.toFixed(1) + 'h old; APScheduler already covered it'),\n  age_hours: Math.round(ageH * 10) / 10,\n} }];"
+      },
+      "id": "decide",
+      "name": "Need fallback?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "guard",
+      "name": "Fire?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        940,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/strategies/audit",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "sync",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ retire_failing: true, emit_lessons: true }) }}",
+        "options": {
+          "timeout": 600000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "run_audit",
+      "name": "POST /strategies/audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'skipped', note: 'strategy_audit: ' + ($json.reason || 'no-op') }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "report_skip",
+      "name": "Log skip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1180,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Mondays 00:05": {
+      "main": [
+        [
+          {
+            "node": "GET last audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "GET last audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET last audit": {
+      "main": [
+        [
+          {
+            "node": "Need fallback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need fallback?": {
+      "main": [
+        [
+          {
+            "node": "Fire?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fire?": {
+      "main": [
+        [
+          {
+            "node": "POST /strategies/audit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 900,
+    "saveExecutionProgress": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}
+

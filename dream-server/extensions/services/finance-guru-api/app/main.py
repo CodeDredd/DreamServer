@@ -36,7 +36,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from . import backtest, cycle_log, data, enrichment, ledger, orchestrator, qdrant_rag, qdrant_sink
+from . import backtest, cycle_log, data, enrichment, ledger, lifecycle, orchestrator, qdrant_rag, qdrant_sink
 from .config import CFG
 from .strategies import REGISTRY, discover_strategies
 
@@ -55,6 +55,7 @@ _state: dict = {
     "last_error": None,
     "next_run": None,
     "last_cycle": {},        # {strategy: <run_strategy_once result>}
+    "last_audit": None,      # Phase C: most recent weekly_audit() result
 }
 
 
@@ -105,12 +106,52 @@ async def _decide_async(only: str | None = None) -> None:
     await asyncio.to_thread(_decide_blocking, only)
 
 
+# --------------------------------------------------------------------------- #
+# Phase C — async wrappers for the lifecycle scheduler jobs.
+# Both are intentionally thin: the heavy lifting lives in lifecycle.py so
+# the same code paths back the /strategies/audit + /strategies/archive
+# endpoints.
+# --------------------------------------------------------------------------- #
+def _weekly_audit_blocking() -> dict:
+    try:
+        log.info("weekly_audit: starting (target=%.2f%% min_samples=%d)",
+                 CFG.weekly_audit_target_pct, CFG.weekly_audit_min_samples)
+        out = lifecycle.weekly_audit(actor="scheduler")
+        _state["last_audit"] = out
+        log.info("weekly_audit: evaluated=%d retired=%d passed=%d need_more=%d",
+                 out["evaluated"], out["retired"], out["passed"], out["need_more"])
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.exception("weekly_audit failed")
+        return {"error": str(exc)}
+
+
+async def _weekly_audit_async() -> None:
+    await asyncio.to_thread(_weekly_audit_blocking)
+
+
+def _auto_archive_blocking() -> int:
+    try:
+        n = lifecycle.auto_archive(actor="scheduler")
+        if n:
+            log.info("auto_archive: %d row(s) archived", n)
+        return n
+    except Exception as exc:  # noqa: BLE001
+        log.exception("auto_archive failed")
+        return -1
+
+
+async def _auto_archive_async() -> None:
+    await asyncio.to_thread(_auto_archive_blocking)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Initialising ledger at %s", CFG.ledger_path)
     ledger.init_db()
     cycle_log.init_db()
     enrichment.init_db()
+    lifecycle.init_db()
     log.info("Discovering strategy plugins")
     discover_strategies()
     enabled = _enabled_strategies()
@@ -119,6 +160,11 @@ async def lifespan(app: FastAPI):
     for name in enabled:
         sd = REGISTRY[name]
         ledger.ensure_strategy(sd.name, sd.description)
+        # Phase C: every built-in plugin auto-registers in the lifecycle
+        # table as `live`. Generated strategies (Phase D) come in via
+        # POST /strategies/propose → /strategies/promote and never hit
+        # this loop.
+        lifecycle.ensure_meta(sd.name, kind="builtin", status="live")
 
     if not data.wait_until_ready():
         log.error("TimescaleDB never became reachable — running anyway")
@@ -131,6 +177,31 @@ async def lifespan(app: FastAPI):
         trigger = CronTrigger(minute="*/30", timezone=CFG.tz)
     scheduler.add_job(_decide_async, trigger, id="decide_cycle",
                       coalesce=True, max_instances=1, misfire_grace_time=600)
+    # Phase C: weekly auditor — runs `weekly_audit()` per the configured
+    # cron (default Sun 23:55) and retires anything <target_pct. The
+    # n8n workflow `11-finance-strategy-audit.json` is a *fallback*
+    # trigger that just POSTs to /strategies/audit, so APScheduler down
+    # for a week ≠ never auditing.
+    try:
+        audit_trigger = CronTrigger.from_crontab(CFG.weekly_audit_cron, timezone=CFG.tz)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Invalid weekly-audit cron %r: %s — disabling job",
+                  CFG.weekly_audit_cron, exc)
+        audit_trigger = None
+    if audit_trigger is not None:
+        scheduler.add_job(_weekly_audit_async, audit_trigger,
+                          id="weekly_audit", coalesce=True,
+                          max_instances=1, misfire_grace_time=24 * 3600)
+    # Auto-archive (cheap, daily): housekeeping pass that moves long-
+    # retired and stale-proposed rows into 'archived'.
+    try:
+        arch_trigger = CronTrigger.from_crontab(CFG.auto_archive_cron, timezone=CFG.tz)
+        scheduler.add_job(_auto_archive_async, arch_trigger,
+                          id="auto_archive", coalesce=True,
+                          max_instances=1, misfire_grace_time=3600)
+    except Exception as exc:  # noqa: BLE001
+        log.error("Invalid auto-archive cron %r: %s — disabling job",
+                  CFG.auto_archive_cron, exc)
     scheduler.start()
     job = scheduler.get_job("decide_cycle")
     if job and job.next_run_time:
@@ -627,6 +698,181 @@ def store_strategy_lesson(payload: StrategyLessonIn,
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             "qdrant sink disabled or embed failed")
     return {"strategy": payload.strategy.strip(), "stored": True}
+
+
+# --------------------------------------------------------------------------- #
+# Phase C — strategy lifecycle (proposed → live → retired/archived)
+# --------------------------------------------------------------------------- #
+class ProposeStrategyIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80,
+                       pattern=r"^[A-Za-z0-9_.\-]+$")
+    source: dict = Field(..., description="DSL spec or generator metadata")
+    parent_id: str | None = None
+
+
+class PromoteStrategyIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    bt_pnl_pct: float
+    bt_n_trades: int = Field(..., ge=0)
+    force: bool = Field(False, description="If true, promote even when "
+                        "bt_pnl_pct < target (operator override).")
+
+
+class RetireStrategyIn(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    reason: str = Field(..., min_length=1, max_length=500)
+    lesson: str | None = Field(default=None,
+        description="Optional override lesson text. If omitted, the "
+                    "service generates one via the configured lesson "
+                    "model (skipped on emit_lesson=false).")
+    emit_lesson: bool = True
+
+
+class AuditReq(BaseModel):
+    only: list[str] | None = None
+    retire_failing: bool = True
+    emit_lessons: bool = True
+
+
+@app.get("/strategies/lifecycle")
+def lifecycle_index(status_filter: str | None = Query(default=None, alias="status"),
+                    kind: str | None = Query(default=None),
+                    limit: int = Query(200, ge=1, le=1000)) -> dict:
+    rows = lifecycle.list_meta(
+        status=status_filter if status_filter in ("proposed", "live", "retired", "archived") else None,
+        kind=kind if kind in ("builtin", "generated") else None,
+        limit=limit,
+    )
+    return {"count": len(rows), "strategies": rows}
+
+
+@app.get("/strategies/leaderboard")
+def lifecycle_leaderboard(window: int = Query(7, ge=1, le=90),
+                          limit: int = Query(50, ge=1, le=200)) -> dict:
+    return {
+        "window_days": window,
+        "target_pct":  CFG.weekly_audit_target_pct,
+        "rows":        lifecycle.leaderboard(window_days=window, limit=limit),
+    }
+
+
+@app.get("/strategies/audits")
+def lifecycle_audits(strategy: str | None = Query(default=None),
+                     limit: int = Query(100, ge=1, le=500)) -> dict:
+    return {"audits": lifecycle.list_audits(strategy=strategy, limit=limit)}
+
+
+@app.post("/strategies/propose", status_code=status.HTTP_201_CREATED)
+def lifecycle_propose(payload: ProposeStrategyIn,
+                      authorization: str | None = Header(default=None)) -> dict:
+    _check_token(authorization)
+    try:
+        meta = lifecycle.propose(name=payload.name.strip(),
+                                  source=payload.source,
+                                  parent_id=payload.parent_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    return meta
+
+
+@app.post("/strategies/promote")
+def lifecycle_promote(payload: PromoteStrategyIn,
+                      x_force_promote: str | None = Header(default=None, alias="X-Force-Promote"),
+                      authorization: str | None = Header(default=None)) -> dict:
+    _check_token(authorization)
+    force = payload.force or (x_force_promote or "").strip() == "1"
+    if not force and payload.bt_pnl_pct < CFG.weekly_audit_target_pct:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            f"backtest pnl {payload.bt_pnl_pct:+.2f}% < target "
+            f"{CFG.weekly_audit_target_pct:+.2f}%; set force=true or "
+            f"X-Force-Promote: 1 to override",
+        )
+    try:
+        meta = lifecycle.promote(name=payload.name.strip(),
+                                  bt_pnl_pct=payload.bt_pnl_pct,
+                                  bt_n_trades=payload.bt_n_trades,
+                                  actor="operator" if force else "system")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    return meta
+
+
+@app.post("/strategies/retire")
+def lifecycle_retire(payload: RetireStrategyIn,
+                     authorization: str | None = Header(default=None)) -> dict:
+    _check_token(authorization)
+    name = payload.name.strip()
+    # If an operator supplied a lesson explicitly, embed it as-is; else
+    # fall back to the LLM-generated one used by weekly_audit().
+    lesson_qid: str | None = None
+    lesson_used: str | None = None
+    if payload.emit_lesson:
+        # We don't have a precise audit pnl here (manual retire), so we
+        # pass NaN-equivalents to the template. The lesson model still
+        # gets the trade history via _build_lesson_context().
+        try:
+            text = (payload.lesson or "").strip() or lifecycle.build_lesson_text(
+                name, pnl_pct=0.0,
+                target_pct=CFG.weekly_audit_target_pct,
+                n_cycles=0,
+            )
+            ok = qdrant_rag.upsert_strategy_lesson(
+                strategy=name, outcome="retired",
+                pnl_pct=None, lesson_text=text,
+                keywords=[name, "manual_retire"],
+                extra={"reason": payload.reason[:200]},
+            )
+            lesson_used = text
+            if ok:
+                lesson_qid = name
+        except Exception as exc:  # noqa: BLE001
+            log.warning("manual retire: lesson sink failed for %s (%s)", name, exc)
+    meta = lifecycle.retire(name=name, reason=payload.reason,
+                             lessons_qid=lesson_qid,
+                             actor="operator")
+    out = dict(meta)
+    if lesson_used:
+        out["lesson"] = lesson_used[:240]
+    return out
+
+
+@app.post("/strategies/audit", status_code=status.HTTP_202_ACCEPTED)
+def lifecycle_audit(payload: AuditReq, background: BackgroundTasks,
+                    authorization: str | None = Header(default=None),
+                    sync: bool = Query(False, description="When true, "
+                        "run audit synchronously and return results "
+                        "instead of dispatching to background.")) -> dict:
+    _check_token(authorization)
+    if sync:
+        return lifecycle.weekly_audit(
+            only=payload.only or None,
+            actor="manual",
+            retire_failing=payload.retire_failing,
+            emit_lessons=payload.emit_lessons,
+        )
+
+    def _run() -> None:
+        try:
+            out = lifecycle.weekly_audit(
+                only=payload.only or None,
+                actor="manual",
+                retire_failing=payload.retire_failing,
+                emit_lessons=payload.emit_lessons,
+            )
+            _state["last_audit"] = out
+        except Exception:  # noqa: BLE001
+            log.exception("manual audit failed")
+
+    background.add_task(_run)
+    return {"accepted": True,
+            "queued_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "last_audit_ts": (_state.get("last_audit") or {}).get("ts")}
+
+
+@app.get("/strategies/audit/last")
+def lifecycle_last_audit() -> dict:
+    return _state.get("last_audit") or {"ts": None, "results": []}
 
 
 # --------------------------------------------------------------------------- #

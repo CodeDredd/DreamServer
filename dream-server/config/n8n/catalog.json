@@ -724,6 +724,19 @@
       ],
       "setupTime": "1 minute",
       "featured": false
+    },
+    {
+      "id": "finance-strategy-audit",
+      "file": "11-finance-strategy-audit.json",
+      "name": "Finance Strategy Audit (weekly fallback)",
+      "description": "Safety-net trigger that pings finance-guru-api each Monday 00:05 and only POSTs /strategies/audit when the in-service APScheduler weekly_audit slot was missed (last_audit > 25h ago). Otherwise no-ops with an enrichment_runs 'skipped' note. Strategies whose 7d %-PnL stays below FINANCE_GURU_TARGET_WEEK_PCT (default 10%) get retired and a Qdrant lesson embedded.",
+      "icon": "Activity",
+      "category": "finance",
+      "dependencies": [
+        "finance-guru-api"
+      ],
+      "setupTime": "1 minute",
+      "featured": false
     }
   ],
   "categories": {

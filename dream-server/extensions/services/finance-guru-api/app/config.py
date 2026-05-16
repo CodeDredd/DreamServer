@@ -41,6 +41,27 @@ class GuruConfig:
     # ── API auth ───────────────────────────────────────────────────────
     api_token: str     = field(default_factory=lambda: os.getenv("FINANCE_GURU_TOKEN", "").strip())
 
+    # ── Lifecycle (Phase C) ────────────────────────────────────────────
+    # Weekly audit fires sundays 23:55 in the service's TZ; %-PnL of the
+    # last 7 d (first→last equity_history reading) must clear this
+    # number or the strategy gets retired + lesson-embedded.
+    weekly_audit_cron: str = field(default_factory=lambda: os.getenv(
+        "FINANCE_GURU_WEEKLY_AUDIT_CRON", "55 23 * * 0").strip())
+    weekly_audit_target_pct: float = field(default_factory=lambda: float(os.getenv(
+        "FINANCE_GURU_TARGET_WEEK_PCT", "10.0")))
+    weekly_audit_min_samples: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_AUDIT_MIN_SAMPLES", "50")))
+    # Auto-archive housekeeping cron (daily at 04:10).
+    auto_archive_cron: str = field(default_factory=lambda: os.getenv(
+        "FINANCE_GURU_AUTO_ARCHIVE_CRON", "10 4 * * *").strip())
+    # The lesson model is intentionally on the heavy alias — cost is
+    # disciplined to <= 1 call per retired strategy per week (§10
+    # AGENT-OPERATIONS).
+    lesson_llm_model: str = field(default_factory=lambda: os.getenv(
+        "FINANCE_GURU_LESSON_LLM_MODEL", "reasoning"))
+    lesson_llm_timeout: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_LESSON_LLM_TIMEOUT", "300")))
+
     @property
     def enabled_strategies(self) -> set[str] | None:
         """Returns the explicit allow-list, or None for 'all'."""

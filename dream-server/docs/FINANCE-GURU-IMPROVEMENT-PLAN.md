@@ -1,6 +1,6 @@
 # Finance Guru — Verbesserungsplan (Paper-Trading, RAG, Qdrant, UI)
 
-> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ deployed
+> Stand: 05/2026 · Status: Phase A ✅ · Phase A.2 ✅ · Phase B ✅ · Phase C ✅ deployed
 > Verantwortlich: AI-Agent + Operator
 > Bezugspunkte: `AGENT-OPERATIONS.md §11–§14`, `extensions/services/finance-guru-api/`,
 > `extensions/services/finance-{vector,news,social,prices}/`, `extensions/services/dashboard-nuxt/`
@@ -437,22 +437,160 @@ curl -s "http://127.0.0.1:8098/cycles?strategy=news_sentiment&limit=1" \
 
 
 
-### Phase C — Strategie-Lifecycle (5–7 Tage)
+### Phase C — Strategie-Lifecycle (5–7 Tage) ✅ DONE 16.05.2026
 
-8. **DB-Tabelle `strategies_meta`** in `ledger.sqlite`:
-   `(name, kind, created_at, retired_at, parent_id, source_json,
-   bt_pnl_pct, bt_n_trades, live_started_at)`.
-9. **`/strategies/lifecycle` Endpoint**:
-   * `POST /strategies/promote` (LLM-generierte Strategie aus
-     `pending` → aktiv, nachdem Backtest grün).
-   * `POST /strategies/retire` (mit Grund + `lessons_text`).
-   * `GET /strategies/leaderboard?window=7d`.
-10. **`orchestrator.weekly_audit()`**: läuft sonntags 23:55,
-    iteriert über live-Strategien, berechnet 7-Tage-PnL, retired
-    alles < +10 %, embedded Lessons.
-11. **APScheduler-Job** dafür + n8n-Workflow
-    `11-finance-strategy-audit.json` als Fallback-Trigger
-    (`POST /strategies/audit`).
+8. ✅ **DB-Tabellen `strategies_meta` + `strategy_audits`** in
+   `ledger.sqlite` (gleiches File wie Ledger + Cycle-Log → ein
+   konsistentes Backup). Spalten gemäss §7-Spec plus
+   `last_audit_at/_pnl/_n`, `lessons_qid`, sowie ein
+   `strategy_audits`-Audit-Log mit `(transition, from_status,
+   to_status, pnl_pct, n_cycles, note, actor)`. Jede Mutation läuft
+   durch `lifecycle._transition()` → genau eine Audit-Quelle.
+9. ✅ **`/strategies/*` Lifecycle-Endpoints**:
+   * `GET  /strategies/lifecycle?status=&kind=&limit=` — list_meta
+   * `GET  /strategies/leaderboard?window=7&limit=50` —
+     live/proposed/retired sortiert, %-PnL aus Equity-History des
+     Fensters (NICHT vom Seed, sondern vom ersten Cycle des
+     Fensters → korrekte "letzte-Woche"-Sicht).
+   * `GET  /strategies/audits?strategy=&limit=` — Audit-Trail.
+   * `POST /strategies/propose`  (Bearer, Phase-D-Entrypoint).
+   * `POST /strategies/promote`  (Bearer, fordert
+     `bt_pnl_pct >= target` außer mit `force=true` oder
+     Header `X-Force-Promote: 1` → operator override).
+   * `POST /strategies/retire`   (Bearer, optional `emit_lesson`).
+   * `POST /strategies/audit?sync=true|false`  (Bearer; async per
+     default, `sync=true` gibt das Ergebnis sofort zurück).
+   * `GET  /strategies/audit/last` — letztes Ergebnis (n8n-Workflow
+     fragt das ab um zu entscheiden ob er Fallback feuern muss).
+10. ✅ **`lifecycle.weekly_audit()`** läuft via APScheduler-Job
+    `weekly_audit` (`coalesce=true`, `misfire_grace_time=24 h`) zu
+    `FINANCE_GURU_WEEKLY_AUDIT_CRON` (default `55 23 * * 0` in
+    der Service-TZ). Pro live-Strategie:
+    1. `audit_one()` rechnet %-PnL der letzten 7 d (equity_first →
+       equity_last); braucht ≥ `FINANCE_GURU_AUDIT_MIN_SAMPLES`
+       (default 50 cycles) sonst Outcome `need_more_data`.
+    2. Outcome `pass` (≥ Target) → `last_audit_*` updated, kein
+       Status-Wechsel.
+    3. Outcome `retire` → `build_lesson_text()` ruft
+       `llm.chat(model='reasoning', timeout=300s)` mit Kontext aus
+       Trades + Equity (Template-Fallback bei LLM-Down), embedet die
+       Lesson in `finance_strategy_lessons` via Phase-B-Sink, ruft
+       `lifecycle.retire()` und setzt `lessons_qid=strategy_name`.
+11. ✅ **APScheduler `auto_archive`** läuft täglich
+    (`FINANCE_GURU_AUTO_ARCHIVE_CRON` default `10 4 * * *`):
+    * `retired` > 90 d → `archived`,
+    * `proposed` > 30 d ohne Promote → `archived`.
+12. ✅ **n8n Fallback-Workflow
+    `11-finance-strategy-audit.json`** (Mondays 00:05) prüft via
+    `GET /strategies/audit/last`, ob die APScheduler-Slot tatsächlich
+    in den letzten 25 h gelaufen ist; wenn nicht (z.B. Container down
+    übers Wochenende), feuert er `POST /strategies/audit?sync=true`
+    nach und wartet bis zu 10 min. Normalfall = No-Op +
+    enrichment_runs-Log-Eintrag.
+
+**Lifecycle-State-Maschine** (implementiert in
+`lifecycle._transition()`):
+
+```
+proposed ──promote (backtest_ok)──▶ live ──audit:retire──▶ retired
+   │                                   │                      │
+   │                                   └─audit:pass─(stays live)
+   └─archive (backtest_fail OR ≥30d)──▶ archived ◀─(retired→archived after 90d)
+```
+
+**Kosten-Disziplin** (§10 AGENT-OPERATIONS):
+
+* `reasoning` (Qwen3.5-122B-A10B) wird **nur** für die
+  Lesson-Erzeugung gerufen, **maximal 1× pro retired Strategie
+  pro Woche**, **nicht** in jedem Decide-Tick.
+* `emit_lessons=false` Flag erlaubt Operator-Dry-Runs ohne LLM-Cost.
+* `build_lesson_text()` hat einen deterministischen Template-Fallback
+  → LLM-Outage blockiert die Retirement nicht.
+
+**Env-Vars** (Defaults konservativ):
+
+```env
+FINANCE_GURU_WEEKLY_AUDIT_CRON=55 23 * * 0   # sundays 23:55 svc TZ
+FINANCE_GURU_TARGET_WEEK_PCT=10.0
+FINANCE_GURU_AUDIT_MIN_SAMPLES=50            # need >=50 cycles in 7d
+FINANCE_GURU_AUTO_ARCHIVE_CRON=10 4 * * *
+FINANCE_GURU_LESSON_LLM_MODEL=reasoning
+FINANCE_GURU_LESSON_LLM_TIMEOUT=300
+```
+
+**Smoke-Test-Checkliste (Phase C):**
+
+```
+# 1) Lifecycle index — builtins auto-registered on lifespan startup
+curl -s http://127.0.0.1:8098/strategies/lifecycle | jq '.count, .strategies[] | {name, kind, status}'
+# expects: 3 live builtins (news_sentiment, momentum_breakout, social_buzz)
+
+# 2) Audit trail — initial 'register' transition per builtin
+curl -s http://127.0.0.1:8098/strategies/audits?limit=10 | jq
+
+# 3) Manual audit synchronously, NO retiring + NO lesson cost:
+TOK=$(grep ^FINANCE_GURU_TOKEN= ~/dream-server/.env | cut -d= -f2-)
+curl -s -X POST "http://127.0.0.1:8098/strategies/audit?sync=true" \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"retire_failing":false,"emit_lessons":false}' | jq
+
+# 4) Promote-gating works:
+curl -s -X POST http://127.0.0.1:8098/strategies/promote \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"news_sentiment","bt_pnl_pct":3.5,"bt_n_trades":12}'
+# expects: HTTP 412 (backtest pnl < target). Then with force:
+curl -s -X POST http://127.0.0.1:8098/strategies/promote \
+  -H "Authorization: Bearer $TOK" -H "X-Force-Promote: 1" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"news_sentiment","bt_pnl_pct":3.5,"bt_n_trades":12}' | jq
+
+# 5) Leaderboard sortiert (live first, then by 7d pnl desc):
+curl -s "http://127.0.0.1:8098/strategies/leaderboard?window=7" | jq '.rows[] | {name, status, window_pnl_pct, window_cycles}'
+
+# 6) Manual retire-with-lesson (this WILL spend a reasoning call):
+curl -s -X POST http://127.0.0.1:8098/strategies/retire \
+  -H "Authorization: Bearer $TOK" -H "Content-Type: application/json" \
+  -d '{"name":"social_buzz","reason":"smoke-test retire","emit_lesson":true}' | jq
+# expects: status=retired, lessons_qid set, lesson preview present
+# verify lesson is searchable:
+curl -s -X POST http://127.0.0.1:8098/rag/strategy-lessons \
+  -H "Content-Type: application/json" \
+  -d '{"query":"social buzz retire","limit":3}' | jq
+
+# 7) n8n fallback: import workflow 11; manual-trigger after a recent
+# audit -> Log skip; manual-trigger after 25h gap -> runs sync audit.
+```
+
+**Lessons learned aus Phase C:**
+
+* **Equity-Window-PnL ≠ Total-PnL.** Plan §7's pseudo-code rechnet
+  `(snap[-1] - seed) / seed` — das ist die Lebenszeit-Rendite, nicht
+  die Wochen-Performance. Implementiert habe ich
+  `(equity_last - equity_first) / equity_first` über das Fenster:
+  eine Strategie, die am Montag +50 % stand und Freitag bei +60 %,
+  schafft die Schwelle korrekt (+6.7 % WoW). Die alte Formel hätte
+  sie als "die +10 % WoW seit Anfang an" missgedeutet.
+* **`audit:retire` darf nicht synchron Status auf `live` lassen.**
+  Lese-Auflösung: `_transition` schreibt `to_status='live'` als
+  "Audit-Outcome wurde während Status=live ermittelt"; der
+  tatsächliche `retire()`-Aufruf bringt danach den Statuswechsel.
+  In `strategy_audits` siehst du also Pair: `audit:retire (live→live)`
+  + nachfolgend `retire (live→retired)`. Das hält Cause/Effect klar
+  getrennt und vereinfacht Replay.
+* **Lesson-Sink scheitert nicht hart bei TEI-Down.** `build_lesson_text`
+  fängt LLM-Fehler ab → Template; `qdrant_rag.upsert_strategy_lesson`
+  ist ohnehin best-effort. So bleibt der Retirement-Pfad atomar gegenüber
+  Infra-Hiccups, und die Lesson kann notfalls über
+  `POST /rag/strategy-lesson` nachgereicht werden.
+* **Architektur-Entscheidung: kein eigenes Postgres für Lifecycle.**
+  Die Tabellen leben in der gleichen `ledger.sqlite`, damit ein
+  einzelnes Backup-File sowohl Ledger + Cycle-Log + Enrichment +
+  Lifecycle atomar abdeckt (`cp ledger.sqlite ledger.sqlite.bak`
+  während WAL-Checkpoint). Hätten wir Lifecycle in TimescaleDB
+  gelegt, müsste `pg_dump` mit dem SQLite-Snapshot synchronisiert
+  werden — Komplexität ohne Gegenwert bei <100 Writes/Tag.
+
+
 
 ### Phase D — Strategie-Generator (7–10 Tage)
 

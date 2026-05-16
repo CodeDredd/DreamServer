@@ -26,9 +26,15 @@ log = logging.getLogger("finance-guru.llm")
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=1, max=8), reraise=True)
 def chat(messages: list[dict], *, model: str | None = None,
-         max_tokens: int = 256, temperature: float = 0.0) -> str:
+         max_tokens: int = 256, temperature: float = 0.0,
+         timeout: int = 60) -> str:
     """Returns the assistant message content as a string. Raises on
-    transport / HTTP errors after 2 attempts."""
+    transport / HTTP errors after 2 attempts.
+
+    `timeout` is per-request seconds. Default 60 s is enough for
+    `fast` / `default`; pass ~300 s when calling `reasoning` because
+    122B on-demand spin-up can be slow.
+    """
     headers = {"Content-Type": "application/json"}
     if CFG.llm_api_key:
         headers["Authorization"] = f"Bearer {CFG.llm_api_key}"
@@ -39,7 +45,7 @@ def chat(messages: list[dict], *, model: str | None = None,
         "max_tokens": max_tokens,
     }
     r = requests.post(f"{CFG.llm_url.rstrip('/')}/chat/completions",
-                      json=payload, headers=headers, timeout=60)
+                      json=payload, headers=headers, timeout=timeout)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
 
