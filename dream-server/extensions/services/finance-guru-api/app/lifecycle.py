@@ -210,10 +210,24 @@ def promote(*, name: str, bt_pnl_pct: float, bt_n_trades: int,
     meta = get_meta(name)
     if not meta:
         raise ValueError(f"unknown strategy {name!r}")
-    if meta["status"] not in ("proposed", "retired", "archived"):
-        # 'live' promote is a no-op (already live).
-        return meta
     now = _now()
+    was_live = meta["status"] == "live"
+    if was_live:
+        # Already live: just refresh the backtest snapshot (operator
+        # ran another backtest and wants the leaderboard to reflect
+        # it) but DON'T reset live_started_at — the strategy's live
+        # clock keeps ticking.
+        with ledger.conn() as c:
+            c.execute(
+                "UPDATE strategies_meta SET bt_pnl_pct=?, bt_n_trades=? WHERE name=?",
+                (bt_pnl_pct, bt_n_trades, name),
+            )
+        _transition(strategy=name, transition="promote:refresh",
+                    from_status="live", to_status="live",
+                    pnl_pct=bt_pnl_pct, n_cycles=bt_n_trades,
+                    note=f"refresh backtest_pnl={bt_pnl_pct:.2f}% n={bt_n_trades}",
+                    actor=actor)
+        return get_meta(name) or {}
     with ledger.conn() as c:
         c.execute(
             "UPDATE strategies_meta SET status='live', live_started_at=?, "
