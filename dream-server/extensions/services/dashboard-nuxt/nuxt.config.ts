@@ -26,6 +26,7 @@ export default defineNuxtConfig({
     '@nuxtjs/i18n',
     '@vite-pwa/nuxt',
     'nuxt-security',
+    'nuxt-charts',
   ],
 
   css: ['~/assets/css/main.css'],

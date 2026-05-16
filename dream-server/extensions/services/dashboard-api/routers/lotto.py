@@ -175,3 +175,36 @@ async def lotto_admin_import(body: dict = Body(...),
                              api_key: str = Depends(verify_api_key)):
     return await _lotto_request("POST", "/admin/import", json=body, bearer=True)
 
+
+# --- Optimal-Schein / Custom-Schein / Jackpot-Backtest -------------------
+
+@router.get("/api/lotto/optimal-schein")
+async def lotto_optimal_schein(
+    recency_k: int = Query(1, ge=1, le=5),
+    api_key: str = Depends(verify_api_key),
+):
+    return await _lotto_request("GET", "/optimal-schein",
+                                params={"recency_k": str(recency_k)})
+
+
+@router.post("/api/lotto/scheine/generate")
+async def lotto_custom_schein(body: dict = Body(...),
+                              api_key: str = Depends(verify_api_key)):
+    return await _lotto_request("POST", "/scheine/generate", json=body)
+
+
+@router.get("/api/lotto/games/{game_id}/jackpot-backtest")
+async def lotto_jackpot_backtest(
+    game_id: str,
+    years: int = Query(10, ge=1, le=30),
+    rows: int = Query(1, ge=1, le=4),
+    recency_k: int = Query(1, ge=1, le=5),
+    api_key: str = Depends(verify_api_key),
+):
+    return await _lotto_request(
+        "GET", f"/games/{game_id}/jackpot-backtest",
+        params={"years": str(years), "rows": str(rows),
+                "recency_k": str(recency_k)},
+    )
+
+

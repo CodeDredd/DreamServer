@@ -3,7 +3,7 @@ services:
     build:
       context: ./extensions/services/lotto-oracle
       dockerfile: Dockerfile
-    image: dream-server/lotto-oracle:0.1.0
+    image: dream-server/lotto-oracle:0.2.0
     container_name: dream-lotto-oracle
     restart: unless-stopped
     security_opt:

@@ -13,10 +13,13 @@ import { useApi } from '~/composables/useApi'
 import { usePolling } from '~/composables/usePolling'
 import type {
   LottoActionResponse,
+  LottoCustomScheinResponse,
   LottoDraw,
   LottoDrawsResponse,
   LottoGame,
   LottoGamesResponse,
+  LottoJackpotBacktestResponse,
+  LottoOptimalScheinResponse,
   LottoStats,
   LottoStatus,
   LottoStrategiesResponse,
@@ -218,6 +221,74 @@ export function useLotto() {
     void doAction('generate', { recencyK: pending.k })
   }
 
+  // ---------- Jackpot-Backtest (10y) ----------
+  const jackpotBacktest: Ref<LottoJackpotBacktestResponse | null> = ref(null)
+  const jackpotLoading = ref(false)
+  const jackpotError: Ref<string | null> = ref(null)
+  async function fetchJackpotBacktest(
+    gameId: string | null,
+    opts: { years?: number, rows?: number } = {},
+  ): Promise<void> {
+    if (!gameId) return
+    jackpotLoading.value = true
+    jackpotError.value = null
+    try {
+      const years = opts.years ?? 10
+      const rows = opts.rows ?? 1
+      const q = `years=${years}&rows=${rows}&recency_k=${recencyK.value}`
+      jackpotBacktest.value = await api.get<LottoJackpotBacktestResponse>(
+        `/api/lotto/games/${encodeURIComponent(gameId)}/jackpot-backtest?${q}`,
+      )
+    }
+    catch (e: unknown) {
+      jackpotError.value = e instanceof Error ? e.message : String(e)
+      jackpotBacktest.value = null
+    }
+    finally {
+      jackpotLoading.value = false
+    }
+  }
+
+  // ---------- Optimal-Schein ----------
+  const optimalSchein: Ref<LottoOptimalScheinResponse | null> = ref(null)
+  const optimalLoading = ref(false)
+  const optimalError: Ref<string | null> = ref(null)
+  async function fetchOptimalSchein(opts: { recencyK?: number } = {}): Promise<void> {
+    optimalLoading.value = true
+    optimalError.value = null
+    try {
+      const k = opts.recencyK ?? recencyK.value
+      optimalSchein.value = await api.get<LottoOptimalScheinResponse>(
+        `/api/lotto/optimal-schein?recency_k=${k}`,
+      )
+    }
+    catch (e: unknown) {
+      optimalError.value = e instanceof Error ? e.message : String(e)
+      optimalSchein.value = null
+    }
+    finally {
+      optimalLoading.value = false
+    }
+  }
+
+  // ---------- Custom-Schein ----------
+  async function generateCustomSchein(fields: Array<{
+    game: string
+    strategy: string | null
+    count?: number
+    recency_k?: number
+  }>): Promise<LottoCustomScheinResponse> {
+    const body = { fields: fields.map(f => ({
+      game: f.game,
+      strategy: f.strategy ?? null,
+      count: f.count ?? 1,
+      recency_k: f.recency_k ?? recencyK.value,
+    })) }
+    return await api.post<LottoCustomScheinResponse>(
+      '/api/lotto/scheine/generate', body,
+    )
+  }
+
   if (!overviewStarted) {
     overviewStarted = true
     usePolling(fetchOverview, POLL_INTERVAL)
@@ -253,6 +324,18 @@ export function useLotto() {
     doAction,
     handleKChange,
     consumeAutoRegen,
+    // Jackpot-Backtest
+    jackpotBacktest,
+    jackpotLoading,
+    jackpotError,
+    fetchJackpotBacktest,
+    // Optimal-Schein
+    optimalSchein,
+    optimalLoading,
+    optimalError,
+    fetchOptimalSchein,
+    // Custom-Schein
+    generateCustomSchein,
   }
 }
 

@@ -669,6 +669,67 @@ export interface LottoActionResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Optimal-Schein / Custom-Schein / Jackpot-Backtest (Lotto Erweiterung)
+// ---------------------------------------------------------------------------
+export interface LottoSchenField {
+  game?: string
+  strategy: string
+  strategy_label?: string
+  strategy_edge?: number | null
+  rationale?: string | null
+  display?: string
+  digits?: string
+  // dynamische Pool-Schluessel (Hauptzahlen, Eurozahlen, Superzahl ...)
+  [k: string]: unknown
+}
+
+export interface LottoScheinBlock {
+  game_id: string
+  label?: string
+  n_fields: number
+  fields: LottoSchenField[]
+}
+
+export interface LottoOptimalScheinResponse {
+  recency_k: number
+  schein: Record<string, LottoScheinBlock>
+  next_draws: Record<string, string | null>
+}
+
+export interface LottoCustomScheinResponse {
+  schein: Record<string, LottoScheinBlock>
+}
+
+export interface LottoJackpotTier {
+  key: string
+  label: string
+  count: number
+}
+
+export interface LottoJackpotStrategy {
+  n_trials: number
+  years?: number
+  window?: number
+  tier_counts: LottoJackpotTier[]
+  best_match: {
+    main?: number
+    bonus?: number
+    matches?: number
+    draw_date?: string | null
+    class?: string
+  } | null
+}
+
+export interface LottoJackpotBacktestResponse {
+  game_id: string
+  years: number
+  rows: number
+  recency_k: number
+  history_size: number
+  per_strategy: Record<string, LottoJackpotStrategy>
+}
+
+// ---------------------------------------------------------------------------
 // /api/settings/env (Welle A.5). Pendant zur React-Variante in
 // dashboard/src/components/settings/EnvEditor.jsx + Settings.jsx.
 // Server liefert Sections, Field-Definitionen und aktuelle Values.

@@ -33,10 +33,14 @@ from pydantic import BaseModel, Field
 
 from . import fetchers, store
 from .analytics import (
-    recency_overlap_distribution, recency_sweet_spot, score_all_strategies,
+    jackpot_backtest_all, recency_overlap_distribution, recency_sweet_spot,
+    score_all_strategies,
 )
 from .config import CFG
 from .games import GAMES, get_game
+from .optimal import (
+    DEFAULT_FIELDS, FieldSpec, build_custom_schein, build_optimal_schein,
+)
 from .strategies import (
     RECENCY_K_DEFAULT, RECENCY_K_MAX, RECENCY_K_MIN,
     generate_tips, list_strategies, make_recency_strategy, strategies_for,
@@ -433,6 +437,75 @@ def post_import(req: ImportReq,
         except OSError:
             pass
     return {"accepted": True, "game": req.game, "imported": n}
+
+
+# --------------------------------------------------------------------------- #
+# Optimal-Schein + Custom-Schein + Jackpot-Backtest
+# --------------------------------------------------------------------------- #
+@app.get("/optimal-schein")
+def optimal_schein(
+    recency_k: int = Query(RECENCY_K_DEFAULT, ge=RECENCY_K_MIN, le=RECENCY_K_MAX),
+) -> dict:
+    """Auto-generated Spielschein with the top-N strategies per game.
+    Recomputed on every call (cheap; no DB writes)."""
+    return build_optimal_schein(recency_k=recency_k)
+
+
+class CustomFieldSpec(BaseModel):
+    game: str
+    strategy: str | None = Field(None, description="Strategy name or null/'auto'")
+    recency_k: int = Field(RECENCY_K_DEFAULT, ge=RECENCY_K_MIN, le=RECENCY_K_MAX)
+    count: int = Field(1, ge=1, le=12, description="How many fields with these settings")
+
+
+class CustomScheinReq(BaseModel):
+    fields: list[CustomFieldSpec]
+
+
+@app.post("/scheine/generate")
+def post_custom_schein(req: CustomScheinReq) -> dict:
+    """Custom Spielschein generator — operator picks any combination of
+    (game, strategy) per field. Returns immediately, no persistence.
+    Unauthenticated (no DB side-effect; rate-limited by the proxy).
+    """
+    if not req.fields:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "no fields provided")
+    expanded: list[FieldSpec] = []
+    for f in req.fields:
+        if f.game not in GAMES:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"unknown game {f.game!r}")
+        for _ in range(f.count):
+            expanded.append(FieldSpec(
+                game=f.game, strategy=f.strategy, recency_k=f.recency_k,
+            ))
+    return build_custom_schein(expanded)
+
+
+@app.get("/games/{game_id}/jackpot-backtest")
+def jackpot_backtest(
+    game_id: str,
+    years: int = Query(10, ge=1, le=30,
+                       description="Backtest window in years"),
+    rows: int = Query(1, ge=1, le=4,
+                      description="Tips per strategy per draw"),
+    recency_k: int = Query(RECENCY_K_DEFAULT, ge=RECENCY_K_MIN, le=RECENCY_K_MAX),
+) -> dict:
+    """Replay every strategy across the last <years> years and report
+    how often it would have hit each prize tier. Used by the dashboard
+    chart "Wäre Hauptgewinn / Klasse-2 dabei gewesen?".
+    """
+    if game_id not in GAMES:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"unknown game {game_id!r}")
+    g = get_game(game_id)
+    history = list(store.all_draws(game_id))
+    res = jackpot_backtest_all(
+        g, history, strategies_for(game_id, recency_k=recency_k),
+        years=years, rows=rows,
+    )
+    res["game_id"]   = game_id
+    res["recency_k"] = recency_k
+    return res
 
 
 @app.get("/state")

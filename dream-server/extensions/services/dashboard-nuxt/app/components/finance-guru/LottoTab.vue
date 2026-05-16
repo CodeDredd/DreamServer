@@ -13,6 +13,10 @@
 import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { useLotto } from '~/composables/useLotto'
 import { formatGermanDate, relTime } from '~/utils/format'
+import OptimalScheinCard from '~/components/finance-guru/OptimalScheinCard.vue'
+import SpielscheinGenerator from '~/components/finance-guru/SpielscheinGenerator.vue'
+import LottoCharts from '~/components/finance-guru/LottoCharts.vue'
+import JackpotBacktestPanel from '~/components/finance-guru/JackpotBacktestPanel.vue'
 import type {
   LottoGame,
   LottoStrategyDescriptor,
@@ -414,6 +418,12 @@ function statsMainData(game: LottoGame | null): { number?: number, count: number
       :description="lotto.busyMsg.value.text"
     />
 
+    <!-- Optimal-Schein + Spielschein-Generator (immer sichtbar, game-uebergreifend) -->
+    <div class="mb-6 grid lg:grid-cols-2 gap-4">
+      <OptimalScheinCard />
+      <SpielscheinGenerator />
+    </div>
+
     <!-- Game selector cards -->
     <div class="mb-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
       <button
@@ -733,8 +743,6 @@ function statsMainData(game: LottoGame | null): { number?: number, count: number
               </h4>
             </div>
           </template>
-          <ul
-            v-if="lotto.draws.value.length"
             class="divide-y divide-default"
           >
             <li
@@ -850,6 +858,12 @@ function statsMainData(game: LottoGame | null): { number?: number, count: number
             </div>
           </div>
         </UCard>
+      </div>
+
+      <!-- Full-width: Charts + Jackpot-Backtest -->
+      <div class="lg:col-span-3 grid lg:grid-cols-2 gap-6">
+        <LottoCharts />
+        <JackpotBacktestPanel :game-id="lotto.selectedId.value" />
       </div>
     </div>
 

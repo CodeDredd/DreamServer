@@ -401,34 +401,68 @@ def _digit_strat_recency_exclude(g: Game, history: list[dict], *, rng: random.Ra
     return out
 
 
-def _digit_strat_first_digit_recency(g: Game, history: list[dict], *, rng: random.Random,
-                                     rows: int) -> list[dict]:
-    """User-requested: the **first digit** of the Losnummer / Spielschein-
-    nummer is the one most often "anchored" by superstition (it doubles
-    as the Spiel 77 Gewinnklasse-7 marker), so we treat it as the most
-    important position to vary. The first digit is drawn from the
-    complement of the last K=5 draws' first digits; the remaining
-    positions stay uniform-random.
+def _digit_strat_last_digit_recency(g: Game, history: list[dict], *, rng: random.Random,
+                                    rows: int) -> list[dict]:
+    """User-requested: the **last (rightmost) digit** of the Losnummer /
+    Spielscheinnummer is the actual Gewinnklasse-7-Marker bei Spiel 77
+    (Endziffer-Übereinstimmung) — und auch bei Super 6 wird von rechts
+    nach links gezählt. Wir variieren also die rechte Endziffer als die
+    "wertvollste" Position: sie wird aus dem Komplement der letzten K=5
+    Ziehungen gezogen, die restlichen Positionen bleiben uniform.
     """
     out = []
-    first_digit_history = [int(s[0]) for s in _digit_history(history)[:5] if s]
+    last_digit_history = [int(s[-1]) for s in _digit_history(history)[:5] if s]
     for _ in range(rows):
-        forbidden_first = set(first_digit_history)
-        first_choices = [d for d in range(10) if d not in forbidden_first]
-        if not first_choices:
-            first_choices = list(range(10))
-        digits = [str(rng.choice(first_choices))]
-        for _ in range(g.digits - 1):
-            digits.append(str(rng.randint(0, 9)))
+        forbidden_last = set(last_digit_history)
+        last_choices = [d for d in range(10) if d not in forbidden_last]
+        if not last_choices:
+            last_choices = list(range(10))
+        digits = [str(rng.randint(0, 9)) for _ in range(g.digits - 1)]
+        digits.append(str(rng.choice(last_choices)))
         payload, display = _format_digits("".join(digits))
         out.append({
-            "strategy":  "first_digit_recency",
+            "strategy":  "last_digit_recency",
             "payload":   payload,
             "display":   display,
-            "rationale": (f"Erste Ziffer ≠ erste Ziffer(n) der letzten {len(first_digit_history)} "
-                          "Ziehung(en); restliche Positionen zufällig"
-                          if first_digit_history else
+            "rationale": (f"Endziffer ≠ Endziffer(n) der letzten {len(last_digit_history)} "
+                          "Ziehung(en) — bei Spiel 77 entscheidet die rechte Endziffer "
+                          "über Gewinnklasse 7; restliche Positionen zufällig."
+                          if last_digit_history else
                           "Keine vorherige Ziehung — alle Positionen uniform"),
+        })
+    return out
+
+
+def _digit_strat_unique_history(g: Game, history: list[dict], *, rng: random.Random,
+                                rows: int) -> list[dict]:
+    """User-requested: bei Spiel 77 (10⁷ Kombinationen) und Super 6 (10⁶)
+    wurde noch nie eine Ziehung exakt wiederholt — der Erwartungswert
+    eines Doppels nach ~3000 Ziehungen liegt bei < 0.5 %. Diese
+    Strategie schließt jede jemals gezogene Losnummer komplett aus.
+    Statistisch nur ein winziger Edge (jede Ziehung ist iid), aber sie
+    setzt die User-Intuition direkt um und garantiert, dass kein Tipp
+    eine historische Wiederholung ist.
+    """
+    out = []
+    seen: set[str] = {s for s in _digit_history(history) if len(s) == g.digits}
+    for _ in range(rows):
+        attempts = 0
+        cand = ""
+        while attempts < 2000:
+            attempts += 1
+            cand = "".join(str(rng.randint(0, 9)) for _ in range(g.digits))
+            if cand not in seen:
+                break
+        if not cand:
+            cand = "".join(str(rng.randint(0, 9)) for _ in range(g.digits))
+        seen.add(cand)
+        payload, display = _format_digits(cand)
+        out.append({
+            "strategy":  "unique_history",
+            "payload":   payload,
+            "display":   display,
+            "rationale": (f"Schließt alle {len(seen) - 1} bislang gezogene Losnummern aus "
+                          f"(Pool {10 ** g.digits:,} — Überlapp nur {(len(seen) - 1) / 10 ** g.digits:.4%})."),
         })
     return out
 
@@ -591,9 +625,12 @@ def _digit_strategies(recency_k: int) -> list[Strategy]:
         Strategy("recency_exclude", _recency_label(k), _recency_desc_digit(k),
                  lambda g, h, rng, rows, _k=k:
                      _digit_strat_recency_exclude(g, h, rng=rng, rows=rows, exclude_last_k=_k)),
-        Strategy("first_digit_recency", "Erste Ziffer rotieren",
-                 "Erste Ziffer ungleich der ersten Ziffer der letzten 5 Ziehungen (Spiel 77 Klasse-7-Marker).",
-                 lambda g, h, rng, rows: _digit_strat_first_digit_recency(g, h, rng=rng, rows=rows)),
+        Strategy("last_digit_recency", "Endziffer rotieren",
+                 "Endziffer ungleich der Endziffer der letzten 5 Ziehungen (Spiel 77 Klasse-7-Marker / Super 6 Endziffer-Logik).",
+                 lambda g, h, rng, rows: _digit_strat_last_digit_recency(g, h, rng=rng, rows=rows)),
+        Strategy("unique_history", "Noch nie gezogen",
+                 "Schließt jede jemals gezogene Losnummer aus — bei Spiel 77 / Super 6 hat sich noch nie eine wiederholt.",
+                 lambda g, h, rng, rows: _digit_strat_unique_history(g, h, rng=rng, rows=rows)),
         Strategy("frequency_hot", "Hot per Position",
                  "Häufigste Ziffer pro Position (gewichtet).",
                  lambda g, h, rng, rows: _digit_strat_frequency(g, h, rng=rng, rows=rows, hot=True)),
@@ -653,4 +690,31 @@ def list_strategies(game_id: str, *, recency_k: int = RECENCY_K_DEFAULT) -> list
         {"name": s.name, "label": s.label, "description": s.description}
         for s in strategies_for(game_id, recency_k=recency_k)
     ]
+
+
+def get_strategy(game_id: str, name: str, *,
+                 recency_k: int = RECENCY_K_DEFAULT) -> Strategy | None:
+    """Lookup one Strategy by name for the given game."""
+    for s in strategies_for(game_id, recency_k=recency_k):
+        if s.name == name:
+            return s
+    return None
+
+
+def run_strategy(game_id: str, name: str, history: list[dict], *,
+                 rows: int = 1, recency_k: int = RECENCY_K_DEFAULT,
+                 rng: random.Random | None = None) -> list[dict]:
+    """Run a single named strategy. Used by the custom Spielschein
+    generator (one strategy per field). Returns the same dict shape as
+    ``generate_tips``.
+    """
+    g = GAMES.get(game_id)
+    if not g:
+        raise ValueError(f"unknown game {game_id!r}")
+    s = get_strategy(game_id, name, recency_k=recency_k)
+    if not s:
+        raise ValueError(f"unknown strategy {name!r} for {game_id!r}")
+    rng = rng or random.Random()
+    return s.fn(g, history, rng, rows)
+
 

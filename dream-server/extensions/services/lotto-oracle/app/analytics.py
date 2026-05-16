@@ -385,3 +385,274 @@ def recency_sweet_spot(
     }
 
 
+# ---------------------------------------------------------------------------
+# Long-horizon jackpot backtest
+# ---------------------------------------------------------------------------
+# Approximate German lottery prize classes (only the classes that need a
+# numerical match are listed; classes that depend on Superzahl etc. are
+# handled separately below).  We use the per-pool main-match count as the
+# canonical "class proxy":
+#
+#   Lotto 6 aus 49   — class 1 (jackpot) = 6 main + Superzahl
+#                                   2     = 6 main without Superzahl
+#                                   3     = 5 main + Superzahl
+#                                   4     = 5 main
+#                                   ...
+#   Eurojackpot      — class 1 = 5 main + 2 Eurozahlen
+#                                   2 = 5 main + 1 Eurozahl
+#                                   3 = 5 main + 0 Eurozahlen
+#                                   4 = 4 main + 2 Eurozahlen
+#                                   ...
+#   Spiel 77 / Super 6 — Endziffer-Kaskade von rechts;
+#                        class 1 = volle Übereinstimmung
+#                        class 2 = letzte n-1 Stellen
+#                        usw.
+#
+# We surface n_class_1 and n_class_2 (plus a small "near-miss" tier) per
+# strategy.  The dashboard turns this into "wäre in 10 Jahren X Mal ein
+# Voll-/Hauptgewinn gewesen".
+JACKPOT_BACKTEST_DEFAULT_YEARS = 10
+# How far back we cap a single backtest run — 10 years × 2 draws/wk ≈ 1040
+# trials per strategy. With 8 strategies and 1 tip per strategy that's
+# ~8000 comparisons, < 1 second on the Halo Strix.
+JACKPOT_BACKTEST_MAX_TRIALS = 1100
+
+
+def _spiel_endziffer_class(tip_digits: str, actual_digits: str) -> int:
+    """Spiel 77 / Super 6: zähle die rechts-bündige Anzahl gleicher
+    Endziffern (full match → klasse 1, n-1 → klasse 2, …, 0 → keine
+    Klasse). Wir liefern die *Anzahl gleicher Endziffern* zurück; die
+    UI mappt das auf die Klasse (Anzahl == n → Klasse 1, == n-1 →
+    Klasse 2, etc.).
+    """
+    if not tip_digits or not actual_digits or len(tip_digits) != len(actual_digits):
+        return 0
+    cnt = 0
+    for a, b in zip(reversed(tip_digits), reversed(actual_digits)):
+        if a == b:
+            cnt += 1
+        else:
+            break
+    return cnt
+
+
+def _classify_combinatorial(game: Game, tip: dict, actual: dict) -> tuple[int, int]:
+    """Returns ``(main_hits, bonus_hits)`` for a combinatorial game."""
+    main = game.pools[0]
+    bonus = game.pools[1] if len(game.pools) > 1 else None
+    tip_main = tip.get(main.name) or (tip.get("payload") or {}).get(main.name) or []
+    actual_main = actual.get(main.name) or []
+    main_hits = len(set(tip_main) & set(actual_main))
+    bonus_hits = 0
+    if bonus:
+        tip_bonus = tip.get(bonus.name) or (tip.get("payload") or {}).get(bonus.name) or []
+        actual_bonus = actual.get(bonus.name) or []
+        bonus_hits = len(set(tip_bonus) & set(actual_bonus))
+    return main_hits, bonus_hits
+
+
+def jackpot_backtest_strategy(
+    game: Game,
+    history: list[dict],
+    strategy_fn: Callable,
+    *,
+    years: int = JACKPOT_BACKTEST_DEFAULT_YEARS,
+    rows: int = 1,
+    seed: int = 9001,
+) -> dict:
+    """For one strategy, replay the last ``years`` years of draws and
+    count, for every draw, whether the generated tip would have hit
+    each prize tier.
+
+    Returns::
+
+        {
+          "n_trials":     1040,
+          "years":        10,
+          "window":       1040,
+          "tier_counts":  [
+            {"key": "class_1", "label": "Hauptgewinn (Klasse 1)", "count": 0},
+            {"key": "class_2", "label": "Klasse 2", "count": 0},
+            {"key": "class_3", "label": "Klasse 3", "count": 3},
+            ...
+          ],
+          "best_match":   {"main": 4, "bonus": 1, "draw_date": "2021-...", "value": "06 12 ..."},
+        }
+
+    Tiers depend on game.kind:
+      * combinatorial — (main_hits, bonus_hits) cascaded to prize classes
+        (table inside ``_combo_class``).  Per draw we count whichever tier
+        the tip reached (or "miss" if it didn't meet any pay-out class).
+      * digit — Endziffer-Übereinstimmung (rechts-bündig) → cnt == digits
+        => class 1, cnt == digits-1 => class 2, …, cnt == 0 => miss.
+    """
+    rng = random.Random(seed)
+    if not history:
+        return {"n_trials": 0, "years": years, "window": 0,
+                "tier_counts": [], "best_match": None}
+
+    upper = min(JACKPOT_BACKTEST_MAX_TRIALS, len(history) - 1,
+                years * 110)  # ~110 draws/year is the upper bound (lotto + eurojackpot 2x/wk)
+    if upper <= 0:
+        return {"n_trials": 0, "years": years, "window": 0,
+                "tier_counts": [], "best_match": None}
+
+    tier_counts: Counter = Counter()
+    best: dict | None = None
+
+    for i in range(upper):
+        actual = history[i]
+        past = history[i + 1:]
+        try:
+            tips = strategy_fn(game, past, rng, rows)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("jackpot backtest strategy crashed at i=%d: %s", i, exc)
+            continue
+        for t in tips:
+            if game.kind == "combinatorial":
+                main_hits, bonus_hits = _classify_combinatorial(game, t, actual)
+                cls = _combo_class(game, main_hits, bonus_hits)
+                if cls:
+                    tier_counts[cls] += 1
+                # Track best
+                score = main_hits * 10 + bonus_hits
+                if not best or score > best.get("_score", -1):
+                    best = {
+                        "_score":     score,
+                        "main":       main_hits,
+                        "bonus":      bonus_hits,
+                        "draw_date":  actual.get("draw_date"),
+                        "class":      cls or "—",
+                    }
+            else:
+                tip_d = t.get("digits") or (t.get("payload") or {}).get("digits") or ""
+                cnt = _spiel_endziffer_class(tip_d, actual.get("digits") or "")
+                if cnt > 0:
+                    cls = f"class_{game.digits - cnt + 1}"
+                    tier_counts[cls] += 1
+                if not best or cnt > best.get("_score", -1):
+                    best = {
+                        "_score":     cnt,
+                        "matches":    cnt,
+                        "draw_date":  actual.get("draw_date"),
+                        "class":      f"class_{game.digits - cnt + 1}" if cnt > 0 else "—",
+                    }
+
+    if best:
+        best.pop("_score", None)
+    return {
+        "n_trials":    upper * rows,
+        "years":       years,
+        "window":      upper,
+        "tier_counts": _format_tier_counts(game, tier_counts),
+        "best_match":  best,
+    }
+
+
+# Combinatorial prize-class mapping (proxy table — real prizes also depend
+# on # of winners, but this is good enough for "would I have won?").
+def _combo_class(game: Game, main: int, bonus: int) -> str | None:
+    if game.id == "lotto-6aus49":
+        # main is over 6/49, bonus is Superzahl (1 of 10)
+        if main == 6 and bonus == 1: return "class_1"
+        if main == 6:                return "class_2"
+        if main == 5 and bonus == 1: return "class_3"
+        if main == 5:                return "class_4"
+        if main == 4 and bonus == 1: return "class_5"
+        if main == 4:                return "class_6"
+        if main == 3 and bonus == 1: return "class_7"
+        if main == 3:                return "class_8"
+        if main == 2 and bonus == 1: return "class_9"
+        return None
+    if game.id == "eurojackpot":
+        # main over 5/50, bonus over 2/12
+        if main == 5 and bonus == 2: return "class_1"
+        if main == 5 and bonus == 1: return "class_2"
+        if main == 5:                return "class_3"
+        if main == 4 and bonus == 2: return "class_4"
+        if main == 4 and bonus == 1: return "class_5"
+        if main == 3 and bonus == 2: return "class_6"
+        if main == 4:                return "class_7"
+        if main == 2 and bonus == 2: return "class_8"
+        if main == 3 and bonus == 1: return "class_9"
+        if main == 3:                return "class_10"
+        if main == 1 and bonus == 2: return "class_11"
+        if main == 2 and bonus == 1: return "class_12"
+        return None
+    return None
+
+
+_TIER_LABELS = {
+    "lotto-6aus49": {
+        "class_1": "Klasse 1 (Jackpot 6 + Superzahl)",
+        "class_2": "Klasse 2 (6 Richtige)",
+        "class_3": "Klasse 3 (5 + Superzahl)",
+        "class_4": "Klasse 4 (5 Richtige)",
+        "class_5": "Klasse 5 (4 + Superzahl)",
+        "class_6": "Klasse 6 (4 Richtige)",
+        "class_7": "Klasse 7 (3 + Superzahl)",
+        "class_8": "Klasse 8 (3 Richtige)",
+        "class_9": "Klasse 9 (2 + Superzahl)",
+    },
+    "eurojackpot": {
+        "class_1":  "Klasse 1 (Jackpot 5 + 2)",
+        "class_2":  "Klasse 2 (5 + 1)",
+        "class_3":  "Klasse 3 (5 + 0)",
+        "class_4":  "Klasse 4 (4 + 2)",
+        "class_5":  "Klasse 5 (4 + 1)",
+        "class_6":  "Klasse 6 (3 + 2)",
+        "class_7":  "Klasse 7 (4 + 0)",
+        "class_8":  "Klasse 8 (2 + 2)",
+        "class_9":  "Klasse 9 (3 + 1)",
+        "class_10": "Klasse 10 (3 + 0)",
+        "class_11": "Klasse 11 (1 + 2)",
+        "class_12": "Klasse 12 (2 + 1)",
+    },
+}
+
+
+def _format_tier_counts(game: Game, counts: Counter) -> list[dict]:
+    if game.kind == "digit":
+        # class_1 = volle Übereinstimmung, class_n = letzte (digits-n+1) Endziffern
+        out = []
+        for n in range(1, game.digits + 1):
+            key = f"class_{n}"
+            matched = game.digits - n + 1
+            label = (f"Klasse {n} – letzte {matched} Endziffer{'' if matched == 1 else 'n'}"
+                     if n > 1 else f"Klasse {n} (Voll-Treffer · alle {game.digits} Stellen)")
+            out.append({"key": key, "label": label, "count": counts.get(key, 0)})
+        return out
+    labels = _TIER_LABELS.get(game.id, {})
+    return [
+        {"key": k, "label": labels.get(k, k), "count": c}
+        for k, c in sorted(counts.items(), key=lambda kv: kv[0])
+    ]
+
+
+def jackpot_backtest_all(
+    game: Game,
+    history: list[dict],
+    strategies: list,
+    *,
+    years: int = JACKPOT_BACKTEST_DEFAULT_YEARS,
+    rows: int = 1,
+) -> dict:
+    """Run ``jackpot_backtest_strategy`` for every strategy and return
+    ``{strategy_name: result}`` plus a summary block.
+    """
+    per_strategy: dict[str, dict] = {}
+    for s in strategies:
+        try:
+            per_strategy[s.name] = jackpot_backtest_strategy(
+                game, history, s.fn, years=years, rows=rows)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("jackpot_backtest_all: %s crashed: %s", s.name, exc)
+            per_strategy[s.name] = {"n_trials": 0, "tier_counts": [], "best_match": None}
+    return {
+        "years":         years,
+        "rows":          rows,
+        "history_size":  len(history),
+        "per_strategy":  per_strategy,
+    }
+
+

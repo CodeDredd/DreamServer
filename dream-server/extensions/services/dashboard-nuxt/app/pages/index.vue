@@ -16,6 +16,8 @@ import { storeToRefs } from 'pinia'
 import { useRepo } from 'pinia-orm'
 import Service from '~~/store/models/Service'
 import { useSystemStore } from '~/stores/system'
+import SpielscheinGenerator from '~/components/finance-guru/SpielscheinGenerator.vue'
+import { useLotto } from '~/composables/useLotto'
 definePageMeta({ layout: 'default' })
 const store = useSystemStore()
 const { status, error, lastUpdated } = storeToRefs(store)
@@ -23,6 +25,8 @@ const services = computed(() => useRepo(Service).all())
 const deployed = computed(() => services.value.filter(s => s.status !== 'not_deployed'))
 const healthyCount = computed(() => deployed.value.filter(s => s.status === 'healthy').length)
 const allHealthy = computed(() => deployed.value.length > 0 && healthyCount.value === deployed.value.length)
+const lottoComposable = useLotto()
+const lottoAvailable = computed(() => !!lottoComposable.status.value?.available)
 const lastUpdatedLabel = computed(() => {
   if (!lastUpdated.value) return '-'
   const sec = Math.floor((Date.now() - lastUpdated.value) / 1000)
@@ -74,6 +78,7 @@ const healthLabel = computed(() => {
         <DashboardKpiStrip />
         <DashboardFeatureCards />
         <DashboardServicesGrid />
+        <SpielscheinGenerator v-if="lottoAvailable" />
       </div>
     </template>
   </UDashboardPanel>
