@@ -28,15 +28,15 @@ const STATUS_TONE: Record<string, string> = {
 const tab = ref<'live' | 'proposed' | 'archived' | 'retired' | 'leaderboard'>('live')
 const tabItems = computed(() => [
   { value: 'live',        label: 'Live',        icon: 'i-lucide-play',
-    badge: countBy('live') },
+    badge: countBy('live') || undefined },
   { value: 'proposed',    label: 'Proposed',    icon: 'i-lucide-hourglass',
-    badge: countBy('proposed') },
+    badge: countBy('proposed') || undefined },
   { value: 'archived',    label: 'Archived',    icon: 'i-lucide-archive',
-    badge: countBy('archived') },
+    badge: countBy('archived') || undefined },
   { value: 'retired',     label: 'Retired',     icon: 'i-lucide-power-off',
-    badge: countBy('retired') },
+    badge: countBy('retired') || undefined },
   { value: 'leaderboard', label: 'Leaderboard', icon: 'i-lucide-trophy',
-    badge: fg.leaderboard.value.length },
+    badge: fg.leaderboard.value.length || undefined },
 ])
 function countBy(status: string): number {
   return fg.lifecycle.value.filter(r => r.status === status).length
@@ -198,17 +198,7 @@ const TRANSITION_TONE: Record<string, string> = {
     </template>
     <UTabs v-model="tab" :items="tabItems" variant="link" size="sm"
            :ui="{ list: 'px-4 border-b border-default', trigger: 'gap-2 text-xs' }"
-    >
-      <template #default="{ item }">
-        <UIcon :name="item.icon" class="size-3.5" />
-        <span>{{ item.label }}</span>
-        <UBadge v-if="(item.badge ?? 0) > 0"
-                variant="subtle" size="xs" color="neutral"
-        >
-          {{ item.badge }}
-        </UBadge>
-      </template>
-    </UTabs>
+    />
     <div v-if="tab !== 'leaderboard'">
       <div v-if="!filteredRows.length" class="px-5 py-8 text-center text-sm text-muted">
         Keine Strategien im Status <code>{{ tab }}</code>.

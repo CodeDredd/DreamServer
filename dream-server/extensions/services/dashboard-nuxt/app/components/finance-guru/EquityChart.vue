@@ -2,6 +2,9 @@
   EquityChart — kompakter Equity-Verlauf einer Strategie über die letzten
   N Tage. Datenquelle: /api/finance-guru/equity-history (gefüllt aus dem
   Cycle-Log). Verwendet nuxt-charts (LineChart) analog zu LottoCharts.
+  Wichtig: nuxt-charts LineChart liest die zu zeichnenden Reihen aus
+  `categories` (keys = Datafeld-Namen). Es gibt KEIN y-axis prop —
+  das hatte den Chart vor Phase F leise blank gerendert.
 -->
 <script setup lang="ts">
 import { computed } from 'vue'
@@ -14,7 +17,7 @@ const props = defineProps<{
   height?: number
 }>()
 
-const height = computed(() => props.height ?? 220)
+const chartHeight = computed(() => props.height ?? 220)
 
 interface ChartRow { ts: string, equity: number, cash: number }
 
@@ -28,9 +31,10 @@ const chartData = computed<ChartRow[]>(() => {
   }))
 })
 
+// nuxt-charts: keys here MUST match keys in chartData rows.
 const categories = computed(() => ({
   equity: { name: 'Equity', color: '#22c55e' },
-  cash: { name: 'Cash', color: '#64748b' },
+  cash:   { name: 'Cash',   color: '#64748b' },
 }))
 
 const xFormatter = (i: number): string => {
@@ -42,10 +46,13 @@ const xFormatter = (i: number): string => {
 
 const yFormatter = (v: number) => `${Math.round(v)} €`
 
-const minEquity = computed(() => Math.min(...chartData.value.map(d => d.equity), props.seeded ?? Infinity))
-const maxEquity = computed(() => Math.max(...chartData.value.map(d => d.equity), props.seeded ?? -Infinity))
+const minEquity = computed(() =>
+  Math.min(...chartData.value.map(d => d.equity), props.seeded ?? Infinity))
+const maxEquity = computed(() =>
+  Math.max(...chartData.value.map(d => d.equity), props.seeded ?? -Infinity))
 
-const last = computed<ChartRow | undefined>(() => chartData.value[chartData.value.length - 1])
+const last = computed<ChartRow | undefined>(
+  () => chartData.value[chartData.value.length - 1])
 const lastPnl = computed(() => {
   if (!last.value || !props.seeded) return null
   return ((last.value.equity - props.seeded) / props.seeded) * 100
@@ -53,7 +60,7 @@ const lastPnl = computed(() => {
 </script>
 
 <template>
-  <UCard :ui="{ body: 'p-0' }">
+  <UCard variant="subtle" :ui="{ body: 'p-0' }">
     <template #header>
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-line-chart" class="size-3.5 text-muted" />
@@ -63,7 +70,9 @@ const lastPnl = computed(() => {
         <span class="ml-auto text-xs text-muted">
           <template v-if="last">
             {{ formatEur(last.equity) }}
-            <span v-if="lastPnl !== null" class="ml-1" :class="lastPnl >= 0 ? 'text-success' : 'text-error'">
+            <span v-if="lastPnl !== null" class="ml-1"
+                  :class="lastPnl >= 0 ? 'text-success' : 'text-error'"
+            >
               ({{ formatPct(lastPnl) }})
             </span>
           </template>
@@ -80,19 +89,23 @@ const lastPnl = computed(() => {
     </div>
     <div v-else class="p-3">
       <ClientOnly>
-        <LineChart
-          :data="chartData"
-          :categories="categories"
-          :y-axis="['equity', 'cash']"
-          :height="height"
-          :x-formatter="xFormatter"
-          :y-formatter="yFormatter"
-          :x-num-ticks="6"
-          :y-num-ticks="4"
-          curve-type="monotone"
-        />
+        <div :style="{ minHeight: `${chartHeight}px` }">
+          <LineChart
+            :data="chartData"
+            :categories="categories"
+            :height="chartHeight"
+            :x-formatter="xFormatter"
+            :y-formatter="yFormatter"
+            :x-num-ticks="6"
+            :y-num-ticks="4"
+            :y-grid-line="true"
+            curve-type="monotone"
+          />
+        </div>
         <template #fallback>
-          <div :style="{ height: `${height}px` }" class="flex items-center justify-center text-xs text-muted">
+          <div :style="{ height: `${chartHeight}px` }"
+               class="flex items-center justify-center text-xs text-muted"
+          >
             Lade Chart…
           </div>
         </template>

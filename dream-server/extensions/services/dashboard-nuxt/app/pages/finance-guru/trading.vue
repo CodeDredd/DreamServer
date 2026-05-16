@@ -34,16 +34,16 @@ const strategyNames = computed(() => fg.strategies.value.map(s => s.name))
 const tabItems = computed(() => [
   { value: 'overview',  label: 'Overview',
     icon: 'i-lucide-layout-dashboard',
-    badge: fg.strategies.value.length },
+    badge: fg.strategies.value.length || undefined },
   { value: 'lifecycle', label: 'Lifecycle',
     icon: 'i-lucide-git-branch',
-    badge: fg.lifecycle.value.length },
+    badge: fg.lifecycle.value.length || undefined },
   { value: 'rag',       label: 'RAG Insights',
     icon: 'i-lucide-brain',
     badge: undefined as number | undefined },
   { value: 'cycles',    label: 'Cycles & Runs',
     icon: 'i-lucide-history',
-    badge: fg.cycleSummary.value?.last_24h ?? undefined },
+    badge: fg.cycleSummary.value?.last_24h || undefined },
 ])
 
 const decideLoading = ref(false)
@@ -106,16 +106,8 @@ const scheduleLabel = computed(() => {
     <template #body>
       <div class="space-y-4 p-4">
         <UTabs v-model="tab" :items="tabItems" variant="pill" color="primary" size="sm"
-               :ui="{ list: 'w-full max-w-2xl', trigger: 'gap-2 text-xs' }"
-        >
-          <template #default="{ item }">
-            <UIcon :name="item.icon" class="size-3.5" />
-            <span>{{ item.label }}</span>
-            <UBadge v-if="item.badge" variant="subtle" size="xs" color="neutral">
-              {{ item.badge }}
-            </UBadge>
-          </template>
-        </UTabs>
+               :ui="{ list: 'w-full max-w-3xl', trigger: 'gap-2 text-xs' }"
+        />
         <div v-if="tab === 'overview'">
           <StrategiesTab />
         </div>
