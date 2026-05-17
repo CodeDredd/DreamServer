@@ -165,7 +165,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'skipped', note: 'strategy_audit: ' + ($json.reason || 'no-op') }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'strategy_audit', target: null, status: 'skipped', note: 'strategy_audit: ' + ($json.reason || 'no-op') }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -258,4 +258,3 @@
     "saveDataErrorExecution": "all"
   }
 }
-

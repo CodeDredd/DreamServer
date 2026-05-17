@@ -71,7 +71,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Compute deterministic per-source statistics. The LLM step is only\n// asked to *interpret* these (e.g. weight, methodology one-liner) \u2014\n// it is NEVER allowed to invent a reliability number from thin air.\nconst news = $json.rows || [];\nconst bySource = {};\nfor (const n of news) {\n  // Bucket by `channel` (the actual outlet name, e.g. yahoo-finance,\n// cnbc-top); `n.source` is just the ingest protocol (always 'rss').\nconst s = String(n.channel || n.source || 'unknown').toLowerCase().trim();\n  const bs = bySource[s] || (bySource[s] = {\n    source: s, n: 0, n_with_symbol: 0, n_with_sentiment: 0,\n    sum_abs_sent: 0, sum_urgency: 0, sample_titles: [],\n  });\n  bs.n += 1;\n  if (Array.isArray(n.symbols) && n.symbols.length) bs.n_with_symbol += 1;\n  if (n.sentiment !== null && n.sentiment !== undefined) {\n    bs.n_with_sentiment += 1;\n    bs.sum_abs_sent += Math.abs(Number(n.sentiment));\n  }\n  if (n.urgency !== null && n.urgency !== undefined) bs.sum_urgency += Number(n.urgency);\n  if (bs.sample_titles.length < 5 && n.title) bs.sample_titles.push(n.title.slice(0, 140));\n}\n// Drop sources with < 5 samples \u2014 too noisy.\nconst rows = Object.values(bySource)\n  .filter(bs => bs.n >= 5)\n  .map(bs => ({\n    source: bs.source,\n    sample_size: bs.n,\n    symbol_hit_rate: bs.n_with_symbol / bs.n,\n    sentiment_coverage: bs.n_with_sentiment / bs.n,\n    avg_abs_sentiment: bs.n_with_sentiment ? bs.sum_abs_sent / bs.n_with_sentiment : 0,\n    avg_urgency: bs.n ? bs.sum_urgency / bs.n : 0,\n    sample_titles: bs.sample_titles,\n  }));\n// Hard cap on prompt size \u2014 top 30 by sample size.\nrows.sort((a, b) => b.sample_size - a.sample_size);\nconst batch = rows.slice(0, 30);\nreturn [{ json: { sources: batch, total_input_sources: rows.length } }];"
+        "jsCode": "// Compute deterministic per-source statistics. The LLM step is only\n// asked to *interpret* these (e.g. weight, methodology one-liner) —\n// it is NEVER allowed to invent a reliability number from thin air.\nconst news = $json.rows || [];\nconst bySource = {};\nfor (const n of news) {\n  // Bucket by `channel` (the actual outlet name, e.g. yahoo-finance,\n// cnbc-top); `n.source` is just the ingest protocol (always 'rss').\nconst s = String(n.channel || n.source || 'unknown').toLowerCase().trim();\n  const bs = bySource[s] || (bySource[s] = {\n    source: s, n: 0, n_with_symbol: 0, n_with_sentiment: 0,\n    sum_abs_sent: 0, sum_urgency: 0, sample_titles: [],\n  });\n  bs.n += 1;\n  if (Array.isArray(n.symbols) && n.symbols.length) bs.n_with_symbol += 1;\n  if (n.sentiment !== null && n.sentiment !== undefined) {\n    bs.n_with_sentiment += 1;\n    bs.sum_abs_sent += Math.abs(Number(n.sentiment));\n  }\n  if (n.urgency !== null && n.urgency !== undefined) bs.sum_urgency += Number(n.urgency);\n  if (bs.sample_titles.length < 5 && n.title) bs.sample_titles.push(n.title.slice(0, 140));\n}\n// Drop sources with < 5 samples — too noisy.\nconst rows = Object.values(bySource)\n  .filter(bs => bs.n >= 5)\n  .map(bs => ({\n    source: bs.source,\n    sample_size: bs.n,\n    symbol_hit_rate: bs.n_with_symbol / bs.n,\n    sentiment_coverage: bs.n_with_sentiment / bs.n,\n    avg_abs_sentiment: bs.n_with_sentiment ? bs.sum_abs_sent / bs.n_with_sentiment : 0,\n    avg_urgency: bs.n ? bs.sum_urgency / bs.n : 0,\n    sample_titles: bs.sample_titles,\n  }));\n// Hard cap on prompt size — top 30 by sample size.\nrows.sort((a, b) => b.sample_size - a.sample_size);\nconst batch = rows.slice(0, 30);\nreturn [{ json: { sources: batch, total_input_sources: rows.length } }];"
       },
       "id": "prep_stats",
       "name": "Aggregate per source",
@@ -142,7 +142,7 @@
         }
       },
       "id": "llm_score",
-      "name": "qwen3.6 \u2014 score sources",
+      "name": "qwen3.6 — score sources",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -347,17 +347,6 @@
     }
   ],
   "connections": {
-    "Every 6h": {
-      "main": [
-        [
-          {
-            "node": "GET 30d news",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Manual Trigger": {
       "main": [
         [
@@ -395,7 +384,7 @@
       "main": [
         [
           {
-            "node": "qwen3.6 \u2014 score sources",
+            "node": "qwen3.6 — score sources",
             "type": "main",
             "index": 0
           }
@@ -409,7 +398,7 @@
         ]
       ]
     },
-    "qwen3.6 \u2014 score sources": {
+    "qwen3.6 — score sources": {
       "main": [
         [
           {
@@ -487,6 +476,17 @@
         [
           {
             "node": "Cooldown 5 min",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 1h": {
+      "main": [
+        [
+          {
+            "node": "GET 30d news",
             "type": "main",
             "index": 0
           }

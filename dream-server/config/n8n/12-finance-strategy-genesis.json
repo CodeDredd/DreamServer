@@ -1,6 +1,6 @@
 {
   "id": "FinStratGenesis001",
-  "name": "Finance Strategy Genesis (LLM \u2192 DSL \u2192 backtest)",
+  "name": "Finance Strategy Genesis (LLM → DSL → backtest)",
   "nodes": [
     {
       "parameters": {
@@ -231,7 +231,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Assemble the LLM brief from the four upstream responses.\n// We deliberately trim every block to small payloads so the reasoning\n// model (Qwen3.5-122B-A10B) doesn't drown in tokens \u2014 the DSL catalog\n// is authoritative; lessons + RAG hits are inspiration.\nconst catalog    = $('GET DSL catalog').first()?.json || {};\nconst leaderRows = ($('GET leaderboard (7d)').first()?.json?.rows || []).slice(0, 25);\nconst universe   = ($('GET universe (7d)').first()?.json?.symbols || []).slice(0, 80);\nconst analyses   = ($('RAG: asset analyses').first()?.json?.hits || []).slice(0, 8);\nconst relations  = ($('RAG: relations').first()?.json?.hits || []).slice(0, 8);\nconst lessons    = ($('RAG: strategy lessons').first()?.json?.hits || []).slice(0, 6);\n\nconst trimmedAnalyses = analyses.map(h => ({\n  symbol:      h.symbol,\n  confidence:  h.confidence,\n  summary:     (h.summary || '').slice(0, 220),\n  keywords:    (h.keywords || []).slice(0, 6),\n}));\nconst trimmedRelations = relations.map(h => ({\n  theme:      h.theme,\n  mechanism:  h.mechanism,\n  confidence: h.confidence,\n  symbols:    (h.symbols || []).slice(0, 8),\n  sectors:    (h.sectors || []).slice(0, 6),\n  summary:    (h.summary || '').slice(0, 180),\n}));\nconst trimmedLessons = lessons.map(h => ({\n  strategy: h.strategy,\n  outcome:  h.outcome,\n  pnl_pct:  h.pnl_pct,\n  lesson:   (h.lesson || '').slice(0, 260),\n}));\nconst leaderboardSummary = leaderRows.map(r => ({\n  name:           r.name,\n  kind:           r.kind,\n  status:         r.status,\n  window_pnl_pct: r.window_pnl_pct,\n  window_cycles:  r.window_cycles,\n  retire_reason:  (r.retire_reason || '').slice(0, 120),\n}));\n\nif (!universe.length) {\n  return [{ json: { skip: true, reason: 'universe empty (no recent ticks)' } }];\n}\n\nconst now      = new Date().toISOString().slice(0, 19).replace('T','-').replace(/:/g,'');\nconst seed     = Math.random().toString(36).slice(2, 6);\nconst basename = 'gen_' + now + '_' + seed;\n\nreturn [{ json: {\n  skip: false,\n  catalog,\n  basename,\n  universe,\n  brief: {\n    leaderboard:  leaderboardSummary,\n    analyses:     trimmedAnalyses,\n    relations:    trimmedRelations,\n    lessons:      trimmedLessons,\n  },\n} }];"
+        "jsCode": "// Assemble the LLM brief from the four upstream responses.\n// We deliberately trim every block to small payloads so the reasoning\n// model (Qwen3.5-122B-A10B) doesn't drown in tokens — the DSL catalog\n// is authoritative; lessons + RAG hits are inspiration.\nconst catalog    = $('GET DSL catalog').first()?.json || {};\nconst leaderRows = ($('GET leaderboard (7d)').first()?.json?.rows || []).slice(0, 25);\nconst universe   = ($('GET universe (7d)').first()?.json?.symbols || []).slice(0, 80);\nconst analyses   = ($('RAG: asset analyses').first()?.json?.hits || []).slice(0, 8);\nconst relations  = ($('RAG: relations').first()?.json?.hits || []).slice(0, 8);\nconst lessons    = ($('RAG: strategy lessons').first()?.json?.hits || []).slice(0, 6);\n\nconst trimmedAnalyses = analyses.map(h => ({\n  symbol:      h.symbol,\n  confidence:  h.confidence,\n  summary:     (h.summary || '').slice(0, 220),\n  keywords:    (h.keywords || []).slice(0, 6),\n}));\nconst trimmedRelations = relations.map(h => ({\n  theme:      h.theme,\n  mechanism:  h.mechanism,\n  confidence: h.confidence,\n  symbols:    (h.symbols || []).slice(0, 8),\n  sectors:    (h.sectors || []).slice(0, 6),\n  summary:    (h.summary || '').slice(0, 180),\n}));\nconst trimmedLessons = lessons.map(h => ({\n  strategy: h.strategy,\n  outcome:  h.outcome,\n  pnl_pct:  h.pnl_pct,\n  lesson:   (h.lesson || '').slice(0, 260),\n}));\nconst leaderboardSummary = leaderRows.map(r => ({\n  name:           r.name,\n  kind:           r.kind,\n  status:         r.status,\n  window_pnl_pct: r.window_pnl_pct,\n  window_cycles:  r.window_cycles,\n  retire_reason:  (r.retire_reason || '').slice(0, 120),\n}));\n\nif (!universe.length) {\n  return [{ json: { skip: true, reason: 'universe empty (no recent ticks)' } }];\n}\n\nconst now      = new Date().toISOString().slice(0, 19).replace('T','-').replace(/:/g,'');\nconst seed     = Math.random().toString(36).slice(2, 6);\nconst basename = 'gen_' + now + '_' + seed;\n\nreturn [{ json: {\n  skip: false,\n  catalog,\n  basename,\n  universe,\n  brief: {\n    leaderboard:  leaderboardSummary,\n    analyses:     trimmedAnalyses,\n    relations:    trimmedRelations,\n    lessons:      trimmedLessons,\n  },\n} }];"
       },
       "id": "build_brief",
       "name": "Build brief",
@@ -290,7 +290,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'skipped', note: 'strategy_genesis: ' + ($json.reason || 'no-op') }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'strategy_genesis', target: null, status: 'skipped', note: 'strategy_genesis: ' + ($json.reason || 'no-op') }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -329,7 +329,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'reasoning', temperature: 0.2, max_tokens: 2400, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You design paper-trade strategies for a self-learning system. Output STRICT JSON: { \"proposals\": [ { \"description\": string<=200, \"asset_types\": string[], \"max_position_frac\": number_in_(0,1] | null, \"universe_filter\": { \"symbols\": string[] } | null, \"rules\": [ { \"id\": string, \"action\": \"buy\"|\"sell\", \"when\": <boolean tree>, \"sizing\": { \"mode\": \"max_position_frac\"|\"fixed_eur\", \"eur\": number | null }, \"reason\": string<=160 } ] } ] }. Each proposal MUST contain at least one buy rule. ONLY use signal names from the supplied catalog. ONLY reference symbols from the supplied universe (if you reference any). Each <boolean tree> is either { \"all\": [...] }, { \"any\": [...] }, or { \"signal\": <name>, \"op\": <op>, \"value\": <number|bool>, optional params }. Keep proposals diverse: 1\u20133 candidates per call. Avoid re-proposing patterns that the lessons section already flagged as failures. Do NOT include markdown. Do NOT include any commentary outside the JSON object.' }, { role: 'user', content: 'DSL signal catalog: ' + JSON.stringify($json.catalog.signals) + '\\nOperators: ' + JSON.stringify($json.catalog.ops) + '\\nActions: ' + JSON.stringify($json.catalog.actions) + '\\nSizing modes: ' + JSON.stringify($json.catalog.sizing) + '\\nLimits: ' + JSON.stringify($json.catalog.limits) + '\\nPromotion gate: ' + JSON.stringify($json.catalog.gate) + '\\nUniverse (you may only reference these symbols): ' + JSON.stringify($json.universe) + '\\nRecent leaderboard (7d): ' + JSON.stringify($json.brief.leaderboard) + '\\nRecent asset analyses (vector hits): ' + JSON.stringify($json.brief.analyses) + '\\nRecent causal relations: ' + JSON.stringify($json.brief.relations) + '\\nRecent strategy lessons (avoid these patterns): ' + JSON.stringify($json.brief.lessons) + '\\nReturn ONLY the JSON object with the proposals array now.' } ] }) }}",
+        "jsonBody": "={{ JSON.stringify({ model: 'reasoning', temperature: 0.2, max_tokens: 2400, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You design paper-trade strategies for a self-learning system. Output STRICT JSON: { \"proposals\": [ { \"description\": string<=200, \"asset_types\": string[], \"max_position_frac\": number_in_(0,1] | null, \"universe_filter\": { \"symbols\": string[] } | null, \"rules\": [ { \"id\": string, \"action\": \"buy\"|\"sell\", \"when\": <boolean tree>, \"sizing\": { \"mode\": \"max_position_frac\"|\"fixed_eur\", \"eur\": number | null }, \"reason\": string<=160 } ] } ] }. Each proposal MUST contain at least one buy rule. ONLY use signal names from the supplied catalog. ONLY reference symbols from the supplied universe (if you reference any). Each <boolean tree> is either { \"all\": [...] }, { \"any\": [...] }, or { \"signal\": <name>, \"op\": <op>, \"value\": <number|bool>, optional params }. Keep proposals diverse: 1–3 candidates per call. Avoid re-proposing patterns that the lessons section already flagged as failures. Do NOT include markdown. Do NOT include any commentary outside the JSON object.' }, { role: 'user', content: 'DSL signal catalog: ' + JSON.stringify($json.catalog.signals) + '\\nOperators: ' + JSON.stringify($json.catalog.ops) + '\\nActions: ' + JSON.stringify($json.catalog.actions) + '\\nSizing modes: ' + JSON.stringify($json.catalog.sizing) + '\\nLimits: ' + JSON.stringify($json.catalog.limits) + '\\nPromotion gate: ' + JSON.stringify($json.catalog.gate) + '\\nUniverse (you may only reference these symbols): ' + JSON.stringify($json.universe) + '\\nRecent leaderboard (7d): ' + JSON.stringify($json.brief.leaderboard) + '\\nRecent asset analyses (vector hits): ' + JSON.stringify($json.brief.analyses) + '\\nRecent causal relations: ' + JSON.stringify($json.brief.relations) + '\\nRecent strategy lessons (avoid these patterns): ' + JSON.stringify($json.brief.lessons) + '\\nReturn ONLY the JSON object with the proposals array now.' } ] }) }}",
         "options": {
           "timeout": 600000,
           "response": {
@@ -341,7 +341,7 @@
         }
       },
       "id": "llm_genesis",
-      "name": "reasoning \u2014 propose DSL",
+      "name": "reasoning — propose DSL",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -449,7 +449,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: ($('Verifier (DSL)').item.json && $('Verifier (DSL)').item.json.name) || null, status: 'ok', note: 'strategy_genesis: proposed' }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'strategy_genesis', target: ($('Verifier (DSL)').item.json && $('Verifier (DSL)').item.json.name) || null, status: 'ok', note: 'strategy_genesis: proposed' }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -488,7 +488,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ workflow: 'asset_behaviour', target: null, status: 'error', note: 'strategy_genesis: ' + ($json.reason || 'rejected') }) }}",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'strategy_genesis', target: null, status: 'error', note: 'strategy_genesis: ' + ($json.reason || 'rejected') }) }}",
         "options": {
           "timeout": 5000,
           "response": {
@@ -627,7 +627,7 @@
       "main": [
         [
           {
-            "node": "reasoning \u2014 propose DSL",
+            "node": "reasoning — propose DSL",
             "type": "main",
             "index": 0
           }
@@ -641,7 +641,7 @@
         ]
       ]
     },
-    "reasoning \u2014 propose DSL": {
+    "reasoning — propose DSL": {
       "main": [
         [
           {

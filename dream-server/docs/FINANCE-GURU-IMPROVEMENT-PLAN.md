@@ -1712,12 +1712,12 @@ geschrieben hat, sehen wir das innerhalb von 5 min im Dashboard.
 
 ## P. Reihenfolge & Aufwand
 
-| Step  | Inhalt                                            | Aufwand | Abhängig |
-|-------|---------------------------------------------------|---------|----------|
-| P-1   | Universe-Quelle entkoppeln (canonical aus Qdrant) | 1 d     | —        |
-| P-2   | Silent-Skip-Sichtbarkeit + `/enrichment/health`   | 0.5 d   | —        |
-| P-3   | Reddit/StockTwits + Collection-Bootstrap          | 0.5 d   | —        |
-| P-4   | **Workflow 15: Price-Move-Explainer**             | 3–4 d   | P-1, J   |
+| Step  | Inhalt                                            | Aufwand | Abhängigkeit |
+|-------|---------------------------------------------------|---------|--------------|
+| P-1   | Universe-Quelle entkoppeln (canonical aus Qdrant) | 1 d     | —            |
+| P-2   | Silent-Skip-Sichtbarkeit + `/enrichment/health`   | 0.5 d   | —            |
+| P-3   | Reddit/StockTwits + Collection-Bootstrap          | 0.5 d   | —            |
+| P-4   | **Workflow 15: Price-Move-Explainer**             | 3–4 d   | P-1, J       |
 | P-5   | Daily-Smoke + Sidebar-Badge auf
   `/enrichment/health.verdict`.
 
@@ -1878,7 +1878,7 @@ Datei `config/n8n/15-finance-price-move-explainer.json`.
   since_ts_unix)` — Scroll-basierter Dedup-Lookup mit defensivem
   Failure-Mode (Outage ⇒ leere Menge ⇒ Workflow läuft trotzdem
   durch, statt durch False-Positive-Dedup stumm zu werden).
-* `GET /assets/movers?window=&min_pct=&asset_type=&limit=&dedupe=
+* `GET /assets/movers?window=1h&min_pct=2&asset_type=&limit=&dedupe=
   &bucket_minutes=` — over-fetched `limit*4` Movers vor Dedup,
   trimmt nach Dedup auf `limit`, meldet `skipped_dedup` mit zurück.
 * `15-finance-price-move-explainer.json` — Cron `*/10 min`,
@@ -1933,149 +1933,78 @@ ssh sky-net@192.168.178.110 'curl -s http://127.0.0.1:6333/collections/finance_r
 
 ---
 
-## Phase P-6 — SearxNG als Pre-Step für unter-belegte LLM-Briefs
+## ✅ Phase P-7 — Silent finance workflows hörbar gemacht (2026-05-17)
 
-### Validierungsbefund 2026-05-17
+**Befund nach P-5.1 deploy**: Die Sidebar-Badge zeigte
+`workflow_smoke=errors` mit Note
+`stale_workflows: source_reliability=never_reported,
+strategy_audit=never_reported, strategy_genesis=never_reported`.
 
-**Frage**: „Können / sollen die Finance-Workflow-LLM-Calls SearxNG
-nutzen, damit das Modell im Workflow nachschlagen kann statt zu
-halluzinieren?"
+Drei aktive n8n-Workflows haben Stunden bis Wochen lang keine
+`/enrichment/run`-Reports geschrieben, obwohl ihre Cron-Trigger
+gelaufen sind und sie laut `n8n list:workflow --active=true`
+aktiv sind. Root-Cause-Analyse hat zwei voneinander unabhängige
+Bug-Klassen aufgedeckt:
 
-**Befund**:
+### Bug 1 — Hardcoded falscher `workflow:` Wert
 
-1. **Tool-Use ist aktuell nirgends aktiviert.** `grep` über alle
-   Workflows (`09`, `10`, `12`, `13`, `15`) zeigt 0 Treffer für
-   `tool_choice` / `tools.[]`. Jeder Call ist ein plain
-   `POST /v1/chat/completions` mit `response_format: json_object`
-   und einem deterministisch zusammengebauten Brief.
-2. **Das ist Absicht und korrekt für unser Verifier-Modell.**
-   Sämtliche Workflows nutzen die Verifier-Kette
-   `evidence_ids ⊆ Brief-IDs`, `symbols ⊆ Universe`,
-   `confidence ≥ threshold`. Würde das LLM mit
-   `tools=[web_search]` mitten im Call neue URLs zitieren, fielen
-   die im Verifier durch — Token weg, Verifier-Run weg, im
-   schlimmsten Fall ein silent-skip ohne Note.
-3. **Open WebUI** nutzt SearxNG bereits (Base-Compose-Variablen
-   `ENABLE_WEB_SEARCH=true`, `WEB_SEARCH_ENGINE=searxng`,
-   `SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>&format=json`).
-   Operatoren haben Web-Suche im Chat — die Workflows verzichten
-   bewusst darauf.
-4. **Echtes Halluzinationsrisiko** entsteht nicht *durch fehlende
-   Web-Suche*, sondern durch **leere/dünne Briefs**: WF13
-   (`causal_extraction`) skipt regelmäßig mit `no_news in
-   window`; WF15 (`price_move_explainer`) trifft Mover ohne
-   News-Treffer. Wenn der Brief leer ist, schaltet der Workflow
-   zwar korrekt auf „unexplained" um, verliert aber an dem Tag
-   jeden Lerneffekt.
+`WF11 strategy_audit` und `WF12 strategy_genesis` haben in ihren
+Report-Nodes versehentlich `workflow: 'asset_behaviour'`
+eingetragen (offensichtlich beim Copy-Paste aus dem
+WF09-Template übersehen). Folge:
 
-### Empfehlung — SearxNG als deterministischer Pre-Step, nicht als LLM-Tool
+* Die Reports landen unter `enrichment_runs.workflow =
+  'asset_behaviour'` → versteckt zwischen den 600+ legitimen
+  asset_behaviour-Runs.
+* `/enrichment/health` listet `strategy_audit` und
+  `strategy_genesis` als nie reportet → P-5 workflow_smoke
+  flaggt sie korrekt als stale.
 
-Architektur: SearxNG-Treffer werden **vor** dem LLM-Call als neue
-`evidence`-Einträge in den Brief injiziert (mit eigenen
-`evidence_ids` wie `web:<sha1(url)[:10]>`), damit der bestehende
-Verifier sie genauso prüfen kann wie RSS-/Tickdaten. Kein
-Streaming-Tool-Call, kein `tool_choice` — pure JSON-Anreicherung.
+**Fix**: 4 Nodes patcht (WF11 `Log skip`, WF12 `Log skip`/
+`Report OK`/`Report reject`) → richtige `workflow:`-Werte.
 
-P-6.1. **Neuer Microservice-Endpoint** in `finance-news` (oder
-  `finance-guru-api`):
-  `POST /enrichment/web-context { symbol, window_minutes,
-  query_hint? } → { results: [{id, url, source, title, snippet,
-  ts}] }`. Intern ruft er
-  `http://searxng:8080/search?q=<...>&format=json&time_range=day`
-  und persistiert die Treffer als `evidence`-Snapshots in Qdrant
-  (`finance_news`-Collection, `source=web:searxng`) — so wird
-  jeder Treffer Bestandteil des regulären RAG-Tops und der Brief
-  bekommt eine stabile `evidence_id`.
+### Bug 2 — Orphan connection-key in WF10 source_reliability
 
-P-6.2. **WF13 & WF15 Hook**:
+Der Trigger-Node heißt `'Every 1h'` (umbenannt von ursprünglich
+`'Every 6h'`), aber der `connections`-Dict referenziert noch den
+alten Namen. Da n8n connections per Node-Name resolvet, ist der
+Trigger faktisch *disconnected* — der Workflow läuft nur per
+„Execute Workflow"-Button, nie per Cron.
 
-  * Nach dem RSS-/News-Fetch, wenn `len(news_window) <
-    MIN_BRIEF_EVIDENCE` (z. B. 3), automatisch
-    `/enrichment/web-context` mit den Mover-Tickern aufrufen und
-    Treffer in den Brief mergen.
-  * `note` der `enrichment_run` markiert sichtbar
-    `web_assist=true` + Trefferzahl, damit die
-    `EnrichmentRunsTable` zeigt, *wann* die Web-Anreicherung
-    getriggert hat.
-  * Budget: max 1 SearxNG-Call pro Workflow-Tick, Cache 5 min im
-    Service (verhindert N²-Calls bei 10 Movern).
+* Symptom: WF10 war in `n8n list:workflow --active=true`
+  vorhanden, hat aber seit dem Rename nie automatisch gefeuert.
+* Erklärt, warum `source_reliability` nie reportet hat, obwohl
+  die JSON-Datei korrekte Workflow-Namen in den Report-Nodes
+  hat.
 
-P-6.3. **Halluzinations-Hardening (orthogonal)**:
+**Fix**: Connection-Key `'Every 6h'` → `'Every 1h'` umbenannt.
 
-  * In WF15 zusätzlich ein `web_assist_failed`-Branch: wenn auch
-    nach SearxNG der Brief unter Mindestbelegung bleibt, **gar
-    nicht erst** den LLM aufrufen, sondern direkt
-    `regime=unexplained, evidence_ids=[]` als deterministischen
-    Stub speichern. Spart Token und macht den „kein Material →
-    keine Story"-Fall explizit auditierbar (heute ist es eine
-    silent-skip-Note).
-  * Der Verifier-Pfad bleibt unverändert — Web-Treffer sind
-    technisch ganz normale `evidence_ids`.
+### Generisches Audit-Tool
 
-**Bewusst nicht empfohlen**: LLM-`tools=[web_search]` im
-Workflow. Begründung siehe Befund 2 — würde unser Verifier-Modell
-aushebeln, ohne im Gegenzug etwas zu liefern, was P-6.1/P-6.2
-deterministisch nicht auch leisten.
+`/tmp/fix_orphan_conns.py` scannt alle finance-*.json und
+meldet:
 
-**DoD P-6**: Wenn `causal_extraction` an einem ruhigen Wochenende
-0 RSS-Items für die Universe-Symbole sieht, schreibt der Workflow
-trotzdem ≥ 1 verwertbaren `relation`- oder `lesson`-Run, dessen
-`evidence_ids` alle auf reproduzierbare SearxNG-URLs zeigen — und
-`enrichment_runs.note` enthält `web_assist=true (n=…)`.
+* `ORPHAN connection-keys` (connections-Dict-Keys ohne
+  matching Node-Name)
+* `TRIGGER nodes with NO outgoing connection` (Trigger ohne
+  jeglichen Eintrag im connections-Dict)
 
-**Aufwand**: ~1 d (Endpoint + Cache + zwei WF-Hooks). Abhängig
-von nichts; kann unabhängig nach P-3.2 / P-5 laufen.
+Für die nächste WF-Iteration sollte dieses Script als Pre-Commit-
+Hook laufen — das macht die Rename-Falle für immer unsichtbar.
 
-### ✅ Phase P-6.1 + P-6.2 — Web-Fallback geliefert (2026-05-17)
+### DoD P-7
 
-Realisiert *ohne n8n-Anpassung* — der Hook sitzt im bestehenden
-`/history/news` Endpoint, sodass WF13 + WF15 ihre Brief-Builder
-unverändert lassen können:
+Nach Deploy:
 
-* **`finance-news`** bekommt neues Modul `app/searxng.py` +
-  `POST /web-context { symbol, asset_type?, query_hint?,
-  max_results, time_range }`. Stable evidence-ID-Schema
-  `web:<sha1(url)[:10]>`. Degradiert silent auf `{results: []}`
-  wenn SearXNG aus oder unerreichbar (kein crash, kein 5xx).
-* **`finance-news` compose**: `FINANCE_NEWS_USE_SEARXNG` default
-  ab jetzt `true` (war `false`). SearXNG-Container ist ohnehin
-  Pflichtbestandteil des DreamServer-Stacks; opt-out via .env
-  möglich, opt-in war zu eng.
-* **`finance-guru-api` `/history/news`** erweitert um optional
-  `include_web=true` query-param (Default: env-knob
-  `FINANCE_GURU_HISTORY_NEWS_WEB_FALLBACK=true`). Trigger-Logik:
-  `rows.empty AND symbol AND use_web` → 1 HTTP-POST an
-  `finance-news/web-context` → Web-Treffer werden in `rows[]`
-  appended mit `id="web:…"`, `source="web:<host>"`, `channel="web"`.
-  Brief- und Verifier-Logik der Workflows funktionieren unverändert
-  weiter (`evidence_ids ⊆ brief_items.id` bleibt korrekt — web-IDs
-  sind genauso valide wie news-IDs). Response enthält neuen
-  `web_fallback: {enabled, attempted, added, error}` Block für
-  Observability.
-* **WF13 + WF15** brauchten **null Änderungen** — die Workflows
-  rufen `/history/news?symbol=…&hours=…` bereits genau so, wie
-  der neue Pfad erwartet.
-
-**Bewusst nicht umgesetzt** (kann später nachgezogen werden):
-
-* P-6.3 (kein-LLM-Aufruf wenn auch Web leer): Aktuell schickt der
-  Workflow auch einen leeren Brief an den LLM und kriegt das
-  korrekte `regime=unexplained` zurück. Token-spar-mäßig fair
-  (1 short call), und der LLM-Path stellt sicher, dass auch
-  `web_assist_failed` als `lesson` in den Genesis-Loop fließt.
-* Persistierung der Web-Snippets in der Qdrant
-  `finance_news`-Collection (`source=web:searxng`). Erst sinnvoll,
-  wenn wir empirisch sehen, dass dieselben URLs mehrfach pro Woche
-  von verschiedenen Movern als Evidence gewählt werden.
-* Cache: 1 Call pro Workflow-Tick × ≤ 5 Movern = ≤ 5 Calls/10 min
-  = ≤ 720/d. Bei aktueller Last (SearXNG ohnehin idle) nicht
-  nötig; wenn das Volume steigt, kommt ein simpler TTL-Dict-Cache
-  in `searxng.py` (key = `(symbol, time_range)`).
-
-**DoD P-6 erfüllt**: `GET /history/news?symbol=NVDA&hours=4` für
-ein Symbol ohne RSS-Treffer liefert ≥ 1 `web:…` Row, die
-Verifier-Chain im WF15 akzeptiert sie als gültige `evidence_id`,
-und der resultierende `relation`/`lesson` enthält stabile
-SearXNG-URLs als nachvollziehbare Quelle.
-
-
+1. WF11 morgen 00:05 (Mo) feuert → erster
+   `strategy_audit`-Report in `/enrichment/health`.
+2. WF12 nächster 6h-Tick feuert → erster `strategy_genesis`-Report.
+3. WF10 nächster stündlicher Tick feuert → erster
+   `source_reliability`-Report.
+4. Workflow_smoke 04:05 morgen sollte alle 3 Workflows als
+   `fresh` melden (oder spätestens 24 h nach jedem Trigger
+   automatisch).
+5. Badge geht von „1 error + 2 no-progress" auf „ok" oder
+   bleibt auf „2 no-progress" wenn `causal_extraction` /
+   `price_move_explainer` weiterhin kein Material finden
+   (Wochenende-Effekt, nicht unser Problem).
