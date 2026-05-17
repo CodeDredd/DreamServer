@@ -2008,3 +2008,39 @@ Nach Deploy:
    bleibt auf „2 no-progress" wenn `causal_extraction` /
    `price_move_explainer` weiterhin kein Material finden
    (Wochenende-Effekt, nicht unser Problem).
+## ✅ Phase P-5.2 — status=ok Precedence Hotfix (2026-05-17)
+### Symptom
+Nach dem P-7 Deploy hatte `workflow_smoke` Verdict `errors`
+obwohl der manuell getriggerte Smoke-Run einen sauberen
+`status=ok / note="all_fresh: ..."`-Heartbeat schrieb.
+Counts zeigten `ok=0, skip=1, error=1` statt erwartet
+`ok=1, skip=0, error=1`.
+### Root Cause
+P-5.1 hatte `is_error_status` Precedence eingebaut (status=error
+geht IMMER in Error-Bucket, unabhängig vom Note-Pattern), aber
+die symmetrische Regel für `status=ok` vergessen. Die
+`informative_patterns`-Liste enthält absichtlich `"all_fresh"`
+(damit workflow_smoke ok-Heartbeats nicht als opaque skip
+zählen) — aber das führte dazu, dass `skip_hit=True` matched,
+bevor der `status=ok`-Branch geprüft wurde. Der ok-Heartbeat
+landete im Skip-Bucket.
+### Fix
+`is_ok_status = status == "ok"` analog zu `is_error_status`
+eingebaut. `skip_hit` requires explicit non-ok AND non-error
+status:
+```python
+is_error_status = status in ("error", "failed", "failure")
+is_ok_status    = status == "ok"
+skip_hit = ((not is_error_status) and (not is_ok_status)
+            and (status in ("skip", "skipped", "noop", "empty")
+                 or is_informative_note
+                 or note.startswith("skip")))
+if is_ok_status:
+    bucket["ok"] += 1
+    ...
+```
+### Verifikation
+Post-Deploy zweimal `POST /enrichment/smoke` getriggert:
+`workflow_smoke: runs=3, ok=2, skip=0, error=1`. Der eine
+verbleibende error ist der historische `stale_workflows`-Eintrag
+von vor P-7, der binnen ~21h aus dem 24h-Fenster fällt.
