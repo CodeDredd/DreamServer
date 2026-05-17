@@ -457,7 +457,7 @@ def run_strategy_rebalance_once(sd: StrategyDef,
 
     if ctx.equity_eur <= 0:
         log.info("[%s] rebalance skip: zero equity", sd.name)
-        return {"strategy": sd.name, "skipped": True,
+        return {"strategy": sd.name, "rebalance_skip": True,
                 "reason": "zero equity", "ts": started.isoformat()}
 
     cash_share = ctx.cash_eur / ctx.equity_eur
@@ -465,7 +465,7 @@ def run_strategy_rebalance_once(sd: StrategyDef,
     if cash_share <= trigger_floor:
         log.info("[%s] rebalance skip: cash_share=%.3f <= trigger=%.3f",
                  sd.name, cash_share, trigger_floor)
-        return {"strategy": sd.name, "skipped": True,
+        return {"strategy": sd.name, "rebalance_skip": True,
                 "reason": f"cash_share={cash_share:.3f} <= trigger={trigger_floor:.3f}",
                 "ts": started.isoformat()}
 
@@ -501,9 +501,9 @@ def run_strategy_rebalance_once(sd: StrategyDef,
                  sd.name, sum(1 for s in signals if s.action == "buy"),
                  len(held), min_conf)
         finished = dt.datetime.now(dt.timezone.utc)
-        result = {"strategy": sd.name, "skipped": True,
+        result = {"strategy": sd.name, "rebalance_skip": True,
                   "reason": "no qualifying top-up signals",
-                  "signals": len(signals), "executed": [],
+                  "signals": len(signals), "executed": [], "skipped": [],
                   "ts": started.isoformat()}
         try:
             cycle_log.record(strategy=sd.name, started=started, finished=finished,
