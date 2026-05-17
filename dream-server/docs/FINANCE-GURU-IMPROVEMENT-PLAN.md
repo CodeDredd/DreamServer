@@ -2110,3 +2110,78 @@ Target erst ermöglicht.
 Hebel-pro-Aufwand-Verhältnis: lässt H-1's bereits geliefertes
 Water-Filling sein volles Potential ausspielen. **H-5** (Rebalance-
 Cron) kann parallel, weil er einen anderen Code-Pfad nutzt.
+## ✅ Phase H-4 — MAX_FRESH_BUYS hoch + Diversifikations-Gate (2026-05-17)
+### Problem
+Nach H-1+H-2 war die effektive Investitionsquote durch `MAX_FRESH_BUYS=3`
+hardcoded gedeckelt: bei `max_position_frac=0.10` summierte sich der
+maximale fill_to_target-Outcome auf 3 × 10 % = **30 %**, weit
+unterhalb des 85 % Target. Das fertige Water-Filling konnte sein
+Potential nicht ausspielen.
+### Lieferung
+**Config-driven Caps (`config.py`)**
+* `FINANCE_GURU_MAX_FRESH_BUYS=8` (war hardcoded 3)
+* `FINANCE_GURU_MAX_BUYS_PER_SECTOR=8` — defensiver Default
+  (= no-op), bis Phase K echte Sektordaten in `ctx.asset_sectors`
+  einspeist. Dann auf `2` flippen.
+**Per-Strategie Emission**
+* `news_sentiment` und `social_buzz` slicen jetzt
+  `candidates[:CFG.max_fresh_buys]` statt `[:3]`.
+* `MAX_FRESH_BUYS` Konstante in social_buzz entfernt; ein
+  Konfigurations-Knopf statt zwei.
+**Orchestrator-Gate (`_apply_diversification_gate`)**
+* Läuft VOR `_size_buy`/`_fill_to_target` — kein verschwendetes
+  Headroom auf Buys, die ohnehin abgelehnt werden.
+* Drei Caps in einem Greedy-Algorithmus:
+  1. **Global** `max_fresh_buys` pro Cycle
+  2. **Pro Sektor** `max_buys_per_sector` (existing OPEN positions
+     seed den Sektor-Zähler → Konzentration wächst nicht über
+     mehrere Cycles)
+  3. **Pro Symbol** 1 Buy / Cycle (defensive Duplikat-Erkennung,
+     Strategien tun das meist schon)
+* Sortierung: Confidence desc, ties broken by Symbol-lex
+  (deterministisch für Tests + Audit).
+* Rejected-Signals landen mit klarer Begründung (z.B.
+  `"sector cap 2 reached for sector='stock'"`) im `skipped`-Feld
+  des Cycle-Logs.
+**`DecisionContext.asset_sectors`**
+* Neues Feld `dict[str, str]`, Default `{}`.
+* Orchestrator populiert es vorläufig als Kopie von `asset_types`
+  (stock/crypto). Phase K ersetzt das durch echte
+  GICS-Sektoren/Branchen.
+### Verifikation
+4 Unit-Test-Szenarien gegen Live-Container (`/tmp/h4_test.py`):
+1. `accepted=8 rejected=2` (alle 8 stock+crypto top-conf, 2 letzte
+   per `max_fresh_buys`)
+2. `max_per_sector=2` → 4 accepted (2 stock + 2 crypto), 6 rejected
+3. 2 existing stock-Positionen → 0 fresh stock buys (Sektor
+   bereits voll), nur 2 crypto buys.
+4. Duplikat-Symbole im Input → erstes (höchste conf) gewinnt.
+Live-Cycle nach Deploy: `[momentum_breakout] signals=1 executed=1
+skipped=0` — Gate passiert sauber für Sub-Cap-Cycles.
+### Sequencing in `run_strategy_once`
+```
+sd.decide(ctx)
+    ↓
+_apply_diversification_gate (H-4)        ← rejects feed skipped[]
+    ↓
+_size_buy per accepted (H-2 equity-based)
+    ↓
+_fill_to_target water-filling (H-1)      ← extra['fill_to_target_eur']
+    ↓
+ledger.execute_trade per signal
+```
+### DoD H-4 (Status)
+* ✅ `CFG.max_fresh_buys`/`CFG.max_buys_per_sector` config-driven
+* ✅ Strategien (`news_sentiment`, `social_buzz`) nutzen
+  `CFG.max_fresh_buys`
+* ✅ Orchestrator-Gate enforced alle 3 Caps, Existing-Positionen
+  seeden Sektor-Zähler
+* ✅ 4/4 Unit-Test-Szenarien green im Live-Container
+* ⏳ Real-World-Effekt: nach 24 h Wochentags-Betrieb sollte
+  median `invested/equity` von ~15 % auf ≥ 0.7 klettern
+  (DoD H-Gesamt)
+### Nächster Slot
+**H-3** (Kelly-Lite opt-in) + **H-5** (Rebalance-Cron) sind beide
+unabhängig vom kritischen Pfad und können parallel kommen.
+H-5 hat schnelleren Mehrwert (füllt ungenutzten Cash zwischen
+Cycles), H-3 ist Hygiene für LLM-generated Strategien.
