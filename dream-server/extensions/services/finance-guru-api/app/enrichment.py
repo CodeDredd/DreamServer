@@ -364,10 +364,23 @@ def run_health(window_hours: int = 24) -> list[dict]:
             "no qualified",
             "skipped_dedup",
         )
-        is_informative_note = any(p in note for p in informative_patterns) or len(note_raw.strip()) >= 30
-        skip_hit = (status in ("skip", "skipped", "noop", "empty")
-                    or is_informative_note
-                    or note.startswith("skip"))
+        # An "informative" skip-note is one that matches a known
+        # pattern. We intentionally do NOT count "long note" as
+        # informative — a successful `status=ok` run can legitimately
+        # carry a long descriptive note (e.g. "Asset analysis updated
+        # for AAPL: sentiment 0.42, urgency 1") which must NOT get
+        # reclassified as skip.
+        is_informative_note = any(p in note for p in informative_patterns)
+        # Phase P-5.1: an explicit `status="error"` ALWAYS goes to the
+        # error bucket, even if the note happens to look "informative"
+        # (e.g. workflow_smoke's `stale_workflows: ...` heartbeat IS
+        # an error by design — the operator must act on it). Only the
+        # non-error statuses get the skip-vs-error reclassification.
+        is_error_status = status in ("error", "failed", "failure")
+        skip_hit = ((not is_error_status)
+                    and (status in ("skip", "skipped", "noop", "empty")
+                         or is_informative_note
+                         or note.startswith("skip")))
         if status == "ok" and not skip_hit:
             bucket["ok"] += 1
             if not bucket["last_ok_ts"]:
