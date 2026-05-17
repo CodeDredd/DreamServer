@@ -1124,6 +1124,83 @@ def assets_canonical(asset_type: str | None = Query(default=None),
             "symbols": [r["symbol"] for r in rows if r.get("symbol")]}
 
 
+# --------------------------------------------------------------------------- #
+# Phase P-4: GET /assets/movers — symbols whose close moved ≥ ±min_pct
+# over `window`. Drives the n8n Workflow 15 (Price-Move-Causal-Explainer)
+# event-driven learning loop. Anti-spam dedup against finance_relations
+# (theme prefix `price_move:<SYM>:<bucket>`) is opt-in via dedupe=true
+# so the operator can disable it for debug runs.
+# --------------------------------------------------------------------------- #
+@app.get("/assets/movers")
+def assets_movers(window: str = Query(default="1h"),
+                  min_pct: float = Query(default=3.0, ge=0.1, le=50.0),
+                  asset_type: str | None = Query(default=None),
+                  limit: int = Query(default=10, ge=1, le=50),
+                  dedupe: bool = Query(default=True),
+                  bucket_minutes: int = Query(default=60, ge=5, le=24 * 60)) -> dict:
+    window_map = {
+        "15m": dt.timedelta(minutes=15),
+        "30m": dt.timedelta(minutes=30),
+        "1h":  dt.timedelta(hours=1),
+        "2h":  dt.timedelta(hours=2),
+        "4h":  dt.timedelta(hours=4),
+        "8h":  dt.timedelta(hours=8),
+        "1d":  dt.timedelta(days=1),
+    }
+    td = window_map.get(window)
+    if td is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            f"unknown window={window!r}; allowed: {list(window_map)}")
+    try:
+        movers = data.recent_movers(
+            td,
+            min_abs_return_pct=min_pct,
+            asset_type=asset_type,
+            limit=limit * 4 if dedupe else limit,  # over-fetch for dedup
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.exception("assets_movers SQL failed")
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            f"recent_movers failed: {exc}") from None
+
+    # Dedup against existing price_move:<SYM>:<bucket> themes within
+    # the last `bucket_minutes`. Prevents the cron from spending an
+    # LLM-call every 10 min on the same Range-Bound crypto.
+    skipped: list[dict] = []
+    if dedupe and movers:
+        bucket_seconds = max(60, int(bucket_minutes) * 60)
+        since_ts = int(dt.datetime.now(dt.timezone.utc).timestamp()) - bucket_seconds
+        existing = qdrant_rag.recent_relation_themes(
+            theme_prefix="price_move:",
+            since_ts_unix=since_ts,
+            limit=400,
+        )
+        # We only check the symbol prefix because the workflow picks
+        # the actual bucket-ts itself; same-symbol within the window
+        # → already explained.
+        fresh: list[dict] = []
+        for m in movers:
+            sym_prefix = f"price_move:{m['symbol']}:"
+            if any(t.startswith(sym_prefix) for t in existing):
+                skipped.append({"symbol": m["symbol"],
+                                "reason": "already explained within bucket"})
+                continue
+            fresh.append(m)
+        movers = fresh
+    movers = movers[:limit]
+
+    return {
+        "window":          window,
+        "min_pct":         min_pct,
+        "asset_type":      asset_type,
+        "bucket_minutes":  bucket_minutes,
+        "generated_at":    dt.datetime.now(dt.timezone.utc).isoformat(),
+        "count":           len(movers),
+        "skipped_dedup":   len(skipped),
+        "movers":          movers,
+    }
+
+
 @app.get("/history/prices")
 def history_prices(symbol: str = Query(..., min_length=1),
                    days: int = Query(default=180, ge=1, le=365 * 2),

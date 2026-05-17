@@ -416,6 +416,54 @@ def list_assets(*, asset_type: str | None = None,
         return []
 
 
+def recent_relation_themes(*, theme_prefix: str,
+                           since_ts_unix: int,
+                           limit: int = 200) -> set[str]:
+    """Return the set of `theme` payload values currently present in
+    `finance_relations` that (a) start with `theme_prefix` and
+    (b) were written after `since_ts_unix`. Used by the Phase P-4
+    Price-Move-Explainer to deduplicate within a 60-min bucket so the
+    same SYM+ts-window doesn't trigger an LLM call every cron tick.
+
+    Returns an empty set on any Qdrant outage (caller MUST treat
+    "not in set" as "go ahead and write" — defensive against
+    false-positive dedup that would silence the whole pipeline).
+    """
+    try:
+        client = get_client()
+        if not client.collection_exists(CFG.relations_collection):
+            return set()
+        flt = qm.Filter(must=[
+            qm.FieldCondition(
+                key="ts_unix",
+                range=qm.Range(gte=int(since_ts_unix)),
+            ),
+        ])
+        out: set[str] = set()
+        next_offset = None
+        page = max(64, min(int(limit), 256))
+        while True:
+            points, next_offset = client.scroll(
+                collection_name=CFG.relations_collection,
+                scroll_filter=flt,
+                limit=page,
+                with_payload=True,
+                with_vectors=False,
+                offset=next_offset,
+            )
+            for p in points:
+                theme = ((p.payload or {}).get("theme") or "").strip()
+                if theme.startswith(theme_prefix):
+                    out.add(theme)
+            if not next_offset or not points or len(out) >= int(limit):
+                return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("recent_relation_themes(prefix=%s) failed: %s",
+                    theme_prefix, exc)
+        return set()
+
+
+
 # --------------------------------------------------------------------------- #
 # Read helpers — strategy-facing
 # --------------------------------------------------------------------------- #

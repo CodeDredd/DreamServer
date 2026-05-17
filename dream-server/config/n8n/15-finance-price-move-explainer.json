@@ -1,0 +1,769 @@
+{
+  "id": "FinPriceMoveExpl01",
+  "name": "Finance Price-Move Causal Explainer (movers \u2192 LLM \u2192 finance_relations)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */10 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron",
+      "name": "Every 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://finance-guru-api:8098/assets/movers",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "window",
+              "value": "1h"
+            },
+            {
+              "name": "min_pct",
+              "value": "3"
+            },
+            {
+              "name": "limit",
+              "value": "5"
+            },
+            {
+              "name": "dedupe",
+              "value": "true"
+            },
+            {
+              "name": "bucket_minutes",
+              "value": "60"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get_movers",
+      "name": "GET /assets/movers (1h, \u22653%)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split the movers response into one item per mover (so each gets its\n// own /history/news fetch + LLM call). If no movers, emit a single\n// skip-item so we can report it to /enrichment/run downstream.\nconst resp = $json || {};\nconst movers = Array.isArray(resp.movers) ? resp.movers : [];\nif (!movers.length) {\n  return [{ json: { skip: true, reason: (resp.skipped_dedup\n    ? `no fresh movers (dedup hid ${resp.skipped_dedup})`\n    : `no movers above ${resp.min_pct}% in ${resp.window}`) } }];\n}\nconst out = [];\nfor (const m of movers) {\n  // Bucket the mover into a 60-min window starting at the latest tick.\n  // This gives every explainer call a stable theme suffix so dedup works.\n  let bucket = 0;\n  try {\n    bucket = Math.floor(new Date(m.latest_ts).getTime() / 1000 / 3600) * 3600;\n  } catch (e) { /* keep 0 */ }\n  out.push({ json: {\n    skip: false,\n    mover: m,\n    bucket_ts: bucket,\n    theme: `price_move:${m.symbol}:${bucket}`,\n  } });\n}\nreturn out;"
+      },
+      "id": "split_movers",
+      "name": "Split movers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "guard_movers",
+      "name": "Has movers?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        920,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'price_move_explainer', target: null, status: 'skipped', note: 'price_move_explainer: ' + ($json.reason || 'no-op') }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "log_skip",
+      "name": "Log skip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://finance-guru-api:8098/history/news",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbol",
+              "value": "={{ $json.mover.symbol }}"
+            },
+            {
+              "name": "hours",
+              "value": "4"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 8000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get_news",
+      "name": "GET news (per mover, 4h)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1160,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Stitch the per-mover news payload back onto the mover so the LLM has\n// both the price-move stats and the headline context in one prompt.\nconst mover    = $('Split movers').item.json.mover;\nconst bucket   = $('Split movers').item.json.bucket_ts;\nconst theme    = $('Split movers').item.json.theme;\nconst newsResp = $json || {};\nconst headlines = Array.isArray(newsResp.rows) ? newsResp.rows : [];\n\n// Trim headlines tight: title + sentiment + urgency + ts only.\nconst items = headlines.slice(0, 12).map(r => ({\n  id:        r.id,\n  ts:        r.ts,\n  source:    r.source,\n  sentiment: r.sentiment,\n  urgency:   r.urgency,\n  title:     String(r.title || '').slice(0, 200),\n}));\n\nreturn [{ json: {\n  mover,\n  bucket_ts: bucket,\n  theme,\n  brief_items: items,\n  has_news: items.length > 0,\n} }];"
+      },
+      "id": "build_brief",
+      "name": "Build per-mover brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://litellm:4000/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.LITELLM_KEY || $env.LITELLM_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'default', temperature: 0.1, max_tokens: 800, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You explain WHY a single asset moved this much in the last hour, using ONLY the supplied headlines. Output STRICT JSON: { \"mechanism\": string<=180, \"drivers\": string[]<=5, \"regime\": one_of(\"news_driven\",\"earnings\",\"macro\",\"sector_rotation\",\"liquidity\",\"sympathy\",\"whale\",\"unexplained\"), \"confidence\": number_in_[0,1], \"evidence_ids\": (string|number)[]<=6, \"summary\": string<=240 }. Rules: (1) evidence_ids MUST come from the supplied headlines and MUST be the `id` field, not the title. (2) If there are NO headlines OR none plausibly explain the move, set regime=\"unexplained\", confidence<=0.2, evidence_ids=[]. (3) drivers are short noun phrases (\"Q3 beat\",\"oil shock\",\"BTC sympathy\"). (4) mechanism is one sentence: cause -> effect. (5) No markdown, no commentary outside the JSON object.' }, { role: 'user', content: 'Mover: ' + JSON.stringify($json.mover) + '\\nHeadlines (last 4h, this symbol): ' + JSON.stringify($json.brief_items) + '\\nReturn ONLY the JSON object now.' } ] }) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "llm_explain",
+      "name": "default \u2014 explain move",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1640,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verifier: parse, enforce evidence_ids \u2286 input, route into one of two\n// sinks based on regime + confidence.\n//   * explained (regime != 'unexplained' AND confidence >= 0.4 AND >=1\n//     verified evidence_id)        \u2192 POST /rag/relation\n//   * unexplained                  \u2192 POST /rag/strategy-lesson with\n//     outcome=note, keywords=[unexplained_move, <SYM>] so the\n//     genesis loop can later build a sympathy/whale strategy.\nconst brief    = $('Build per-mover brief').item.json;\nconst mover    = brief.mover;\nconst theme    = brief.theme;\nconst evIds    = new Set((brief.brief_items || []).map(it => String(it.id)));\nconst llmResp  = $json;\n\nlet raw = '';\nlet parsed = null;\ntry {\n  raw = String(llmResp?.choices?.[0]?.message?.content || '').trim();\n  const m = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(m ? m[0] : raw);\n} catch (e) {\n  return [{ json: { route: 'reject', reason: 'invalid JSON from LLM', symbol: mover.symbol, raw: raw.slice(0, 400) } }];\n}\n\nconst mechanism = String(parsed.mechanism || '').slice(0, 180);\nconst summary   = String(parsed.summary   || '').slice(0, 240);\nconst regime    = String(parsed.regime    || 'unexplained').toLowerCase();\nconst conf      = Number(parsed.confidence);\nconst confOk    = (conf >= 0 && conf <= 1);\nconst drivers   = (Array.isArray(parsed.drivers) ? parsed.drivers : [])\n                    .map(s => String(s).trim()).filter(Boolean).slice(0, 5);\nconst evidence  = (Array.isArray(parsed.evidence_ids) ? parsed.evidence_ids : [])\n                    .map(x => String(x)).filter(x => evIds.has(x)).slice(0, 6);\n\nif (!confOk) {\n  return [{ json: { route: 'reject', reason: 'confidence missing/out-of-range', symbol: mover.symbol, raw: raw.slice(0, 400) } }];\n}\n\nconst isExplained = (regime !== 'unexplained') && (conf >= 0.4) && (evidence.length >= 1);\n\nif (isExplained) {\n  // Build the /rag/relation payload.\n  const movePct  = mover.return_pct;\n  const dirText  = movePct >= 0 ? 'rallied' : 'fell';\n  const symText  = `${mover.symbol} ${dirText} ${Math.abs(movePct).toFixed(2)}% in 1h`;\n  return [{ json: {\n    route: 'relation',\n    symbol: mover.symbol,\n    payload: {\n      theme,\n      mechanism: mechanism || null,\n      summary: summary ? `${symText}. ${summary}` : symText,\n      entities: drivers,\n      sectors: [],\n      symbols: [mover.symbol],\n      evidence_ids: evidence,\n      confidence: conf,\n      model: 'default',\n    },\n  } }];\n}\n\n// Unexplained / weak \u2014 emit a strategy-lesson so the genesis loop can\n// pick up the pattern (e.g. sympathy moves with no news).\nconst lessonText = `Unexplained 1h move on ${mover.symbol}: `\n  + `${mover.return_pct.toFixed(2)}% (volume ratio ${mover.volume_ratio ?? 'n/a'}). `\n  + `LLM regime=${regime}, confidence=${conf.toFixed(2)}. `\n  + (mechanism || 'No mechanism produced.') + ' '\n  + `Headlines seen: ${ (brief.brief_items || []).length }.`;\nreturn [{ json: {\n  route: 'lesson',\n  symbol: mover.symbol,\n  payload: {\n    strategy: 'price_move_explainer',\n    outcome: 'note',\n    pnl_pct: null,\n    lesson: lessonText.slice(0, 4000),\n    keywords: ['unexplained_move', mover.symbol.toLowerCase(),\n               (mover.asset_type || 'unknown').toLowerCase(), regime],\n    extra: {\n      symbol: mover.symbol,\n      return_pct: mover.return_pct,\n      volume_ratio: mover.volume_ratio,\n      regime,\n      confidence: conf,\n      bucket_ts: brief.bucket_ts,\n      headline_count: (brief.brief_items || []).length,\n    },\n  },\n} }];"
+      },
+      "id": "verify",
+      "name": "Verifier (price-move)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1880,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "relation",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "relation"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "lesson",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "lesson"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "reject",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reject"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false
+        }
+      },
+      "id": "route_switch",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2120,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/rag/relation",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 12000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "post_relation",
+      "name": "POST /rag/relation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/rag/strategy-lesson",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "timeout": 12000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "post_lesson",
+      "name": "POST /rag/strategy-lesson",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'price_move_explainer', target: $json.symbol || null, status: 'error', note: 'price_move_explainer: ' + ($json.reason || 'rejected') }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "report_reject",
+      "name": "Report reject",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'price_move_explainer', target: $('Verifier (price-move)').item.json.symbol || null, status: 'ok', note: 'price_move_explainer: relation stored (' + ($('Verifier (price-move)').item.json.payload.theme || '') + ')' }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "report_relation_ok",
+      "name": "Report OK (relation)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2620,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://finance-guru-api:8098/enrichment/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.FINANCE_GURU_TOKEN}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: 'price_move_explainer', target: $('Verifier (price-move)').item.json.symbol || null, status: 'ok', note: 'price_move_explainer: unexplained \u2192 lesson stored' }) }}",
+        "options": {
+          "timeout": 5000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "report_lesson_ok",
+      "name": "Report OK (lesson)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2620,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "cooldown",
+      "name": "Cooldown 15s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2880,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Every 10 min": {
+      "main": [
+        [
+          {
+            "node": "GET /assets/movers (1h, \u22653%)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "GET /assets/movers (1h, \u22653%)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET /assets/movers (1h, \u22653%)": {
+      "main": [
+        [
+          {
+            "node": "Split movers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split movers": {
+      "main": [
+        [
+          {
+            "node": "Has movers?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has movers?": {
+      "main": [
+        [
+          {
+            "node": "GET news (per mover, 4h)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET news (per mover, 4h)": {
+      "main": [
+        [
+          {
+            "node": "Build per-mover brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build per-mover brief": {
+      "main": [
+        [
+          {
+            "node": "default \u2014 explain move",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "default \u2014 explain move": {
+      "main": [
+        [
+          {
+            "node": "Verifier (price-move)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verifier (price-move)": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "POST /rag/relation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "POST /rag/strategy-lesson",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report reject",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /rag/relation": {
+      "main": [
+        [
+          {
+            "node": "Report OK (relation)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST /rag/strategy-lesson": {
+      "main": [
+        [
+          {
+            "node": "Report OK (lesson)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report OK (relation)": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report OK (lesson)": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report reject": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log skip": {
+      "main": [
+        [
+          {
+            "node": "Cooldown 15s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 600,
+    "saveExecutionProgress": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}
+

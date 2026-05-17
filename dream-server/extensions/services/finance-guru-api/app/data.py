@@ -212,6 +212,112 @@ def history_extent() -> dict:
     }
 
 
+def recent_movers(window: dt.timedelta,
+                  *,
+                  min_abs_return_pct: float = 3.0,
+                  asset_type: str | None = None,
+                  limit: int = 10) -> list[dict]:
+    """Symbols whose close moved at least ±`min_abs_return_pct` over
+    the last `window`. Phase P-4 driver for the Price-Move-Causal-
+    Explainer workflow.
+
+    Per row:
+      symbol, asset_type, window_start_close, latest_close,
+      return_pct (signed), volume_ratio (latest-bar volume divided by
+      median bar-volume of last 96 bars of same symbol — 1.0 ≈ normal,
+      >2 ≈ unusual), latest_ts.
+
+    Sorted by abs(return_pct) DESC. Returns at most `limit` rows.
+
+    Implementation notes:
+    * We compute the start price as the *latest tick ≤ now-window*
+      (not the first tick after `now-window`) so a 1h window genuinely
+      spans 1h even if the symbol just resumed trading 5 minutes in.
+    * Volume baseline = median of last 96 bars (= 24h at 15-min cadence
+      for stocks, ≈ 8h at 5-min for crypto). Cheap; one window-function
+      pass.
+    * Pure SQL on `finance.prices_intraday`. No Python aggregation per
+      symbol → scales linearly with universe size, not with bar count.
+    """
+    # Clamp window to a sane range so SQL doesn't OOM on a freak input.
+    win_seconds = max(60, min(int(window.total_seconds()), 7 * 24 * 3600))
+    args: list = [win_seconds, win_seconds]
+    type_filter = ""
+    if asset_type:
+        type_filter = "AND asset_type = %s"
+        args.append(asset_type)
+    args.extend([float(min_abs_return_pct), int(max(1, min(limit, 100)))])
+
+    sql = f"""
+        WITH win AS (
+          SELECT symbol, asset_type,
+                 -- latest tick within the window
+                 (ARRAY_AGG(close ORDER BY ts DESC))[1] AS latest_close,
+                 (ARRAY_AGG(volume ORDER BY ts DESC))[1] AS latest_volume,
+                 MAX(ts) AS latest_ts,
+                 -- close at the start of the window (nearest tick AT or BEFORE
+                 -- now-window — fallback to first tick inside the window if no
+                 -- earlier tick exists)
+                 COALESCE(
+                   (SELECT close FROM finance.prices_intraday p2
+                      WHERE p2.symbol = p.symbol
+                        AND p2.ts <= now() - make_interval(secs => %s)
+                      ORDER BY p2.ts DESC LIMIT 1),
+                   (ARRAY_AGG(close ORDER BY ts ASC))[1]
+                 ) AS start_close
+          FROM finance.prices_intraday p
+          WHERE ts >= now() - make_interval(secs => %s)
+                {type_filter}
+          GROUP BY symbol, asset_type
+        ),
+        vol_base AS (
+          SELECT symbol,
+                 -- median of last 96 bars per symbol (TimescaleDB
+                 -- has percentile_cont; fallback to AVG on plain PG)
+                 percentile_cont(0.5) WITHIN GROUP (ORDER BY volume)
+                   AS median_vol
+          FROM (
+            SELECT symbol, volume,
+                   row_number() OVER (PARTITION BY symbol ORDER BY ts DESC) AS rn
+            FROM finance.prices_intraday
+            WHERE ts >= now() - INTERVAL '7 days'
+          ) s
+          WHERE rn <= 96
+          GROUP BY symbol
+        )
+        SELECT w.symbol, w.asset_type, w.start_close, w.latest_close,
+               ((w.latest_close - w.start_close) / NULLIF(w.start_close, 0) * 100.0)::float8
+                 AS return_pct,
+               CASE WHEN COALESCE(vb.median_vol, 0) > 0
+                    THEN (w.latest_volume / vb.median_vol)::float8
+                    ELSE NULL END AS volume_ratio,
+               w.latest_ts
+        FROM win w
+        LEFT JOIN vol_base vb ON vb.symbol = w.symbol
+        WHERE w.start_close IS NOT NULL
+          AND w.latest_close IS NOT NULL
+          AND ABS((w.latest_close - w.start_close) / NULLIF(w.start_close, 0) * 100.0)
+              >= %s
+        ORDER BY ABS((w.latest_close - w.start_close) / NULLIF(w.start_close, 0)) DESC
+        LIMIT %s
+    """
+    with conn() as c, c.cursor() as cur:
+        cur.execute(sql, tuple(args))
+        rows = cur.fetchall()
+    out: list[dict] = []
+    for sym, at, sc, lc, rp, vr, lts in rows:
+        out.append({
+            "symbol":       sym,
+            "asset_type":   at,
+            "start_close":  float(sc) if sc is not None else None,
+            "latest_close": float(lc) if lc is not None else None,
+            "return_pct":   round(float(rp), 3) if rp is not None else None,
+            "volume_ratio": round(float(vr), 3) if vr is not None else None,
+            "latest_ts":    lts.isoformat() if lts is not None else None,
+        })
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Social — written by finance-social. Same column shape as news.events
 # minus the sentiment-only quirks.

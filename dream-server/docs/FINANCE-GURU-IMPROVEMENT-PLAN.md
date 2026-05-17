@@ -1791,10 +1791,99 @@ Yahoo-Finance/Polygon-Adapter prüfen, Wochenend-Backfill.
 
 ### Offen aus Phase P (nächster Slot)
 
-* **P-1.x stocks**: finance-prices-Stock-Pipeline reparieren (vorher
-  durch Universe-Coupling maskiert).
 * **P-3.2**: StockTwits-Fallback in `finance-social`, sobald Reddit
   weiter ohne Credentials bleibt.
-* **P-4**: Workflow 15 — Price-Move-Causal-Explainer (Spec steht).
 * **P-5**: Daily-Smoke + Sidebar-Badge auf
   `/enrichment/health.verdict`.
+
+### ✅ Phase P-1.x — finance-prices Stock-Pipeline repariert (2026-05-16)
+
+* Root cause: `yfinance==0.2.50` konnte Yahoos Cloudflare-Auth seit
+  Anfang 2025 nicht mehr passieren — jeder Ticker-Request lief in
+  `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`. 90+
+  Tage stille `0 stock ticks geschrieben`, vorher maskiert durch das
+  Universe-Coupling von Phase P-1.
+* Fix (Commit `7da939b2`): yfinance auf `>=0.2.65,<0.3`, `curl_cffi`
+  als explizite Dep, `Session(impersonate="chrome")` an
+  `yf.download(session=)`, `_run_stocks_blocking(force=True,
+  period="5d")` umgeht den Market-Hours-Guard und wird beim
+  Container-Start immer einmal getriggert (auch wenn DB nicht leer
+  ist — vorher hat der Auto-Trigger geschlafen, sobald Crypto-Rows
+  schon existierten).
+* Verifiziert post-deploy (2026-05-16): `stocks fetch done: 12600
+  bars upserted (100 symbols, period=5d, force=True)`;
+  `/history/symbols?asset_type=stock&hours=168` → 98 (vorher 0);
+  `/assets/canonical?asset_type=stock&only_with_prices=true` → 98;
+  WF09 analysiert erstmals seit ≥ 90 d Aktien (AAPL conf 0.85, ABBV
+  0.40, ADI 0.40) → `asset_analysis` 102 → 105.
+
+### ✅ Phase P-4 — Workflow 15 (Price-Move-Causal-Explainer)
+
+**Status**: Code-Patch fertig — neuer Endpoint `GET /assets/movers`,
+neuer Qdrant-Helper `recent_relation_themes()` (60-min-Bucket-Dedup
+gegen `finance_relations.theme = price_move:<SYM>:*`), neue Workflow-
+Datei `config/n8n/15-finance-price-move-explainer.json`.
+
+**Geliefert:**
+
+* `app/data.py::recent_movers(window, min_abs_return_pct,
+  asset_type, limit)` — reine SQL-Aggregation auf
+  `finance.prices_intraday` mit Window-Function-basierter
+  Volume-Baseline (Median der letzten 96 Bars) und „start_close =
+  letzter Tick vor `now-window`"-Logik (so spannt 1h auch dann eine
+  volle Stunde, wenn das Symbol gerade erst wieder ticken durfte).
+* `app/qdrant_rag.py::recent_relation_themes(theme_prefix,
+  since_ts_unix)` — Scroll-basierter Dedup-Lookup mit defensivem
+  Failure-Mode (Outage ⇒ leere Menge ⇒ Workflow läuft trotzdem
+  durch, statt durch False-Positive-Dedup stumm zu werden).
+* `GET /assets/movers?window=&min_pct=&asset_type=&limit=&dedupe=
+  &bucket_minutes=` — over-fetched `limit*4` Movers vor Dedup,
+  trimmt nach Dedup auf `limit`, meldet `skipped_dedup` mit zurück.
+* `15-finance-price-move-explainer.json` — Cron `*/10 min`,
+  Manual-Trigger, Switch-Routing in drei Senken:
+  * `relation` (regime≠unexplained ∧ conf≥0.4 ∧ ≥1 verifizierte
+    `evidence_id`) → `POST /rag/relation` mit
+    `theme=price_move:<SYM>:<bucket_ts>` (1h-Bucket aus
+    `latest_ts`, damit Dedup deterministisch greift).
+  * `lesson` (unexplained ∨ schwach) → `POST /rag/strategy-lesson`
+    mit `outcome=note`, `keywords=[unexplained_move, <SYM>,
+    <asset_type>, <regime>]` — Genesis-Loop kann später daraus
+    Sympathy-/Whale-Strategien proposeren.
+  * `reject` (JSON-Parse-Fehler, confidence-out-of-range) →
+    `enrichment/run status=error` (kein Lessons-/Relations-Write).
+* Verifier hält an alle Verifier-Pattern-Regeln: `evidence_ids ⊆
+  Input`, Symbol = Mover-Symbol (single-asset by construction).
+
+**DoD-Verifikation post-deploy:**
+
+```bash
+# 1) Endpoint smoke
+curl -sf "http://localhost:8098/assets/movers?window=1h&min_pct=2&limit=5" | jq
+
+# 2) WF15 importiert & aktiv
+ssh sky-net@192.168.178.110 'curl -s -H "X-N8N-API-KEY: $N8N_API_KEY" \
+  http://127.0.0.1:5678/api/v1/workflows | jq ".data[] | select(.id==\"FinPriceMoveExpl01\")"'
+
+# 3) Nach 1 h: erste Relations mit price_move-Theme
+ssh sky-net@192.168.178.110 'curl -s http://127.0.0.1:6333/collections/finance_relations/points/scroll \
+  -H "content-type: application/json" \
+  -d "{\"limit\":5,\"with_payload\":true,\"filter\":{\"must\":[{\"key\":\"theme\",\"match\":{\"text\":\"price_move:\"}}]}}" | jq'
+
+# 4) Dedup wirkt: zweiter /assets/movers-Call innerhalb 60min liefert
+#    skipped_dedup > 0 für dieselben Symbole
+```
+
+**Lessons learned** (aus Implementation):
+
+* Switch-Node v3.2 in n8n verlangt `outputKey` + `renameOutput:true`
+  pro Branch — sonst hat man unbeschriftete Pfade, die im UI als
+  „Output 0/1/2" erscheinen und nach jedem Re-Import permutieren.
+* `with_vectors=False` im scroll() schenkt einem 30× Bandbreite —
+  Dedup-Lookup ist nur an Payload interessiert.
+* Anti-Spam-Bucket sitzt server-seitig im Endpoint, nicht im Workflow
+  — sonst hätten wir bei jedem Cron-Tick zuerst N LLM-Calls und
+  *dann* das Filter (LLM-Budget weg).
+* `price_move:<SYM>:<bucket>` als Theme statt nur `price_move:<SYM>`,
+  damit ein neuer 1h-Bucket nach dem alten verfallenen explizit als
+  „neuer Move" durchgeht, ohne dass wir Themes löschen müssen.
+
