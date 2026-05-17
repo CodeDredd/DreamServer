@@ -60,6 +60,25 @@ class GuruConfig:
     max_buys_per_sector: int = field(default_factory=lambda: int(
         os.getenv("FINANCE_GURU_MAX_BUYS_PER_SECTOR", "8")))
 
+    # ── Phase H-5: Re-Balance-Cycle ────────────────────────────────────
+    # Separate cron job that tops up EXISTING positions with high-
+    # confidence signals when too much cash is sitting idle between
+    # regular decide cycles. NEVER opens new symbols.
+    # * `rebalance_cron`: how often to consider rebalancing (default
+    #   every 30 min on the half-hour). Empty string disables the job.
+    # * `rebalance_min_confidence`: only top up positions whose CURRENT
+    #   decide() output emits a buy with confidence >= this threshold.
+    # * `rebalance_cash_trigger_frac`: defensive guard. Skip rebalance
+    #   if `cash / equity <= 1 - target_invested_frac * trigger_frac`.
+    #   With target=0.85 and trigger=0.9: skip unless `cash/equity >
+    #   0.235` (~23 % idle cash) — avoids churn when already near target.
+    rebalance_cron: str = field(default_factory=lambda: os.getenv(
+        "FINANCE_GURU_REBALANCE_CRON", "*/30 * * * *").strip())
+    rebalance_min_confidence: float = field(default_factory=lambda: float(
+        os.getenv("FINANCE_GURU_REBALANCE_MIN_CONFIDENCE", "0.7")))
+    rebalance_cash_trigger_frac: float = field(default_factory=lambda: float(
+        os.getenv("FINANCE_GURU_REBALANCE_CASH_TRIGGER_FRAC", "0.9")))
+
     # ── API auth ───────────────────────────────────────────────────────
     api_token: str     = field(default_factory=lambda: os.getenv("FINANCE_GURU_TOKEN", "").strip())
 

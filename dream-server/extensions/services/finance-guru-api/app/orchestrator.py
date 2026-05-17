@@ -422,6 +422,189 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
     return result
 
 
+def run_strategy_rebalance_once(sd: StrategyDef,
+                                asset_type_map: dict[str, str],
+                                *, trigger: str = "rebalance") -> dict:
+    """Phase H-5: top up EXISTING positions with cash that's still
+    idle between regular decide cycles.
+
+    Pipeline (intentionally narrower than run_strategy_once):
+      1. Build context (same as the full cycle).
+      2. Defensive guard: skip unless cash/equity > 1 - target * trigger
+         (avoids churn when already near the H-1 target).
+      3. Run sd.decide(ctx).
+      4. Keep only buy-signals whose:
+            * symbol is already in ctx.positions, AND
+            * confidence >= CFG.rebalance_min_confidence.
+         All SELL / HOLD / new-symbol BUY signals are dropped — they're
+         handled by the regular 30-min decide cycle.
+      5. Resolve qty via _size_buy (equity-based, subtracts existing
+         position value → the resulting top-up respects the per-
+         position cap).
+      6. _fill_to_target distributes any remaining headroom
+         proportional to confidence, just like the normal cycle.
+      7. Execute.
+
+    The diversification gate is intentionally NOT applied: we're not
+    opening new symbols, so the global/sector caps would never trip.
+    Per-symbol uniqueness is implicit since decide() typically emits
+    at most one buy per symbol per cycle.
+    """
+    ledger.ensure_strategy(sd.name, sd.description)
+    _cached_source_weight.cache_clear()
+    ctx = _build_context(sd.name, sd.asset_types, asset_type_map)
+    started = ctx.now
+
+    if ctx.equity_eur <= 0:
+        log.info("[%s] rebalance skip: zero equity", sd.name)
+        return {"strategy": sd.name, "skipped": True,
+                "reason": "zero equity", "ts": started.isoformat()}
+
+    cash_share = ctx.cash_eur / ctx.equity_eur
+    trigger_floor = 1.0 - (CFG.target_invested_frac * CFG.rebalance_cash_trigger_frac)
+    if cash_share <= trigger_floor:
+        log.info("[%s] rebalance skip: cash_share=%.3f <= trigger=%.3f",
+                 sd.name, cash_share, trigger_floor)
+        return {"strategy": sd.name, "skipped": True,
+                "reason": f"cash_share={cash_share:.3f} <= trigger={trigger_floor:.3f}",
+                "ts": started.isoformat()}
+
+    log.info("[%s] rebalance: cash=%.2f equity=%.2f cash_share=%.1f%% (trigger>%.1f%%) positions=%d",
+             sd.name, ctx.cash_eur, ctx.equity_eur, cash_share * 100,
+             trigger_floor * 100, len(ctx.positions))
+
+    signals: list[Signal] = []
+    try:
+        signals = sd.decide(ctx) or []
+    except Exception as exc:  # noqa: BLE001
+        log.exception("[%s] rebalance decide() crashed", sd.name)
+        finished = dt.datetime.now(dt.timezone.utc)
+        result = {"strategy": sd.name, "error": str(exc),
+                  "signals": 0, "executed": [], "skipped": [],
+                  "ts": started.isoformat()}
+        try:
+            cycle_log.record(strategy=sd.name, started=started, finished=finished,
+                             trigger=trigger, result=result, error=str(exc))
+        except Exception:  # noqa: BLE001
+            log.exception("cycle_log.record failed (rebalance decide crash)")
+        return result
+
+    held = set(ctx.positions.keys())
+    min_conf = float(CFG.rebalance_min_confidence)
+    qualifying = [s for s in signals
+                  if s.action == "buy"
+                  and s.symbol in held
+                  and float(s.confidence or 0.0) >= min_conf]
+    if not qualifying:
+        log.info("[%s] rebalance: no qualifying top-up signals "
+                 "(buys=%d, held=%d, min_conf=%.2f)",
+                 sd.name, sum(1 for s in signals if s.action == "buy"),
+                 len(held), min_conf)
+        finished = dt.datetime.now(dt.timezone.utc)
+        result = {"strategy": sd.name, "skipped": True,
+                  "reason": "no qualifying top-up signals",
+                  "signals": len(signals), "executed": [],
+                  "ts": started.isoformat()}
+        try:
+            cycle_log.record(strategy=sd.name, started=started, finished=finished,
+                             trigger=trigger, result=result)
+        except Exception:  # noqa: BLE001
+            log.exception("cycle_log.record failed (rebalance no-op)")
+        return result
+
+    max_frac = sd.max_position_frac if sd.max_position_frac is not None else CFG.max_position_frac
+
+    # Resolve base qty (H-2 equity-aware sizing already accounts for
+    # existing position value).
+    resolved: list[Signal] = []
+    for sig in qualifying:
+        if sig.extra.get("eur_target") == "max_position_frac":
+            qty = _size_buy(sig, ctx, max_frac)
+            if qty <= 0:
+                continue
+            new_extra = dict(sig.extra) if sig.extra else {}
+            new_extra.pop("eur_target", None)
+            new_extra["rebalance_top_up"] = True
+            resolved.append(Signal(symbol=sig.symbol, action="buy", qty=qty,
+                                   confidence=sig.confidence, risk=sig.risk,
+                                   reason=f"[rebalance] {sig.reason}",
+                                   extra=new_extra))
+        else:
+            # Strategy emitted an explicit qty/fixed_eur sizing — honour
+            # it, but flag the top-up reason.
+            new_extra = dict(sig.extra) if sig.extra else {}
+            new_extra["rebalance_top_up"] = True
+            resolved.append(Signal(symbol=sig.symbol, action="buy",
+                                   qty=float(sig.qty), confidence=sig.confidence,
+                                   risk=sig.risk,
+                                   reason=f"[rebalance] {sig.reason}",
+                                   extra=new_extra))
+
+    # H-1 fill-to-target distribution still applies — useful when
+    # several positions qualify and we want to push toward the target.
+    if resolved and CFG.target_invested_frac > 0:
+        resolved = _fill_to_target(resolved, ctx, max_frac, CFG.target_invested_frac)
+
+    executed: list[dict] = []
+    skipped: list[dict] = []
+    for sig in resolved:
+        qty = float(sig.qty)
+        if qty <= 0:
+            skipped.append({"symbol": sig.symbol, "action": "buy",
+                            "why": "sizer returned 0"})
+            continue
+        price = ctx.latest_prices.get(sig.symbol)
+        if price is None or price <= 0:
+            skipped.append({"symbol": sig.symbol, "action": "buy",
+                            "why": "no live price"})
+            continue
+        result = ledger.execute_trade(
+            strategy=sd.name, symbol=sig.symbol,
+            asset_type=ctx.asset_types.get(sig.symbol, "stock"),
+            action="buy", qty=qty, price=price,
+            reason=sig.reason,
+            signal={"confidence": sig.confidence, "risk": sig.risk,
+                    "extra": sig.extra},
+            ts=ctx.now,
+        )
+        if result.accepted:
+            executed.append({
+                "trade_id": result.trade_id,
+                "symbol":   sig.symbol, "action": "buy",
+                "qty":      qty, "price": price,
+                "realised_pnl": result.realised_pnl,
+                "reason":   sig.reason,
+                "extra":    dict(sig.extra) if sig.extra else {},
+            })
+        else:
+            skipped.append({"symbol": sig.symbol, "action": "buy",
+                            "why": f"{result.reason_code}: {result.note}"})
+
+    final_prices = data.latest_prices()
+    kpi = ledger.kpi(sd.name, final_prices)
+    log.info("[%s] rebalance done: signals=%d executed=%d skipped=%d equity=%.2f cash_share=%.1f%%",
+             sd.name, len(signals), len(executed), len(skipped),
+             kpi["equity_eur"],
+             (kpi["cash_eur"] / kpi["equity_eur"] * 100) if kpi["equity_eur"] else 0)
+
+    result = {
+        "strategy": sd.name,
+        "ts":       ctx.now.isoformat(),
+        "signals":  len(signals),
+        "executed": executed,
+        "skipped":  skipped,
+        "kpi":      kpi,
+        "rebalance": True,
+    }
+    try:
+        cycle_log.record(strategy=sd.name, started=started,
+                         finished=dt.datetime.now(dt.timezone.utc),
+                         trigger=trigger, result=result)
+    except Exception:  # noqa: BLE001
+        log.exception("cycle_log.record failed (rebalance)")
+    return result
+
+
 def asset_type_map() -> dict[str, str]:
     """Build a {symbol: asset_type} lookup from the prices table."""
     with data.conn() as c, c.cursor() as cur:

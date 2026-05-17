@@ -148,6 +148,45 @@ async def _auto_archive_async() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Phase H-5 — Re-Balance-Cycle. Independent of the decide cron; tops up
+# existing positions with cash that's still idle between regular cycles.
+# Never opens new symbols. Heavy lifting lives in
+# orchestrator.run_strategy_rebalance_once().
+# --------------------------------------------------------------------------- #
+def _rebalance_blocking(only: str | None = None,
+                        trigger: str = "rebalance") -> dict:
+    if not _lock.acquire(blocking=False):
+        return {"accepted": False, "reason": "another cycle is already running"}
+    try:
+        targets = _enabled_strategies() if not only else [only]
+        targets = [t for t in targets if t in REGISTRY]
+        if not targets:
+            return {"accepted": False,
+                    "reason": f"no enabled strategies match {only!r}"}
+        atype_map = orchestrator.asset_type_map()
+        results: dict = {}
+        for name in targets:
+            try:
+                results[name] = orchestrator.run_strategy_rebalance_once(
+                    REGISTRY[name], atype_map, trigger=trigger,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.exception("rebalance %s crashed", name)
+                results[name] = {"strategy": name, "error": str(exc)}
+        return {"accepted": True, "ran": list(results.keys()),
+                "results": results}
+    except Exception as exc:  # noqa: BLE001
+        log.exception("rebalance cycle failed")
+        return {"accepted": False, "error": str(exc)}
+    finally:
+        _lock.release()
+
+
+async def _rebalance_async() -> None:
+    await asyncio.to_thread(_rebalance_blocking)
+
+
+# --------------------------------------------------------------------------- #
 # Phase P-5 — daily workflow-smoke: writes one synthetic enrichment_run per
 # tracked workflow so /enrichment/health reliably surfaces "stale" verdicts
 # even when a workflow stopped reporting entirely (cron disabled, n8n
@@ -317,6 +356,22 @@ async def lifespan(app: FastAPI):
         except Exception as exc:  # noqa: BLE001
             log.error("Invalid workflow_smoke cron %r: %s — disabling job",
                       CFG.workflow_smoke_cron, exc)
+    # Phase H-5: rebalance cron — independent of decide_cycle, runs more
+    # often (default */30) to redeploy idle cash into existing positions.
+    # Empty cron disables the job (operators can still POST manually).
+    if CFG.rebalance_cron:
+        try:
+            rebalance_trigger = CronTrigger.from_crontab(
+                CFG.rebalance_cron, timezone=CFG.tz)
+            scheduler.add_job(_rebalance_async, rebalance_trigger,
+                              id="rebalance_cycle", coalesce=True,
+                              max_instances=1, misfire_grace_time=600)
+            log.info("Phase H-5: rebalance scheduled (cron=%r, min_conf=%.2f, trigger_frac=%.2f)",
+                     CFG.rebalance_cron, CFG.rebalance_min_confidence,
+                     CFG.rebalance_cash_trigger_frac)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Invalid rebalance cron %r: %s — disabling job",
+                      CFG.rebalance_cron, exc)
     scheduler.start()
     job = scheduler.get_job("decide_cycle")
     if job and job.next_run_time:
@@ -673,6 +728,35 @@ def trigger_workflow_smoke(authorization: str | None = Header(default=None)) -> 
     `workflow_smoke_stale_hours` and which haven't."""
     _check_token(authorization)
     return _workflow_smoke_blocking()
+
+
+class RebalanceReq(BaseModel):
+    strategy: str | None = Field(
+        None, description="Strategy name, or null/'all' for every enabled strategy")
+
+
+@app.post("/strategies/rebalance", status_code=status.HTTP_202_ACCEPTED)
+def rebalance(req: RebalanceReq, background: BackgroundTasks,
+              authorization: str | None = Header(default=None)) -> dict:
+    """Phase H-5: trigger an out-of-band rebalance cycle. Mirrors the
+    `*/30` APScheduler job — useful for `dream doctor`, manual tuning,
+    and post-deploy smoke. Always processes asynchronously like
+    /decide so the HTTP roundtrip stays snappy.
+
+    Only tops up EXISTING positions whose decide() output emits a buy
+    with confidence >= FINANCE_GURU_REBALANCE_MIN_CONFIDENCE. Skips
+    entirely when cash_share <= 1 - target * trigger_frac (defaults
+    work out to ~23 % idle-cash floor)."""
+    _check_token(authorization)
+    target = (req.strategy or "").strip().lower() or None
+    if target in (None, "all", ""):
+        target = None
+    elif target not in REGISTRY:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            f"unknown strategy {target!r}")
+    background.add_task(_rebalance_blocking, target)
+    return {"accepted": True, "queued_for": target or "all-enabled",
+            "queued_at": dt.datetime.now(dt.timezone.utc).isoformat()}
 
 
 class AnalysisSearchReq(BaseModel):
