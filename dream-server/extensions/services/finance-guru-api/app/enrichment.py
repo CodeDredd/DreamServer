@@ -374,14 +374,19 @@ def run_health(window_hours: int = 24) -> list[dict]:
         # Phase P-5.1: an explicit `status="error"` ALWAYS goes to the
         # error bucket, even if the note happens to look "informative"
         # (e.g. workflow_smoke's `stale_workflows: ...` heartbeat IS
-        # an error by design — the operator must act on it). Only the
-        # non-error statuses get the skip-vs-error reclassification.
+        # an error by design — the operator must act on it).
+        # Phase P-5.2: an explicit `status="ok"` ALWAYS goes to the
+        # ok bucket, even if its note matches an informative pattern
+        # (e.g. workflow_smoke's `all_fresh: ...` heartbeat IS a real
+        # success, not a no-progress skip). Only non-ok / non-error
+        # statuses get the skip-vs-error reclassification.
         is_error_status = status in ("error", "failed", "failure")
-        skip_hit = ((not is_error_status)
+        is_ok_status    = status == "ok"
+        skip_hit = ((not is_error_status) and (not is_ok_status)
                     and (status in ("skip", "skipped", "noop", "empty")
                          or is_informative_note
                          or note.startswith("skip")))
-        if status == "ok" and not skip_hit:
+        if is_ok_status:
             bucket["ok"] += 1
             if not bucket["last_ok_ts"]:
                 bucket["last_ok_ts"] = r["ts"]
