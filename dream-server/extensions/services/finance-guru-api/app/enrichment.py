@@ -336,7 +336,7 @@ def run_health(window_hours: int = 24) -> list[dict]:
             bucket["last_ts"] = r["ts"]
         status = (r["status"] or "").lower()
         note = (r["note"] or "").lower()
-        skip_hit = (status in ("skip", "noop", "empty")
+        skip_hit = (status in ("skip", "skipped", "noop", "empty")
                     or "no stale candidate" in note
                     or "empty universe" in note
                     or "no candidate" in note
