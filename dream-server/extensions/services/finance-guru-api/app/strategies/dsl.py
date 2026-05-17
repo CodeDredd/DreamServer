@@ -51,8 +51,18 @@ Spec shape (v1)
 ```
 
 Sells are always full closes — the orchestrator already handles that
-elsewhere. Buy sizing supports `max_position_frac` (existing path,
-orchestrator rewrites qty from `extra.eur_target`) and `fixed_eur`.
+elsewhere. Buy sizing supports three modes (Phase H-3):
+
+  * `max_position_frac` — orchestrator caps qty at `max_position_frac
+    * equity` (H-2). This is the default if no `sizing` block is given.
+  * `kelly_lite` — orchestrator caps qty at
+    `clip(confidence − risk, 0, 1) * max_position_frac * equity`.
+    LLM-generated DSL strategies opt in by setting `"sizing":
+    {"mode": "kelly_lite"}`. Builtin Python strategies are NOT
+    touched; they continue to use max_position_frac via
+    `extra.eur_target`.
+  * `fixed_eur` — `qty = sizing.eur / price`, strategy-author owns
+    the sizing entirely.
 """
 from __future__ import annotations
 
@@ -67,7 +77,7 @@ log = logging.getLogger("finance-guru.dsl")
 DSL_VERSION = 1
 ALLOWED_OPS = {"==", "!=", ">", ">=", "<", "<="}
 ALLOWED_ACTIONS = {"buy", "sell"}
-ALLOWED_SIZING = {"max_position_frac", "fixed_eur"}
+ALLOWED_SIZING = {"max_position_frac", "fixed_eur", "kelly_lite"}
 ALLOWED_SIGNALS: dict[str, str] = {
     # name → short doc (also surfaced to the LLM in the genesis prompt)
     "news.sentiment_max":   "max sentiment among news rows for symbol in the last lookback_h hours (-1..+1)",
@@ -426,6 +436,15 @@ def compile_spec(spec: dict, *, name: str, description: str = "") -> StrategyDef
                     qty = 1.0
                     if mode == "max_position_frac":
                         extra["eur_target"] = "max_position_frac"
+                    elif mode == "kelly_lite":
+                        # Phase H-3: opt-in Kelly-Lite sizing for LLM-
+                        # generated DSL strategies. Orchestrator computes
+                        # the effective cap-fraction as
+                        # `clip(confidence - risk, 0, 1) * max_position_frac`
+                        # at execute-time so the strategy author doesn't
+                        # need to know the equity. Builtin strategies are
+                        # unaffected — they don't use the DSL emit-path.
+                        extra["eur_target"] = "kelly_lite"
                     elif mode == "fixed_eur":
                         price = ctx.latest_prices.get(sym, 0.0)
                         if price <= 0:

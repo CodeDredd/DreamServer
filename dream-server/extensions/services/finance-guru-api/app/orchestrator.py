@@ -160,6 +160,16 @@ def _size_buy(signal: Signal, ctx: DecisionContext, max_frac: float) -> float:
     subtracted so we never exceed the cap when topping up. Cash is
     still a hard constraint applied at the end.
 
+    Phase H-3: `signal.extra["eur_target"]` selects the effective
+    cap-fraction:
+      * `"max_position_frac"` (default) → use `max_frac` directly.
+      * `"kelly_lite"` → use
+        `clip(confidence - risk, 0, 1) * max_frac`. The clip floors
+        the fraction at 0 (we won't BUY a sig where risk > confidence)
+        and caps at 1 (so kelly_lite never exceeds the
+        max_position_frac discipline). Builtin Python strategies
+        are unaffected — they always emit `eur_target="max_position_frac"`.
+
     Returns 0.0 if we can't afford even 1 cent's worth."""
     price = ctx.latest_prices.get(signal.symbol, 0.0)
     if price <= 0:
@@ -167,7 +177,17 @@ def _size_buy(signal: Signal, ctx: DecisionContext, max_frac: float) -> float:
     equity = ctx.equity_eur if ctx.equity_eur > 0 else ctx.cash_eur
     if equity <= 0:
         return 0.0
-    cap_eur = equity * max_frac
+    mode = (signal.extra or {}).get("eur_target", "max_position_frac")
+    if mode == "kelly_lite":
+        conf = float(signal.confidence or 0.0)
+        risk = float(signal.risk or 0.0)
+        kelly = max(0.0, min(1.0, conf - risk))
+        if kelly <= 0:
+            return 0.0
+        effective_frac = kelly * max_frac
+    else:
+        effective_frac = max_frac
+    cap_eur = equity * effective_frac
     existing_val = 0.0
     pos = ctx.positions.get(signal.symbol)
     if pos:
@@ -322,8 +342,11 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
     # FINANCE_GURU_TARGET_INVESTED_FRAC cash-utilization target is met.
     resolved: list[Signal] = []
     for sig in signals_post_gate:
+        # Phase H-3: dispatch both built-in `max_position_frac` and the
+        # opt-in `kelly_lite` mode through _size_buy (which reads the
+        # mode off sig.extra and computes the effective cap).
         if (sig.action == "buy"
-                and sig.extra.get("eur_target") == "max_position_frac"):
+                and sig.extra.get("eur_target") in ("max_position_frac", "kelly_lite")):
             qty = _size_buy(sig, ctx, max_frac)
             if qty <= 0:
                 # Pass through as-is; the execute loop below logs the
@@ -515,10 +538,11 @@ def run_strategy_rebalance_once(sd: StrategyDef,
     max_frac = sd.max_position_frac if sd.max_position_frac is not None else CFG.max_position_frac
 
     # Resolve base qty (H-2 equity-aware sizing already accounts for
-    # existing position value).
+    # existing position value). Phase H-3: both max_position_frac and
+    # kelly_lite dispatch through _size_buy.
     resolved: list[Signal] = []
     for sig in qualifying:
-        if sig.extra.get("eur_target") == "max_position_frac":
+        if sig.extra.get("eur_target") in ("max_position_frac", "kelly_lite"):
             qty = _size_buy(sig, ctx, max_frac)
             if qty <= 0:
                 continue

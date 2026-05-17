@@ -180,12 +180,24 @@ def run_backtest(sd: StrategyDef, *, start: dt.datetime, end: dt.datetime,
             if price is None:
                 continue
             qty = float(sig.qty)
-            if sig.action == "buy" and sig.extra.get("eur_target") == "max_position_frac":
-                existing = bt.positions.get(sig.symbol, {}).get("qty", 0.0)
-                qty = _size_buy_eur(bt.cash, ctx.equity_eur, price, max_frac,
-                                    existing_qty=float(existing or 0.0))
-                if qty <= 0:
-                    continue
+            if sig.action == "buy":
+                mode = sig.extra.get("eur_target")
+                if mode in ("max_position_frac", "kelly_lite"):
+                    # Phase H-3 backtest parity: kelly_lite scales the
+                    # effective cap-fraction by clip(conf-risk, 0, 1).
+                    effective_frac = max_frac
+                    if mode == "kelly_lite":
+                        conf = float(sig.confidence or 0.0)
+                        risk = float(sig.risk or 0.0)
+                        kelly = max(0.0, min(1.0, conf - risk))
+                        if kelly <= 0:
+                            continue
+                        effective_frac = kelly * max_frac
+                    existing = bt.positions.get(sig.symbol, {}).get("qty", 0.0)
+                    qty = _size_buy_eur(bt.cash, ctx.equity_eur, price, effective_frac,
+                                        existing_qty=float(existing or 0.0))
+                    if qty <= 0:
+                        continue
             ok = bt.execute(ts=ctx.now, symbol=sig.symbol,
                             asset_type=asset_map.get(sig.symbol, "stock"),
                             action=sig.action, qty=qty, price=price,
