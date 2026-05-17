@@ -2044,3 +2044,69 @@ Post-Deploy zweimal `POST /enrichment/smoke` getriggert:
 `workflow_smoke: runs=3, ok=2, skip=0, error=1`. Der eine
 verbleibende error ist der historische `stale_workflows`-Eintrag
 von vor P-7, der binnen ~21h aus dem 24h-Fenster fällt.
+## ✅ Phase H-1 + H-2 — Equity-Sizing & Cash-Utilization-Target (2026-05-17)
+### Problem
+Cash-anchored Sizing (`max_position_frac * ctx.cash_eur`) hat den
+Portfolio-Buildup ausgehungert: nach 2-3 Buys à 10 % schrumpft Cash
+auf ~70 %, der nächste Buy sized auf 7 % vom ursprünglichen Equity,
+dann 5 %, dann 3 %. Effektive Investitionsquote pendelte zwischen
+**15-40 %**, das +10 % WoW-Gate war mathematisch unerreichbar.
+### Lieferung
+**H-2 — Equity-basierter per-Position-Cap**
+* `DecisionContext` neues Feld `equity_eur: float` (Default 0.0).
+* `orchestrator._build_context()` rechnet `equity = cash +
+  Σ qty * mark_price` einmal pro Cycle und populiert beide.
+* `_size_buy()` nutzt jetzt `equity * max_frac` als Cap, zieht
+  bestehende Position-Value beim Top-Up ab, und cappt hart auf
+  verfügbares Cash.
+* `backtest.run_backtest()` setzt `ctx.equity_eur = bt.equity(latest)`
+  und nutzt die neue `_size_buy_eur(cash, equity, price, max_frac,
+  existing_qty)` Signatur — Parität live ↔ sim.
+**H-1 — `_fill_to_target` Water-Filling-Algorithmus**
+* Neuer Config `FINANCE_GURU_TARGET_INVESTED_FRAC=0.85` (Default;
+  0.0 = aus).
+* `orchestrator.run_strategy_once()` resolved zuerst alle
+  Buy-Signals zu Base-qty via `_size_buy()`, dann läuft
+  `_fill_to_target()`:
+  1. `gap_eur = equity * target − invested`
+  2. Headroom-cap pro Symbol = `max_frac*equity − existing_value`
+  3. Verteile `min(gap, cash_after_base, sum(headrooms))`
+     proportional zu `signal.confidence`, iterativ
+     (Water-Filling, max 6 Runden) — sobald ein Symbol seinen
+     Cap saturiert, wird sein Restanteil neu verteilt.
+* Jedes upscaled Signal trägt `extra["fill_to_target_eur"]` als
+  Evidenz im Cycle-Log.
+### Verifikation
+* **Unit-Test** (`/tmp/h12_test.py`, gegen Live-Container ausgeführt):
+  Fresh 10 000 EUR Portfolio mit 3 Buys @ conf 0.9/0.7/0.5
+  → Base-qty 1000/1000/1000 EUR (vorher: 1000/700/500),
+  Upscaled-Total = 3000 EUR (limitiert durch per-Position-Cap; das
+  motiviert H-4 mit `MAX_FRESH_BUYS=8`, dann 8000 EUR ≈ 80 %).
+* **Edge-Case 1** (Position über Cap): A mit 800 EUR existing bei
+  Cap 580 → `_size_buy` returnt 0 (refuse), B/C übernehmen Headroom.
+* **Edge-Case 2** (Target=0): `_fill_to_target` ist No-Op (Legacy-
+  Modus).
+* **Live-Cycle-Log** zeigt das neue Format:
+  `[momentum_breakout] cycle: universe=102 cash=899.02 equity=998.88
+   positions=1` — equity-Wert ist nun first-class neben cash.
+### Erwarteter Impact
+Sobald Buy-Signals durchkommen (Montag EU-Open, Causal-Extraction,
+Price-Move-Explainer mit Wochentags-Material), sollte
+`invested/equity` schrittweise von aktuell median ~15 % auf bis zu
+30 % (3 Buys × 10 %) klettern. Voller Hebel kommt mit **H-4**
+(MAX_FRESH_BUYS=8 + Sector-Cap), das die Erreichbarkeit des 85 %
+Target erst ermöglicht.
+### DoD H-1/H-2 (Status)
+* ✅ `ctx.equity_eur` populiert in live + backtest
+* ✅ `_size_buy` nutzt equity statt cash, respektiert existing
+  position
+* ✅ `_fill_to_target` skaliert proportional zu confidence,
+  per-Position-Cap eingehalten, Cash strikt geehrt
+* ⏳ `invested/equity ≥ 0.7` median nach 24 h — abhängig von H-4
+  (MAX_FRESH_BUYS), separater DoD-Check
+* ⏳ `/strategies/portfolio` Endpoint — kommt mit H-5
+### Nächster Slot
+**H-4** (`MAX_FRESH_BUYS=8` mit Sektor-Cap) hat den größten
+Hebel-pro-Aufwand-Verhältnis: lässt H-1's bereits geliefertes
+Water-Filling sein volles Potential ausspielen. **H-5** (Rebalance-
+Cron) kann parallel, weil er einen anderen Code-Pfad nutzt.
