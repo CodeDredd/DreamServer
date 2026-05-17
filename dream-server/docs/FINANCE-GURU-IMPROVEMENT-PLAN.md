@@ -2294,3 +2294,80 @@ for strategy in enabled_strategies:
 generierte Strategien, builtin bleiben auf max_position_frac.
 Alternative: direkt **Phase I (Sell-Verifier & Loss-Discipline)**
 starten, weil das eine andere Achse adressiert (Whipsaw-Schutz).
+## ✅ Phase H-3 — Kelly-Lite Opt-in Sizing (2026-05-17)
+### Lieferung
+Opt-in `kelly_lite` Sizing-Modus für DSL-Strategien.
+Builtin-Python-Strategien (news_sentiment, social_buzz,
+momentum_breakout) bleiben unverändert auf `max_position_frac` —
+der Hot-Path ist unverändert.
+**Formel**
+```
+effective_frac = clip(confidence − risk, 0, 1) × max_position_frac
+cap_eur        = effective_frac × equity
+qty            = max(0, cap_eur − existing_position_value) / price
+```
+* `clip` Floor 0: kein Buy wenn risk > confidence (Signal wird
+  vom Sizer verworfen, landet im skipped[]).
+* `clip` Cap 1: kelly_lite kann max_position_frac NIE überschreiten
+  — die per-Strategie-Disziplin bleibt unantastbar.
+* `existing_position_value` Subtraktion: gleicher Top-Up-Pfad
+  wie `max_position_frac` (Phase H-2).
+**Files**
+* `strategies/dsl.py`:
+  - `ALLOWED_SIZING += {"kelly_lite"}`
+  - Emit-Block setzt `extra["eur_target"] = "kelly_lite"` wenn
+    `rule.sizing.mode == "kelly_lite"`.
+  - Header-Docstring listet jetzt alle 3 Modi
+    (`max_position_frac`, `kelly_lite`, `fixed_eur`).
+* `orchestrator.py::_size_buy`: branched auf
+  `signal.extra.get("eur_target")` und rechnet die Kelly-Fraktion
+  nur für kelly_lite — alter Code-Pfad für max_position_frac
+  identisch zu vorher. Gleicher Dispatch in `run_strategy_once`
+  + `run_strategy_rebalance_once`.
+* `backtest.py`: spiegelt Dispatch mit identischer Kelly-Formel
+  → live ↔ sim Parität auch für kelly_lite-Strategien erhalten.
+### Verifikation (5 Cases, Live-Container)
+```
+DSL accepts kelly_lite spec ✓
+kelly_lite conf=0.8 risk=0.3 max=0.10  → qty=5.0   (kelly=0.5, eff=0.05)
+kelly_lite conf=0.4 risk=0.6           → qty=0.0   (reject, risk > conf)
+kelly_lite conf=1.0 risk=0.0           → qty=10.0  (full max_frac)
+max_position_frac (regression)         → qty=10.0  (unchanged)
+kelly_lite top-up: existing 300/cap 515 → qty=2.15 (215 EUR top-up)
+```
+### Beispiel DSL-Spec (für genesis-LLM-Prompt aufnehmbar)
+```jsonc
+{
+  "version": 1,
+  "description": "Risk-adjusted entry on high-conviction news",
+  "rules": [{
+    "id": "entry",
+    "action": "buy",
+    "when": {"all": [
+      {"signal":"news.sentiment_max","lookback_h":4,"op":">=","value":0.6},
+      {"signal":"news.urgency_max","lookback_h":4,"op":">=","value":0.5}
+    ]},
+    "sizing": {"mode": "kelly_lite"},
+    "confidence": 0.8,
+    "risk": 0.3,
+    "reason": "High-conviction positive news for {symbol}"
+  }]
+}
+```
+### DoD H-3
+* ✅ DSL akzeptiert `kelly_lite` Mode
+* ✅ Sizing-Math korrekt (5/5 Test-Cases)
+* ✅ Regression auf `max_position_frac` (Hot-Path) bleibt
+  bit-identisch
+* ✅ Backtest-Parität für kelly_lite-Strategien
+### Phase H — Final Status
+* ✅ H-1 Cash-Utilization-Target (water-fill)
+* ✅ H-2 Equity-basierte Per-Position-Caps
+* ✅ H-3 Kelly-Lite Opt-in
+* ✅ H-4 MAX_FRESH_BUYS=8 + Diversifikations-Gate
+* ✅ H-5 Re-Balance-Cycle
+* ⏳ DoD H-Gesamt: `median invested/equity ≥ 0.7` über 24 h
+  Wochentag — wird beim Montag-EU-Open verifiziert.
+Phase H ist code-komplett. Nächste Achse: **Phase I (Sell-Verifier
+& Loss-Discipline, ~3d)** — schützt vor Whipsaw-Verlusten bei
+Single-Headline-Sells und 20-bar-Lows.
