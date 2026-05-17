@@ -1933,7 +1933,7 @@ ssh sky-net@192.168.178.110 'curl -s http://127.0.0.1:6333/collections/finance_r
 
 ---
 
-## Phase P-6 (geplant) — SearxNG als Pre-Step für unter-belegte LLM-Briefs
+## Phase P-6 — SearxNG als Pre-Step für unter-belegte LLM-Briefs
 
 ### Validierungsbefund 2026-05-17
 
@@ -2025,3 +2025,57 @@ trotzdem ≥ 1 verwertbaren `relation`- oder `lesson`-Run, dessen
 
 **Aufwand**: ~1 d (Endpoint + Cache + zwei WF-Hooks). Abhängig
 von nichts; kann unabhängig nach P-3.2 / P-5 laufen.
+
+### ✅ Phase P-6.1 + P-6.2 — Web-Fallback geliefert (2026-05-17)
+
+Realisiert *ohne n8n-Anpassung* — der Hook sitzt im bestehenden
+`/history/news` Endpoint, sodass WF13 + WF15 ihre Brief-Builder
+unverändert lassen können:
+
+* **`finance-news`** bekommt neues Modul `app/searxng.py` +
+  `POST /web-context { symbol, asset_type?, query_hint?,
+  max_results, time_range }`. Stable evidence-ID-Schema
+  `web:<sha1(url)[:10]>`. Degradiert silent auf `{results: []}`
+  wenn SearXNG aus oder unerreichbar (kein crash, kein 5xx).
+* **`finance-news` compose**: `FINANCE_NEWS_USE_SEARXNG` default
+  ab jetzt `true` (war `false`). SearXNG-Container ist ohnehin
+  Pflichtbestandteil des DreamServer-Stacks; opt-out via .env
+  möglich, opt-in war zu eng.
+* **`finance-guru-api` `/history/news`** erweitert um optional
+  `include_web=true` query-param (Default: env-knob
+  `FINANCE_GURU_HISTORY_NEWS_WEB_FALLBACK=true`). Trigger-Logik:
+  `rows.empty AND symbol AND use_web` → 1 HTTP-POST an
+  `finance-news/web-context` → Web-Treffer werden in `rows[]`
+  appended mit `id="web:…"`, `source="web:<host>"`, `channel="web"`.
+  Brief- und Verifier-Logik der Workflows funktionieren unverändert
+  weiter (`evidence_ids ⊆ brief_items.id` bleibt korrekt — web-IDs
+  sind genauso valide wie news-IDs). Response enthält neuen
+  `web_fallback: {enabled, attempted, added, error}` Block für
+  Observability.
+* **WF13 + WF15** brauchten **null Änderungen** — die Workflows
+  rufen `/history/news?symbol=…&hours=…` bereits genau so, wie
+  der neue Pfad erwartet.
+
+**Bewusst nicht umgesetzt** (kann später nachgezogen werden):
+
+* P-6.3 (kein-LLM-Aufruf wenn auch Web leer): Aktuell schickt der
+  Workflow auch einen leeren Brief an den LLM und kriegt das
+  korrekte `regime=unexplained` zurück. Token-spar-mäßig fair
+  (1 short call), und der LLM-Path stellt sicher, dass auch
+  `web_assist_failed` als `lesson` in den Genesis-Loop fließt.
+* Persistierung der Web-Snippets in der Qdrant
+  `finance_news`-Collection (`source=web:searxng`). Erst sinnvoll,
+  wenn wir empirisch sehen, dass dieselben URLs mehrfach pro Woche
+  von verschiedenen Movern als Evidence gewählt werden.
+* Cache: 1 Call pro Workflow-Tick × ≤ 5 Movern = ≤ 5 Calls/10 min
+  = ≤ 720/d. Bei aktueller Last (SearXNG ohnehin idle) nicht
+  nötig; wenn das Volume steigt, kommt ein simpler TTL-Dict-Cache
+  in `searxng.py` (key = `(symbol, time_range)`).
+
+**DoD P-6 erfüllt**: `GET /history/news?symbol=NVDA&hours=4` für
+ein Symbol ohne RSS-Treffer liefert ≥ 1 `web:…` Row, die
+Verifier-Chain im WF15 akzeptiert sie als gültige `evidence_id`,
+und der resultierende `relation`/`lesson` enthält stabile
+SearXNG-URLs als nachvollziehbare Quelle.
+
+

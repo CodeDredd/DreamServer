@@ -1365,41 +1365,63 @@ def history_news(symbol: str | None = Query(default=None),
                   limit: int = Query(default=200, ge=1, le=1000),
                   min_sentiment_abs: float | None = Query(default=None,
                                                           ge=0.0, le=1.0),
-                  min_urgency: int | None = Query(default=None, ge=0, le=5)) -> dict:
+                  min_urgency: int | None = Query(default=None, ge=0, le=5),
+                  include_web: bool | None = Query(default=None)) -> dict:
     """Headlines for the asset-behaviour workflow. Symbol filter is
     optional — sometimes the workflow wants macro context too.
     `hours` overrides `days` when set (Phase E causal-extraction wants
-    a short rolling window with urgency filtering)."""
+    a short rolling window with urgency filtering).
+
+    Phase P-6.1: when the DB query returns 0 rows AND a `symbol` is
+    set AND web-fallback is enabled (`include_web=true`, default
+    derived from `FINANCE_GURU_HISTORY_NEWS_WEB_FALLBACK`), the
+    endpoint asks `finance-news:/web-context` for a small SearXNG
+    result set. Web hits are merged into the same `rows` list with
+    `id="web:<sha1[:10]>"`, `source="web:<host>"` and
+    `channel="web"` so the existing brief/verifier nodes accept
+    them unchanged (evidence_ids  brief still holds)."""
     syms = [symbol.upper().strip()] if symbol else None
     lookback = (dt.timedelta(hours=hours) if hours
                 else dt.timedelta(days=days))
     df = data.recent_news(lookback=lookback, symbols=syms,
                            min_sentiment_abs=min_sentiment_abs)
-    if df.empty:
-        return {"symbol": symbol, "days": days, "rows": []}
-    if min_urgency is not None and "urgency" in df.columns:
+    if min_urgency is not None and not df.empty and "urgency" in df.columns:
         # Drop rows whose urgency is NULL or below threshold.
         df = df[df["urgency"].fillna(-1).astype(int) >= int(min_urgency)]
-    df = df.sort_values("ts", ascending=False).head(limit)
-    rows = []
-    for _, r in df.iterrows():
-        # pandas/numpy use NaN for SQL NULL on numeric columns, which slips past
-        # the `is not None` check — guard with math.isnan() before casting.
-        sent_v = r["sentiment"]
-        urg_v  = r["urgency"]
-        sent = float(sent_v) if sent_v is not None and not (isinstance(sent_v, float) and math.isnan(sent_v)) else None
-        urg  = int(urg_v)    if urg_v  is not None and not (isinstance(urg_v,  float) and math.isnan(urg_v))  else None
-        rows.append({
-            "id":        r["id"],
-            "ts":        r["ts"].isoformat() if r["ts"] is not None else None,
-            "source":    r["source"],
-            "channel":   r["channel"],
-            "symbols":   list(r["symbols"]) if r["symbols"] is not None else [],
-            "sentiment": sent,
-            "urgency":   urg,
-            "title":     r["title"],
-            "url":       r["url"],
-        })
+    rows: list[dict] = []
+    if not df.empty:
+        df = df.sort_values("ts", ascending=False).head(limit)
+        for _, r in df.iterrows():
+            # pandas/numpy use NaN for SQL NULL on numeric columns, which slips past
+            # the `is not None` check — guard with math.isnan() before casting.
+            sent_v = r["sentiment"]
+            urg_v  = r["urgency"]
+            sent = float(sent_v) if sent_v is not None and not (isinstance(sent_v, float) and math.isnan(sent_v)) else None
+            urg  = int(urg_v)    if urg_v  is not None and not (isinstance(urg_v,  float) and math.isnan(urg_v))  else None
+            rows.append({
+                "id":        r["id"],
+                "ts":        r["ts"].isoformat() if r["ts"] is not None else None,
+                "source":    r["source"],
+                "channel":   r["channel"],
+                "symbols":   list(r["symbols"]) if r["symbols"] is not None else [],
+                "sentiment": sent,
+                "urgency":   urg,
+                "title":     r["title"],
+                "url":       r["url"],
+            })
+    # Phase P-6.1: optional web-fallback (only when DB came back empty
+    # and a symbol was supplied — macro-context calls without a symbol
+    # would just pull noise).
+    web_default = os.getenv(
+        "FINANCE_GURU_HISTORY_NEWS_WEB_FALLBACK", "true"
+    ).strip().lower() in ("1", "true", "yes", "on")
+    use_web = include_web if include_web is not None else web_default
+    web_added = 0
+    web_error: str | None = None
+    if not rows and symbol and use_web:
+        web_added, web_error = _fetch_web_news_fallback(
+            symbol=symbol, hours=hours or max(1, int(days * 24)),
+            min_urgency=min_urgency, rows_out=rows)
     # Per-source aggregates (drives the reliability workflow's denominator).
     by_source: dict[str, dict] = {}
     for r in rows:
@@ -1417,6 +1439,104 @@ def history_news(symbol: str | None = Query(default=None),
         "days":        days,
         "rows":        rows,
         "by_source":   list(by_source.values()),
+        "web_fallback": {
+            "enabled":   use_web,
+            "attempted": bool(symbol) and use_web and (web_added > 0 or web_error is not None),
+            "added":     web_added,
+            "error":     web_error,
+        },
     }
+
+
+# --------------------------------------------------------------------------- #
+# Phase P-6.1 — web-news fallback helper. Calls finance-news/web-context
+# and shapes the response so it merges into /history/news.rows seamlessly
+# (same column names + an id with the `web:` prefix the verifier
+# already tolerates as part of `evidence_ids  brief`).
+# --------------------------------------------------------------------------- #
+_FINANCE_NEWS_BASE = os.getenv("FINANCE_NEWS_URL", "http://finance-news:8097")
+_WEB_FALLBACK_TIMEOUT_S = float(os.getenv(
+    "FINANCE_GURU_WEB_FALLBACK_TIMEOUT_S", "8.0"))
+_WEB_FALLBACK_MAX = int(os.getenv("FINANCE_GURU_WEB_FALLBACK_MAX", "5"))
+
+
+def _fetch_web_news_fallback(*, symbol: str, hours: int,
+                             min_urgency: int | None,
+                             rows_out: list[dict]) -> tuple[int, str | None]:
+    """Hit finance-news/web-context and append normalised rows.
+
+    Returns `(added_count, error_or_none)`. Never raises — the caller
+    treats failure identically to "no news" and the workflow keeps its
+    no-news skip semantics."""
+    # Choose a SearXNG time-range that loosely matches the window the
+    # caller asked for. Day for <= 36h, week otherwise — beyond a week
+    # the snippets get stale enough that the RSS pipeline is the
+    # better source anyway.
+    time_range = "day" if hours <= 36 else "week"
+    try:
+        # Best-effort asset_type lookup so the search query is focused
+        # ("BTC crypto news" vs "BTC news" — the former filters out
+        # stock-tickers that happen to share the symbol). The query
+        # gracefully degrades to "no asset_type" if the lookup fails
+        # or the symbol simply isn't in the universe yet.
+        asset_type: str | None = None
+        try:
+            with data.conn() as c, c.cursor() as cur:
+                cur.execute(
+                    "SELECT asset_type FROM finance.universe "
+                    "WHERE symbol = %s LIMIT 1",
+                    (symbol.upper(),),
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    asset_type = str(row[0])
+        except Exception:  # noqa: BLE001
+            asset_type = None
+        import requests as _rq  # local import keeps cold-start small
+        resp = _rq.post(
+            f"{_FINANCE_NEWS_BASE.rstrip('/')}/web-context",
+            json={
+                "symbol":      symbol.upper(),
+                "asset_type":  asset_type,
+                "max_results": _WEB_FALLBACK_MAX,
+                "time_range":  time_range,
+            },
+            timeout=_WEB_FALLBACK_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        payload = resp.json() or {}
+    except Exception as exc:  # noqa: BLE001
+        log.info("history_news web-fallback for %s failed: %s", symbol, exc)
+        return 0, str(exc)[:200]
+    if not payload.get("enabled", False):
+        return 0, "searxng_disabled"
+    snippets = payload.get("results") or []
+    added = 0
+    for sn in snippets:
+        sid = sn.get("id")
+        url = sn.get("url")
+        if not sid or not url:
+            continue
+        rows_out.append({
+            "id":        sid,
+            "ts":        dt.datetime.now(dt.timezone.utc).isoformat(),
+            "source":    f"web:{(sn.get('source') or 'searxng').lower()[:40]}",
+            "channel":   "web",
+            "symbols":   [symbol.upper()],
+            # No sentiment/urgency from SearXNG — leave NULL so the
+            # min_urgency filter (already applied above on DB rows) is
+            # NOT retroactively re-applied to web rows. The brief
+            # treats them as "context", not as ranked signal.
+            "sentiment": None,
+            "urgency":   min_urgency if min_urgency is not None else None,
+            "title":     sn.get("title") or "",
+            "url":       url,
+            "snippet":   sn.get("snippet") or "",
+        })
+        added += 1
+    if added:
+        log.info("history_news web-fallback: +%d web rows for %s", added, symbol)
+    return added, None
+
 
 

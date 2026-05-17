@@ -30,9 +30,13 @@ services:
       # Comma-separated RSS URLs. Per-feed failures are non-fatal.
       # See app/feeds.py for the curated default set.
       - FINANCE_NEWS_FEEDS=${FINANCE_NEWS_FEEDS:-}
-      # ── SearXNG fallback (optional, for ad-hoc symbol searches) ───────
+      # ── SearXNG fallback (Phase P-6.1: enabled by default — used by
+      # finance-guru-api /history/news web-fallback when the RAG/RSS
+      # query returns 0 rows for a symbol. Degrades silently to []
+      # if searxng is down, so safe to leave on globally). ──────────────
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
-      - FINANCE_NEWS_USE_SEARXNG=${FINANCE_NEWS_USE_SEARXNG:-false}
+      - FINANCE_NEWS_USE_SEARXNG=${FINANCE_NEWS_USE_SEARXNG:-true}
+      - FINANCE_NEWS_SEARXNG_TIMEOUT_S=${FINANCE_NEWS_SEARXNG_TIMEOUT_S:-6.0}
       # ── Sentiment classification via LiteLLM (qwen3-4b, optional) ─────
       # ON by default — only requires LiteLLM to be reachable.
       # Per AGENT-OPERATIONS.md §10 this is the right model for news

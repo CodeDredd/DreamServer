@@ -33,7 +33,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from . import db, feeds, qdrant_sink, sentiment
+from . import db, feeds, qdrant_sink, searxng, sentiment
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -279,4 +279,49 @@ def search(req: SearchRequest) -> dict:
     hits = qdrant_sink.search(QDRANT_CFG, req.q, limit=req.limit,
                               symbols=req.symbols)
     return {"q": req.q, "count": len(hits), "results": hits}
+
+
+# --------------------------------------------------------------------------- #
+# Phase P-6.1 — SearXNG fallback for empty/dnne RAG-Briefs.
+# Workflow nodes (causal_extraction, price_move_explainer) call this
+# ONLY when their primary RAG result is empty so the LLM brief has at
+# least one verifiable evidence row. The endpoint is intentionally
+# permissive (no token) — it never writes, only proxies a bounded
+# SearXNG query and returns ephemeral snippets with stable
+# `web:<sha1[:10]>` evidence ids. See app/searxng.py module docstring
+# for the design invariants.
+# --------------------------------------------------------------------------- #
+class WebContextRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=32)
+    asset_type: str | None = Field(default=None, max_length=16)
+    query_hint: str | None = Field(default=None, max_length=120)
+    max_results: int = Field(default=5, ge=1, le=10)
+    # SearXNG accepts: "" (any), "day", "week", "month", "year".
+    time_range: str = Field(default="day", max_length=10)
+
+
+@app.post("/web-context")
+def web_context(req: WebContextRequest) -> dict:
+    """Return up to N web snippets for `symbol` from SearXNG.
+
+    Designed to be called as a *conditional* pre-step from n8n
+    workflows when the primary brief is empty. Returns `{"results":
+    []}` if SearXNG is disabled (`FINANCE_NEWS_USE_SEARXNG=false`)
+    or unreachable — caller treats both identically as "no fallback
+    available" and proceeds with its normal no-news skip path.
+    """
+    cfg = searxng.SearxngConfig.from_env()
+    results = searxng.search_web(
+        symbol=req.symbol, asset_type=req.asset_type,
+        query_hint=req.query_hint, max_results=req.max_results,
+        time_range=req.time_range, cfg=cfg,
+    )
+    return {
+        "symbol":      req.symbol,
+        "asset_type":  req.asset_type,
+        "enabled":     cfg.enabled,
+        "count":       len(results),
+        "results":     results,
+    }
+
 
