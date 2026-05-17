@@ -437,7 +437,21 @@ class SourceReliabilityIn(BaseModel):
 
 
 class RunReportIn(BaseModel):
-    workflow: Literal["asset_behaviour", "source_reliability"]
+    # Whitelist of workflow names that may report into enrichment_runs.
+    # Keep in sync with the n8n workflow JSONs in config/n8n/. Adding a
+    # new workflow without listing it here causes silent 422 rejects
+    # which then hide the workflow from /enrichment/health — exactly
+    # the silent-skip pattern Phase P-2 fights. So: explicit allow-list,
+    # add a line per workflow.
+    workflow: Literal[
+        "asset_behaviour",        # 09-finance-asset-behaviour
+        "source_reliability",     # 10-finance-source-reliability
+        "strategy_audit",         # 11-finance-strategy-audit
+        "strategy_genesis",       # 12-finance-strategy-genesis
+        "causal_extraction",      # 13-finance-causal-extraction
+        "price_move_explainer",   # 15-finance-price-move-explainer (Phase P-4)
+        "vector_refresh",         # finance-vector-refresh
+    ]
     target: str | None = None
     status: Literal["ok", "error", "skipped"] = "ok"
     duration_ms: int = Field(0, ge=0)
