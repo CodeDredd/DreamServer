@@ -37,6 +37,13 @@ class GuruConfig:
     # ── Risk / sizing ──────────────────────────────────────────────────
     max_position_frac: float = field(default_factory=lambda: float(os.getenv("FINANCE_GURU_MAX_POSITION_FRAC", "0.10")))
     fee_bps: float           = field(default_factory=lambda: float(os.getenv("FINANCE_GURU_FEE_BPS", "10")))
+    # Phase H-1: Cash-Utilization-Target. The orchestrator scales up the
+    # buy-qty of an emitted cycle (proportional to confidence, capped at
+    # max_position_frac * equity per symbol) until `invested / equity`
+    # reaches this fraction. Default 0.85 = aim for 85 % of equity in
+    # the market. Set to 0.0 to disable (legacy cash-only sizing).
+    target_invested_frac: float = field(default_factory=lambda: float(
+        os.getenv("FINANCE_GURU_TARGET_INVESTED_FRAC", "0.85")))
 
     # ── API auth ───────────────────────────────────────────────────────
     api_token: str     = field(default_factory=lambda: os.getenv("FINANCE_GURU_TOKEN", "").strip())

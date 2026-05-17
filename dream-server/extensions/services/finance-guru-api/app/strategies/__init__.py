@@ -38,6 +38,15 @@ class DecisionContext:
     asset_types: dict[str, str]            # {sym: 'stock'|'crypto'}
     cash_eur: float                         # the strategy's free cash
     positions: dict[str, dict]             # {sym: {qty, avg_entry, asset_type, opened_at}}
+    # Phase H-2: equity_eur = cash + mark-to-market(positions). Sizing
+    # now uses equity (not cash) as the per-position-cap denominator so
+    # a max_position_frac of 0.10 means "10 % of total equity" instead
+    # of "10 % of currently-free cash" (which shrinks with every buy
+    # and quickly starves the portfolio of new positions). Defaults to
+    # 0.0 so callers that haven't been migrated yet (e.g. legacy unit
+    # tests) keep compiling — orchestrator + backtest always populate
+    # it correctly.
+    equity_eur: float = 0.0
 
     # Lazy lookups — strategies pull what they need.
     get_price_history: Callable[[list[str], dt.timedelta], pd.DataFrame] = field(default=None)  # type: ignore

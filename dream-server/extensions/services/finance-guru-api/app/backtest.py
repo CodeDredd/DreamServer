@@ -76,10 +76,23 @@ class BacktestLedger:
         return v
 
 
-def _size_buy_eur(cash: float, price: float, max_frac: float) -> float:
-    if cash <= 0 or price <= 0:
+def _size_buy_eur(cash: float, equity: float, price: float, max_frac: float,
+                  existing_qty: float = 0.0) -> float:
+    """Phase H-2 backtest parity: anchor sizing on equity (cash + holdings)
+    instead of cash alone. Existing position value is subtracted so we
+    don't double-up past the per-position cap. Cash is still a hard
+    constraint."""
+    if price <= 0:
         return 0.0
-    return round((cash * max_frac) / price, 6)
+    base = equity if equity > 0 else cash
+    if base <= 0:
+        return 0.0
+    cap_eur = base * max_frac
+    existing_val = existing_qty * price
+    target = min(max(0.0, cap_eur - existing_val), cash)
+    if target <= 0:
+        return 0.0
+    return round(target / price, 6)
 
 
 def run_backtest(sd: StrategyDef, *, start: dt.datetime, end: dt.datetime,
@@ -147,6 +160,8 @@ def run_backtest(sd: StrategyDef, *, start: dt.datetime, end: dt.datetime,
             asset_types=asset_map,
             cash_eur=bt.cash,
             positions={s: dict(p) for s, p in bt.positions.items()},
+            # Phase H-2: mark-to-market equity (parity with live orchestrator).
+            equity_eur=bt.equity(latest),
             get_price_history=_make_history_fn(full_prices, cursor_ts),
             get_news=_make_news_fn(full_news, cursor_ts),
         )
@@ -166,7 +181,9 @@ def run_backtest(sd: StrategyDef, *, start: dt.datetime, end: dt.datetime,
                 continue
             qty = float(sig.qty)
             if sig.action == "buy" and sig.extra.get("eur_target") == "max_position_frac":
-                qty = _size_buy_eur(bt.cash, price, max_frac)
+                existing = bt.positions.get(sig.symbol, {}).get("qty", 0.0)
+                qty = _size_buy_eur(bt.cash, ctx.equity_eur, price, max_frac,
+                                    existing_qty=float(existing or 0.0))
                 if qty <= 0:
                     continue
             ok = bt.execute(ts=ctx.now, symbol=sig.symbol,
