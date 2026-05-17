@@ -148,6 +148,68 @@ async def _auto_archive_async() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Phase P-5 — daily workflow-smoke: writes one synthetic enrichment_run per
+# tracked workflow so /enrichment/health reliably surfaces "stale" verdicts
+# even when a workflow stopped reporting entirely (cron disabled, n8n
+# crashed, route rename, …). Without this, a fully-silent workflow simply
+# disappears from /enrichment/health and the sidebar badge has no signal.
+# --------------------------------------------------------------------------- #
+_SMOKE_WORKFLOWS = (
+    "asset_behaviour",
+    "source_reliability",
+    "strategy_audit",
+    "strategy_genesis",
+    "causal_extraction",
+    "price_move_explainer",
+)
+
+
+def _workflow_smoke_blocking() -> dict:
+    stale_hours = max(1, int(CFG.workflow_smoke_stale_hours))
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=stale_hours)
+    stale: list[str] = []
+    fresh: list[str] = []
+    for wf in _SMOKE_WORKFLOWS:
+        try:
+            rows = enrichment.list_runs(workflow=wf, limit=1)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("workflow_smoke: list_runs(%s) failed: %s", wf, exc)
+            stale.append(f"{wf}=list_failed")
+            continue
+        if not rows:
+            stale.append(f"{wf}=never_reported")
+            continue
+        last_ts_raw = rows[0].get("ts")
+        try:
+            last_ts = dt.datetime.fromisoformat(str(last_ts_raw))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=dt.timezone.utc)
+        except Exception:  # noqa: BLE001
+            stale.append(f"{wf}=bad_ts")
+            continue
+        if last_ts < cutoff:
+            age_h = round((dt.datetime.now(dt.timezone.utc) - last_ts).total_seconds() / 3600, 1)
+            stale.append(f"{wf}=stale({age_h}h)")
+        else:
+            fresh.append(wf)
+    if stale:
+        note = f"stale_workflows: {', '.join(stale)}"
+        enrichment.record_run(workflow="workflow_smoke", target=None,
+                              status="error", duration_ms=0, note=note[:300])
+        log.warning("workflow_smoke: %s", note)
+    else:
+        note = f"all_fresh: {','.join(fresh)} (stale_threshold={stale_hours}h)"
+        enrichment.record_run(workflow="workflow_smoke", target=None,
+                              status="ok", duration_ms=0, note=note[:300])
+        log.info("workflow_smoke: %s", note)
+    return {"stale": stale, "fresh": fresh, "stale_hours": stale_hours}
+
+
+async def _workflow_smoke_async() -> None:
+    await asyncio.to_thread(_workflow_smoke_blocking)
+
+
+# --------------------------------------------------------------------------- #
 # Phase D — genesis backtest is dispatched via FastAPI BackgroundTasks so
 # the HTTP caller (n8n) gets an immediate 201. The blocking variant lives
 # here so the same function can also be called from /strategies/{name}/
@@ -241,6 +303,20 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001
         log.error("Invalid auto-archive cron %r: %s — disabling job",
                   CFG.auto_archive_cron, exc)
+    # Phase P-5: daily workflow-smoke (default 04:05, just before
+    # auto-archive). Empty cron disables it.
+    if CFG.workflow_smoke_cron:
+        try:
+            smoke_trigger = CronTrigger.from_crontab(
+                CFG.workflow_smoke_cron, timezone=CFG.tz)
+            scheduler.add_job(_workflow_smoke_async, smoke_trigger,
+                              id="workflow_smoke", coalesce=True,
+                              max_instances=1, misfire_grace_time=3600)
+            log.info("Phase P-5: workflow_smoke scheduled (cron=%r, stale=%dh)",
+                     CFG.workflow_smoke_cron, CFG.workflow_smoke_stale_hours)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Invalid workflow_smoke cron %r: %s — disabling job",
+                      CFG.workflow_smoke_cron, exc)
     scheduler.start()
     job = scheduler.get_job("decide_cycle")
     if job and job.next_run_time:
@@ -451,6 +527,7 @@ class RunReportIn(BaseModel):
         "causal_extraction",      # 13-finance-causal-extraction
         "price_move_explainer",   # 15-finance-price-move-explainer (Phase P-4)
         "vector_refresh",         # finance-vector-refresh
+        "workflow_smoke",         # Phase P-5: daily synthetic stale-detector
     ]
     target: str | None = None
     status: Literal["ok", "error", "skipped"] = "ok"
@@ -586,6 +663,16 @@ def enrichment_health(window_hours: int = Query(default=24, ge=1, le=24 * 14)) -
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "workflows":    enrichment.run_health(window_hours=window_hours),
     }
+
+
+@app.post("/enrichment/smoke", status_code=status.HTTP_201_CREATED)
+def trigger_workflow_smoke(authorization: str | None = Header(default=None)) -> dict:
+    """Phase P-5: on-demand smoke run for the operator (mirrors the
+    daily APScheduler cron). Writes one synthetic workflow_smoke row
+    summarising which tracked workflows have reported within
+    `workflow_smoke_stale_hours` and which haven't."""
+    _check_token(authorization)
+    return _workflow_smoke_blocking()
 
 
 class AnalysisSearchReq(BaseModel):

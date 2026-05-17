@@ -14,12 +14,16 @@ import { useSystemStore } from '~/stores/system'
 import { useSystemStatus } from '~/composables/useSystemStatus'
 import { useVersion } from '~/composables/useVersion'
 import { useDashboardRoutes } from '~/composables/useDashboardRoutes'
+import { useEnrichmentHealth } from '~/composables/useEnrichmentHealth'
 
 // Polling aktivieren (Polling-Lock im Composable verhindert Mehrfach-
 // Start). Rueckgabewerte hier nicht gebraucht — Komponenten greifen
 // ueber den Store zu.
 useSystemStatus()
 useVersion()
+// Phase P-5: Sidebar-Badge auf der Trading-Route braucht
+// /enrichment/health global verfuegbar. start() ist idempotent.
+useEnrichmentHealth().start()
 
 const open = ref(false)
 

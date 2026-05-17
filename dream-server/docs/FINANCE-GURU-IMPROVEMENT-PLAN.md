@@ -1793,8 +1793,50 @@ Yahoo-Finance/Polygon-Adapter prüfen, Wochenend-Backfill.
 
 * **P-3.2**: StockTwits-Fallback in `finance-social`, sobald Reddit
   weiter ohne Credentials bleibt.
-* **P-5**: Daily-Smoke + Sidebar-Badge auf
-  `/enrichment/health.verdict`.
+
+### ✅ Phase P-5 — Daily-Smoke + Sidebar-Badge (2026-05-17)
+
+* **Backend** (`finance-guru-api`):
+  * Neuer `enrichment_runs.workflow`-Slot `workflow_smoke` +
+    Config-Keys `FINANCE_GURU_WORKFLOW_SMOKE_CRON` (Default
+    `5 4 * * *`, ein Tick vor `auto_archive`) und
+    `FINANCE_GURU_WORKFLOW_SMOKE_STALE_HOURS` (Default 24).
+  * `_workflow_smoke_blocking()` prüft pro Workflow
+    (`asset_behaviour`, `source_reliability`, `strategy_audit`,
+    `strategy_genesis`, `causal_extraction`,
+    `price_move_explainer`), ob in den letzten N h ein Run
+    geschrieben wurde. Bei stalen Workflows landet ein
+    `status=error`-Run mit Note `stale_workflows: …` in
+    `enrichment_runs`; sonst ein `status=ok`-Heartbeat.
+  * APScheduler-Job `workflow_smoke` (Async-Wrapper analog
+    `auto_archive`).
+  * On-Demand Endpoint `POST /enrichment/smoke` (Token-geschützt)
+    für `dream doctor`-/manual-Tests.
+* **Dashboard-API**: Proxy
+  `GET /api/finance-guru/enrichment/health?window_hours=24`.
+* **dashboard-nuxt**:
+  * `FinanceEnrichmentHealth` + `FinanceWorkflowHealthRow` Types
+    in `types/api.ts`.
+  * Neues Composable `useEnrichmentHealth.ts` (60 s Polling,
+    module-cached, schweigender No-Op wenn finance-guru nicht
+    installiert). Liefert reaktives `badge`:
+    * `healthy` → success / „ok"
+    * `errors` / `silent-skip` → error / `<count>`
+    * `no-progress` → warning / `<count>`
+    * `unknown` (keine Daten) → kein Badge.
+  * Im Default-Layout via `useEnrichmentHealth().start()` global
+    aktiviert (Polling-Lock identisch zu `useSystemStatus`).
+  * `SidebarMenu.vue` rendert das Badge per `#item-trailing`-Slot
+    von `UTree` auf der `finance-guru.trading`-Leaf. Im
+    Collapsed-Modus erscheint es im flachen `UNavigationMenu`
+    als `badge`-Property — ein Klick führt direkt zur
+    Trading-Seite, wo `EnrichmentRunsTable` die Details zeigt.
+* **DoD P-5 erfüllt**: Wenn ein finance-Workflow > 24 h keinen
+  Report schreibt, erscheint binnen ≤ 1 min ein roter Badge an
+  der Trading-Route in der Sidebar; spätestens beim nächsten
+  04:05-Tick bestätigt ein synthetischer
+  `workflow_smoke status=error` den Befund in `enrichment_runs`
+  und damit auf der Trading-Tabelle.
 
 ### ✅ Phase P-1.x — finance-prices Stock-Pipeline repariert (2026-05-16)
 
@@ -1887,3 +1929,99 @@ ssh sky-net@192.168.178.110 'curl -s http://127.0.0.1:6333/collections/finance_r
   damit ein neuer 1h-Bucket nach dem alten verfallenen explizit als
   „neuer Move" durchgeht, ohne dass wir Themes löschen müssen.
 
+
+
+---
+
+## Phase P-6 (geplant) — SearxNG als Pre-Step für unter-belegte LLM-Briefs
+
+### Validierungsbefund 2026-05-17
+
+**Frage**: „Können / sollen die Finance-Workflow-LLM-Calls SearxNG
+nutzen, damit das Modell im Workflow nachschlagen kann statt zu
+halluzinieren?"
+
+**Befund**:
+
+1. **Tool-Use ist aktuell nirgends aktiviert.** `grep` über alle
+   Workflows (`09`, `10`, `12`, `13`, `15`) zeigt 0 Treffer für
+   `tool_choice` / `tools.[]`. Jeder Call ist ein plain
+   `POST /v1/chat/completions` mit `response_format: json_object`
+   und einem deterministisch zusammengebauten Brief.
+2. **Das ist Absicht und korrekt für unser Verifier-Modell.**
+   Sämtliche Workflows nutzen die Verifier-Kette
+   `evidence_ids ⊆ Brief-IDs`, `symbols ⊆ Universe`,
+   `confidence ≥ threshold`. Würde das LLM mit
+   `tools=[web_search]` mitten im Call neue URLs zitieren, fielen
+   die im Verifier durch — Token weg, Verifier-Run weg, im
+   schlimmsten Fall ein silent-skip ohne Note.
+3. **Open WebUI** nutzt SearxNG bereits (Base-Compose-Variablen
+   `ENABLE_WEB_SEARCH=true`, `WEB_SEARCH_ENGINE=searxng`,
+   `SEARXNG_QUERY_URL=http://searxng:8080/search?q=<query>&format=json`).
+   Operatoren haben Web-Suche im Chat — die Workflows verzichten
+   bewusst darauf.
+4. **Echtes Halluzinationsrisiko** entsteht nicht *durch fehlende
+   Web-Suche*, sondern durch **leere/dünne Briefs**: WF13
+   (`causal_extraction`) skipt regelmäßig mit `no_news in
+   window`; WF15 (`price_move_explainer`) trifft Mover ohne
+   News-Treffer. Wenn der Brief leer ist, schaltet der Workflow
+   zwar korrekt auf „unexplained" um, verliert aber an dem Tag
+   jeden Lerneffekt.
+
+### Empfehlung — SearxNG als deterministischer Pre-Step, nicht als LLM-Tool
+
+Architektur: SearxNG-Treffer werden **vor** dem LLM-Call als neue
+`evidence`-Einträge in den Brief injiziert (mit eigenen
+`evidence_ids` wie `web:<sha1(url)[:10]>`), damit der bestehende
+Verifier sie genauso prüfen kann wie RSS-/Tickdaten. Kein
+Streaming-Tool-Call, kein `tool_choice` — pure JSON-Anreicherung.
+
+P-6.1. **Neuer Microservice-Endpoint** in `finance-news` (oder
+  `finance-guru-api`):
+  `POST /enrichment/web-context { symbol, window_minutes,
+  query_hint? } → { results: [{id, url, source, title, snippet,
+  ts}] }`. Intern ruft er
+  `http://searxng:8080/search?q=<...>&format=json&time_range=day`
+  und persistiert die Treffer als `evidence`-Snapshots in Qdrant
+  (`finance_news`-Collection, `source=web:searxng`) — so wird
+  jeder Treffer Bestandteil des regulären RAG-Tops und der Brief
+  bekommt eine stabile `evidence_id`.
+
+P-6.2. **WF13 & WF15 Hook**:
+
+  * Nach dem RSS-/News-Fetch, wenn `len(news_window) <
+    MIN_BRIEF_EVIDENCE` (z. B. 3), automatisch
+    `/enrichment/web-context` mit den Mover-Tickern aufrufen und
+    Treffer in den Brief mergen.
+  * `note` der `enrichment_run` markiert sichtbar
+    `web_assist=true` + Trefferzahl, damit die
+    `EnrichmentRunsTable` zeigt, *wann* die Web-Anreicherung
+    getriggert hat.
+  * Budget: max 1 SearxNG-Call pro Workflow-Tick, Cache 5 min im
+    Service (verhindert N²-Calls bei 10 Movern).
+
+P-6.3. **Halluzinations-Hardening (orthogonal)**:
+
+  * In WF15 zusätzlich ein `web_assist_failed`-Branch: wenn auch
+    nach SearxNG der Brief unter Mindestbelegung bleibt, **gar
+    nicht erst** den LLM aufrufen, sondern direkt
+    `regime=unexplained, evidence_ids=[]` als deterministischen
+    Stub speichern. Spart Token und macht den „kein Material →
+    keine Story"-Fall explizit auditierbar (heute ist es eine
+    silent-skip-Note).
+  * Der Verifier-Pfad bleibt unverändert — Web-Treffer sind
+    technisch ganz normale `evidence_ids`.
+
+**Bewusst nicht empfohlen**: LLM-`tools=[web_search]` im
+Workflow. Begründung siehe Befund 2 — würde unser Verifier-Modell
+aushebeln, ohne im Gegenzug etwas zu liefern, was P-6.1/P-6.2
+deterministisch nicht auch leisten.
+
+**DoD P-6**: Wenn `causal_extraction` an einem ruhigen Wochenende
+0 RSS-Items für die Universe-Symbole sieht, schreibt der Workflow
+trotzdem ≥ 1 verwertbaren `relation`- oder `lesson`-Run, dessen
+`evidence_ids` alle auf reproduzierbare SearxNG-URLs zeigen — und
+`enrichment_runs.note` enthält `web_assist=true (n=…)`.
+
+**Aufwand**: ~1 d (Endpoint + Cache + zwei WF-Hooks). Abhängig
+von nichts; kann unabhängig nach P-3.2 / P-5 laufen.

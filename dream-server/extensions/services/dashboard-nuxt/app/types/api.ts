@@ -620,6 +620,31 @@ export interface FinanceEnrichmentRun {
   note?: string | null
 }
 
+// ---------- Phase P-5: /api/finance-guru/enrichment/health ---------------
+
+export type FinanceWorkflowVerdict =
+  'healthy' | 'silent-skip' | 'errors' | 'no-progress'
+
+export interface FinanceWorkflowHealthRow {
+  workflow: string
+  runs: number
+  ok: number
+  skip: number
+  error: number
+  last_ts: string | null
+  last_ok_ts: string | null
+  last_skip_note: string | null
+  avg_ms: number
+  skip_ratio: number
+  verdict: FinanceWorkflowVerdict
+}
+
+export interface FinanceEnrichmentHealth {
+  window_hours: number
+  generated_at: string
+  workflows: FinanceWorkflowHealthRow[]
+}
+
 // ---------- Phase C/D/E: Strategy lifecycle + RAG search -----------------
 
 export type FinanceLifecycleStatus = 'proposed' | 'live' | 'retired' | 'archived'

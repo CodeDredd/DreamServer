@@ -230,6 +230,18 @@ async def enrichment_runs(
     return await _guru_request("GET", "/enrichment/runs", params=params)
 
 
+@router.get("/api/finance-guru/enrichment/health")
+async def enrichment_health(
+    window_hours: int = Query(default=24, ge=1, le=24 * 14),
+    api_key: str = Depends(verify_api_key),
+):
+    """Phase P-5 proxy: per-workflow ok/skip/error/verdict snapshot. The
+    Nuxt sidebar polls this to render the trading-route badge."""
+    return await _guru_request(
+        "GET", "/enrichment/health", params={"window_hours": window_hours},
+    )
+
+
 @router.post("/api/finance-guru/enrichment/asset-analysis/search")
 async def search_analyses(
     body: dict = Body(...),

@@ -54,6 +54,15 @@ class GuruConfig:
     # Auto-archive housekeeping cron (daily at 04:10).
     auto_archive_cron: str = field(default_factory=lambda: os.getenv(
         "FINANCE_GURU_AUTO_ARCHIVE_CRON", "10 4 * * *").strip())
+    # Phase P-5: workflow-smoke cron (daily at 04:05, just before the
+    # auto-archive). Writes one synthetic row per finance workflow to
+    # enrichment_runs so /enrichment/health reliably shows "stale" if
+    # the real cron-driven workflow stopped reporting in the last 24 h.
+    # Disable by setting the cron to an empty string.
+    workflow_smoke_cron: str = field(default_factory=lambda: os.getenv(
+        "FINANCE_GURU_WORKFLOW_SMOKE_CRON", "5 4 * * *").strip())
+    workflow_smoke_stale_hours: int = field(default_factory=lambda: int(os.getenv(
+        "FINANCE_GURU_WORKFLOW_SMOKE_STALE_HOURS", "24")))
     # The lesson model is intentionally on the heavy alias — cost is
     # disciplined to <= 1 call per retired strategy per week (§10
     # AGENT-OPERATIONS).

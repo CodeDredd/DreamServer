@@ -15,6 +15,7 @@ import type { NavigationMenuItem } from '@nuxt/ui'
 import type { DashboardRoute } from '~/composables/useDashboardRoutes'
 import { useDashboardRoutes } from '~/composables/useDashboardRoutes'
 import { useExternalLinks } from '~/composables/useExternalLinks'
+import { useEnrichmentHealth } from '~/composables/useEnrichmentHealth'
 import { useRoute, useRouter } from 'vue-router'
 
 defineProps<{
@@ -23,10 +24,30 @@ defineProps<{
 
 const { visibleSidebar } = useDashboardRoutes()
 const { visibleLinks } = useExternalLinks()
+const { badge: enrichmentBadge } = useEnrichmentHealth()
 const route = useRoute()
 const router = useRouter()
 
-// UTree-Item-Shape: { label, icon, value, to?, children? }.
+// Phase P-5: Route-IDs, denen wir ein dynamisches Badge anhaengen
+// koennen. Aktuell nur die Trading-Leaf — sie ist der primaere
+// Einstieg in Finance-Guru und damit der natuerliche Ort fuer den
+// /enrichment/health-Verdict.
+type DynamicBadge = NonNullable<NavigationMenuItem['badge']>
+function badgeForRoute(id: string): DynamicBadge | undefined {
+  if (id === 'finance-guru.trading') {
+    const b = enrichmentBadge.value
+    if (!b) return undefined
+    return {
+      label:   b.label,
+      color:   b.color,
+      variant: 'subtle',
+      title:   b.title,
+    } as DynamicBadge
+  }
+  return undefined
+}
+
+// UTree-Item-Shape: { label, icon, value, to?, children?, badge? }.
 // `value` ist die Route-ID; sie ist auch der TreeRoot-Selection-Key.
 interface TreeItem {
   label: string
@@ -34,6 +55,7 @@ interface TreeItem {
   value: string
   to?: string
   children?: TreeItem[]
+  badge?: DynamicBadge
 }
 
 function toTreeItem(r: DashboardRoute): TreeItem {
@@ -43,6 +65,7 @@ function toTreeItem(r: DashboardRoute): TreeItem {
     value: r.id,
     to: r.to,
     children: r.children?.map(toTreeItem),
+    badge: badgeForRoute(r.id),
   }
 }
 
@@ -113,7 +136,9 @@ function flattenForCollapsed(items: TreeItem[]): NavigationMenuItem[] {
   function walk(list: TreeItem[]) {
     for (const it of list) {
       if (it.to) {
-        out.push({ label: it.label, icon: it.icon, to: it.to })
+        const entry: NavigationMenuItem = { label: it.label, icon: it.icon, to: it.to }
+        if (it.badge) entry.badge = it.badge
+        out.push(entry)
       }
       if (it.children) walk(it.children)
     }
@@ -147,7 +172,20 @@ const collapsedItems = computed<NavigationMenuItem[]>(() =>
     size="sm"
     color="primary"
     @select="onTreeSelect"
-  />
+  >
+    <!-- Phase P-5: Badge fuer Finance-Guru-Trading (enrichment health). -->
+    <template #item-trailing="{ item }">
+      <UBadge
+        v-if="(item as TreeItem).badge"
+        :color="(item as TreeItem).badge!.color as any"
+        :variant="((item as TreeItem).badge!.variant as any) ?? 'subtle'"
+        :title="(item as TreeItem).badge!.title as string | undefined"
+        size="xs"
+      >
+        {{ (item as TreeItem).badge!.label }}
+      </UBadge>
+    </template>
+  </UTree>
 
   <div v-if="externalItems.length" class="mt-4">
     <p
