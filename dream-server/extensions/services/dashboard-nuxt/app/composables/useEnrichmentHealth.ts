@@ -100,9 +100,24 @@ export function useEnrichmentHealth() {
     const rows = health.value.workflows ?? []
     if (!rows.length) return null
 
-    const w = worstVerdict.value
-    const unhealthy = unhealthyRows.value.length
-    if (w === 'healthy') {
+    // Phase P-5.1: count each verdict bucket separately so the badge
+    // can show the WORST severity (driving its colour) plus an honest
+    // breakdown in the tooltip. Showing "3" when only 1 is actually
+    // an error and 2 are just no-progress (e.g. weekend, no movers)
+    // was misleading operators into thinking the stack was on fire.
+    const buckets: Record<FinanceWorkflowVerdict, FinanceWorkflowHealthRow[]> = {
+      'healthy':     [],
+      'no-progress': [],
+      'silent-skip': [],
+      'errors':      [],
+    }
+    for (const r of rows) (buckets[r.verdict] ?? buckets['no-progress']).push(r)
+    const nErr    = buckets.errors.length
+    const nSilent = buckets['silent-skip'].length
+    const nNoProg = buckets['no-progress'].length
+    const unhealthy = nErr + nSilent + nNoProg
+
+    if (unhealthy === 0) {
       return {
         color: 'success',
         label: 'ok',
@@ -111,32 +126,57 @@ export function useEnrichmentHealth() {
         unhealthy: 0,
       }
     }
-    const worstNames = unhealthyRows.value.slice(0, 3)
-      .map(r => `${r.workflow}=${r.verdict}`).join(', ')
-    const more = unhealthy > 3 ? `, +${unhealthy - 3}` : ''
-    if (w === 'errors') {
+
+    // Helper: short "wf=verdict" comma list, capped at 3 entries.
+    const fmt = (list: FinanceWorkflowHealthRow[]) =>
+      list.slice(0, 3).map(r => `${r.workflow}=${r.verdict}`).join(', ')
+        + (list.length > 3 ? `, +${list.length - 3}` : '')
+
+    // Severity gate drives the colour:
+    //   errors      → red, label = nErr        (real failure to act on)
+    //   silent-skip → red, label = nSilent     (workflow hiding things)
+    //   no-progress → amber, label = nNoProg   (honest "nothing to do")
+    // The tooltip always lists every non-healthy row so the operator
+    // can decide whether the "no-progress" entries are expected
+    // (weekend/off-hours) or a sign of upstream silence.
+    if (nErr > 0) {
+      const parts: string[] = [`${nErr} error(s)`]
+      if (nSilent) parts.push(`${nSilent} silent-skip`)
+      if (nNoProg) parts.push(`${nNoProg} no-progress`)
+      const offenders = fmt([
+        ...buckets.errors,
+        ...buckets['silent-skip'],
+        ...buckets['no-progress'],
+      ])
       return {
-        color: 'error',
-        label: String(unhealthy),
-        title: `Errors in ${unhealthy} Workflow(s): ${worstNames}${more}`,
+        color:   'error',
+        label:   String(nErr),
+        title:   `${parts.join(' + ')}: ${offenders}`,
         verdict: 'errors',
         unhealthy,
       }
     }
-    if (w === 'silent-skip') {
+    if (nSilent > 0) {
+      const offenders = fmt([
+        ...buckets['silent-skip'],
+        ...buckets['no-progress'],
+      ])
+      const suffix = nNoProg ? ` + ${nNoProg} no-progress` : ''
       return {
-        color: 'error',
-        label: String(unhealthy),
-        title: `Silent skips in ${unhealthy} Workflow(s): ${worstNames}${more}`,
+        color:   'error',
+        label:   String(nSilent),
+        title:   `${nSilent} silent-skip${suffix}: ${offenders}`,
         verdict: 'silent-skip',
         unhealthy,
       }
     }
-    // no-progress (workflow ran but produced 0 ok rows in window)
+    // Only no-progress remains → amber, not red. Operator already
+    // knows the workflow is alive; the per-row last_skip_note
+    // explains why (e.g. "no news in window", "no movers > 3%/1h").
     return {
-      color: 'warning',
-      label: String(unhealthy),
-      title: `Kein Fortschritt in ${unhealthy} Workflow(s): ${worstNames}${more}`,
+      color:   'warning',
+      label:   String(nNoProg),
+      title:   `${nNoProg} Workflow(s) ohne Fortschritt: ${fmt(buckets['no-progress'])}`,
       verdict: 'no-progress',
       unhealthy,
     }
@@ -153,5 +193,4 @@ export function useEnrichmentHealth() {
     refresh,
   }
 }
-
 

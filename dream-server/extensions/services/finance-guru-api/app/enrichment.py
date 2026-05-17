@@ -330,16 +330,43 @@ def run_health(window_hours: int = 24) -> list[dict]:
             "avg_ms":     0.0,
             "_dur_sum":   0,
             "_dur_n":     0,
+            # Phase P-5.1: distinguish *informative* skips (workflow
+            # honestly reported "nothing to do, here's why") from
+            # *opaque* skips (status=skip with no note or a generic
+            # "skip"/"noop" string). Only opaque skips are the
+            # silent-skip anti-pattern P-2 was built to expose; an
+            # honest "no news in window" skip is healthy reporting.
+            "_skip_informative": 0,
+            "_skip_opaque":      0,
         })
         bucket["runs"] += 1
         if not bucket["last_ts"]:
             bucket["last_ts"] = r["ts"]
         status = (r["status"] or "").lower()
-        note = (r["note"] or "").lower()
+        note_raw = r["note"] or ""
+        note = note_raw.lower()
+        # Patterns the workflows use to say "I ran but found nothing
+        # actionable" — operator should see no-progress (warning),
+        # not silent-skip (error). Each pattern below is one we
+        # actively grep for in the n8n Code-nodes / API endpoints.
+        informative_patterns = (
+            "no stale candidate",
+            "empty universe",
+            "no candidate",
+            "no news",        # WF13 causal_extraction
+            "no movers",      # WF15 price_move_explainer
+            "no fresh movers",
+            "no headlines",
+            "no urgency",
+            "all_fresh",      # workflow_smoke ok-path
+            "stale_workflows",  # workflow_smoke error-path (explicit)
+            "no qualifying",
+            "no qualified",
+            "skipped_dedup",
+        )
+        is_informative_note = any(p in note for p in informative_patterns) or len(note_raw.strip()) >= 30
         skip_hit = (status in ("skip", "skipped", "noop", "empty")
-                    or "no stale candidate" in note
-                    or "empty universe" in note
-                    or "no candidate" in note
+                    or is_informative_note
                     or note.startswith("skip"))
         if status == "ok" and not skip_hit:
             bucket["ok"] += 1
@@ -347,8 +374,12 @@ def run_health(window_hours: int = 24) -> list[dict]:
                 bucket["last_ok_ts"] = r["ts"]
         elif skip_hit:
             bucket["skip"] += 1
+            if is_informative_note:
+                bucket["_skip_informative"] += 1
+            else:
+                bucket["_skip_opaque"] += 1
             if not bucket["last_skip_note"]:
-                bucket["last_skip_note"] = (r["note"] or status)[:160]
+                bucket["last_skip_note"] = (note_raw or status)[:160]
         else:
             bucket["error"] += 1
         if r["duration_ms"]:
@@ -359,12 +390,22 @@ def run_health(window_hours: int = 24) -> list[dict]:
             b["avg_ms"] = round(b["_dur_sum"] / b["_dur_n"], 1)
         b.pop("_dur_sum", None)
         b.pop("_dur_n", None)
+        skip_informative = b.pop("_skip_informative", 0)
+        skip_opaque      = b.pop("_skip_opaque", 0)
         b["skip_ratio"] = round(b["skip"] / b["runs"], 3) if b["runs"] else 0.0
         # Heuristic verdict — surfaces silent-skip anti-pattern in one
         # field the dashboard can colour.
+        # Phase P-5.1: silent-skip now requires OPAQUE skips dominating
+        # (>= 50% of all skips). A workflow that honestly skips with
+        # "no news in window (6h, urgency2)" 100% of the time is in
+        # no-progress (warning), not silent-skip (error) — the operator
+        # already knows *why*, and the LLM-explainer cost is correctly
+        # avoided. Silent-skip means "I have no idea why this workflow
+        # produced 0 ok rows" — opaque is the right gate.
+        opaque_ratio = (skip_opaque / b["skip"]) if b["skip"] else 0.0
         if b["error"] and b["error"] / max(b["runs"], 1) > 0.25:
             b["verdict"] = "errors"
-        elif b["skip_ratio"] >= 0.9 and b["runs"] >= 3:
+        elif b["skip_ratio"] >= 0.9 and b["runs"] >= 3 and opaque_ratio >= 0.5:
             b["verdict"] = "silent-skip"
         elif b["ok"] == 0:
             b["verdict"] = "no-progress"
