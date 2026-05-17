@@ -2185,3 +2185,112 @@ ledger.execute_trade per signal
 unabhängig vom kritischen Pfad und können parallel kommen.
 H-5 hat schnelleren Mehrwert (füllt ungenutzten Cash zwischen
 Cycles), H-3 ist Hygiene für LLM-generated Strategien.
+## ✅ Phase H-5 — Re-Balance-Cycle (2026-05-17)
+### Problem
+H-1's `_fill_to_target` arbeitet INNERHALB eines decide-Cycles. Cash,
+das von Verkäufen reinkommt oder durch Skips ungenutzt bleibt, liegt
+bis zum nächsten 30-min-Tick brach. Bei volatilen Marktphasen
+(häufige Sells) sinkt die effektive Investitionsquote zwischen den
+Cycles dramatisch.
+### Lieferung
+**Config (`config.py`)**
+* `FINANCE_GURU_REBALANCE_CRON='*/30 * * * *'` — separater Cron-Job
+  parallel zum decide_cycle (gleiches Intervall, aber phasenversetzt
+  reicht — beide haben den `_lock`).
+* `FINANCE_GURU_REBALANCE_MIN_CONFIDENCE=0.7` — Top-Ups nur für
+  Signale mit confidence >= 0.7. Verhindert "rein aus Langeweile
+  nachkaufen".
+* `FINANCE_GURU_REBALANCE_CASH_TRIGGER_FRAC=0.9` — defensiver
+  Guard: skip rebalance wenn `cash/equity ≤ 1 − target × trigger`.
+  Mit Defaults (target=0.85, trigger=0.9) heißt das: rebalance läuft
+  nur, wenn `cash_share > 23.5%`. Bei nahezu volle Allokation kein
+  Churn.
+**Orchestrator (`orchestrator.py::run_strategy_rebalance_once`)**
+* Teilt `_build_context`, `_size_buy`, `_fill_to_target` mit
+  `run_strategy_once` (DRY, gleicher Code-Pfad für Sizing).
+* Filter nach `sd.decide()`: nur `action="buy"` mit
+  `symbol in ctx.positions` UND `confidence >= min_conf`.
+* **Diversifikations-Gate wird BEWUSST nicht angewendet** —
+  H-5 öffnet keine neuen Symbole, also sind global/sector caps
+  irrelevant.
+* Top-Ups landen mit `reason="[rebalance] <original>"` und
+  `extra.rebalance_top_up=True` im cycle_log unter
+  `trigger='rebalance'` — auditierbar von der normalen Decide
+  unterscheidbar.
+**Main (`main.py`)**
+* `_rebalance_blocking` / `_rebalance_async` parallel zum
+  bestehenden `_decide_blocking` / `_async` Muster. Gleicher `_lock`
+  → kein gleichzeitiges decide+rebalance.
+* APScheduler-Job `rebalance_cycle` im Lifespan registriert.
+* `POST /strategies/rebalance` (Token-geschützt, 202-async via
+  BackgroundTask) für `dream doctor`, manuelle Tests, und das
+  spätere Phase-M Dashboard-UI.
+### Verifikation (Live)
+* Scheduler-Log: `Phase H-5: rebalance scheduled (cron='*/30 * * * *',
+  min_conf=0.70, trigger_frac=0.90)` direkt nach dem Lifespan-Start.
+* `POST /strategies/rebalance` → `202 Accepted` mit
+  `queued_for: all-enabled`.
+* Cycle-Log-Beispiel (Sonntag, kein Material):
+  ```
+  [news_sentiment] rebalance: cash=677.55 equity=993.89
+                              cash_share=68.2% (trigger>23.5%) positions=5
+  [news_sentiment] rebalance: no qualifying top-up signals
+                              (buys=0, held=5, min_conf=0.70)
+  ```
+  Guard hat sauber durchgewunken (68.2 % > 23.5 % Trigger),
+  decide() lieferte 0 buys, no-op wurde geloggt — kein Trade
+  ausgelöst, aber transparent dokumentiert.
+### Hotfix (gleicher Session)
+Erste H-5-Version hatte einen Namens-Konflikt:
+`result["skipped"]` als bool-Marker kollidierte mit
+`cycle_log.record()`s erwartetem `list[dict]` (mit `[:25]` Slice).
+Folge: `TypeError: 'bool' object is not subscriptable` bei JEDEM
+no-op-Rebalance. Fix: umbenannt auf `result["rebalance_skip"]`
+(bool) und explizites `result["skipped"]: []` für cycle_log
+beibehalten. 4 Zeilen Code, identisches Semantik.
+### Sequencing
+```
+*/30 cron OR POST /strategies/rebalance
+    ↓
+_rebalance_blocking (acquires _lock — mutex w/ decide_cycle)
+    ↓
+for strategy in enabled_strategies:
+  _build_context (cash, positions, equity)
+      ↓
+  guard: cash_share > 1 − target×trigger? else SKIP-NO-OP
+      ↓
+  sd.decide(ctx)
+      ↓
+  filter: action=buy AND symbol in positions AND conf >= min
+      ↓
+  _size_buy (equity-based, subtracts existing position)
+      ↓
+  _fill_to_target water-filling
+      ↓
+  ledger.execute_trade → cycle_log[trigger='rebalance']
+```
+### DoD H-5 (Status)
+* ✅ Separater Cron (`*/30`), Empty-String deaktiviert
+* ✅ Defensiver cash_share-Guard funktioniert
+  (gesehen: 68.2 % > 23.5 % → durchlassen)
+* ✅ Min-Confidence-Filter aktiv (0.7 Default)
+* ✅ `POST /strategies/rebalance` Endpoint (Token-geschützt, 202)
+* ✅ cycle_log unter `trigger='rebalance'` schreibt sauber
+  (nach Hotfix)
+* ⏳ Real-World-Effekt: schwerer messbar isoliert von H-1/H-4 —
+  Wochentage-Trend in `/cycles?trigger=rebalance` zeigt aber
+  Eingangsmaterial.
+### Phase H — Gesamt-Status nach diesem Sprint
+* ✅ H-1 Cash-Utilization-Target (orchestrator water-filling)
+* ✅ H-2 Equity-basierte Per-Position-Caps
+* ⏸ H-3 Kelly-Lite Opt-in (offen, ~0.5d)
+* ✅ H-4 MAX_FRESH_BUYS=8 + Diversifikations-Gate
+* ✅ H-5 Re-Balance-Cycle
+* ⏳ DoD H-Gesamt: `median invested/equity ≥ 0.7` nach 24 h
+  Wochentag (Montag EU-Open Live-Test).
+### Nächster Slot
+**H-3 (Kelly-Lite)** ist klein und schließt die H-Phase ab —
+0.5 d, opt-in `sizing: {mode: "kelly_lite"}` im DSL für LLM-
+generierte Strategien, builtin bleiben auf max_position_frac.
+Alternative: direkt **Phase I (Sell-Verifier & Loss-Discipline)**
+starten, weil das eine andere Achse adressiert (Whipsaw-Schutz).
