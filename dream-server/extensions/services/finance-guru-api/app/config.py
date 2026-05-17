@@ -44,6 +44,21 @@ class GuruConfig:
     # the market. Set to 0.0 to disable (legacy cash-only sizing).
     target_invested_frac: float = field(default_factory=lambda: float(
         os.getenv("FINANCE_GURU_TARGET_INVESTED_FRAC", "0.85")))
+    # Phase H-4: max NEW buys per strategy per cycle (pre-orchestrator).
+    # Was hardcoded at 3 in news_sentiment/social_buzz. Raising to 8 is
+    # the prerequisite for fill-to-target (H-1) to actually fill the
+    # portfolio: at max_position_frac=0.10 each, 8 buys * 10 % = 80 %
+    # invested, close to the 85 % target.
+    max_fresh_buys: int = field(default_factory=lambda: int(
+        os.getenv("FINANCE_GURU_MAX_FRESH_BUYS", "8")))
+    # Phase H-4: max NEW buys per sector per cycle (orchestrator-side
+    # diversification gate). Falls back to asset_type ('stock'/'crypto')
+    # until Phase K populates real ctx.asset_sectors. Default = same as
+    # max_fresh_buys so the gate is effectively off until you have real
+    # sector data — flip to 2 once Phase K wires sectors into the
+    # context.
+    max_buys_per_sector: int = field(default_factory=lambda: int(
+        os.getenv("FINANCE_GURU_MAX_BUYS_PER_SECTOR", "8")))
 
     # ── API auth ───────────────────────────────────────────────────────
     api_token: str     = field(default_factory=lambda: os.getenv("FINANCE_GURU_TOKEN", "").strip())

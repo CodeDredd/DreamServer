@@ -47,6 +47,15 @@ class DecisionContext:
     # tests) keep compiling — orchestrator + backtest always populate
     # it correctly.
     equity_eur: float = 0.0
+    # Phase H-4: per-symbol sector lookup, used by the orchestrator's
+    # diversification gate (max N buys per sector per cycle) and
+    # available to strategies that want sector context.
+    # Until Phase K wires real sector metadata, the orchestrator
+    # populates this as a copy of asset_types ("stock" / "crypto" as
+    # the two coarse buckets). Strategies that need finer granularity
+    # should fall back to ctx.asset_types[sym] when ctx.asset_sectors
+    # has no entry for the symbol.
+    asset_sectors: dict[str, str] = field(default_factory=dict)
 
     # Lazy lookups — strategies pull what they need.
     get_price_history: Callable[[list[str], dt.timedelta], pd.DataFrame] = field(default=None)  # type: ignore

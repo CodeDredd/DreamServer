@@ -43,6 +43,12 @@ def _build_context(strategy_name: str, asset_types: Iterable[str],
         cash_eur=cash,
         positions=positions,
         equity_eur=equity,
+        # Phase H-4: until Phase K wires real per-symbol sector
+        # metadata, fall back to asset_type ("stock" / "crypto") as
+        # the diversification bucket. The orchestrator gate already
+        # treats each symbol-without-a-known-sector as its own bucket
+        # so this is a defensive-but-permissive default.
+        asset_sectors={s: asset_type_map.get(s, "stock") for s in universe},
         get_price_history=data.price_history,
         get_news=data.recent_news,
         get_social=data.recent_social,
@@ -75,6 +81,72 @@ def _cached_source_weight(source: str) -> dict | None:
         if r["source"] == source:
             return r
     return None
+
+
+def _apply_diversification_gate(
+        buy_signals: list[Signal], ctx: DecisionContext,
+        max_fresh_buys: int, max_per_sector: int
+    ) -> tuple[list[Signal], list[dict]]:
+    """Phase H-4: cap total fresh buys per cycle and per sector.
+
+    * Strategies still emit their best candidates (each strategy has
+      its own internal cap, also raised to CFG.max_fresh_buys), but
+      the orchestrator enforces a global ceiling on TOTAL fresh buys
+      per cycle and on per-sector concentration.
+    * Existing open positions contribute to the sector count so we
+      don't keep stacking into the same sector across multiple
+      cycles.
+    * Ordering: highest-confidence buys win. Ties broken by symbol
+      lex order for determinism.
+    * Returns (accepted_buys, rejected_dicts) where each rejected
+      dict has the same shape the run_strategy_once skipped-list
+      uses ({symbol, action, why}).
+    """
+    if not buy_signals:
+        return buy_signals, []
+    max_fresh_buys  = max(1, int(max_fresh_buys))
+    max_per_sector  = max(1, int(max_per_sector))
+
+    # Seed sector counter from existing OPEN positions — that's what
+    # makes the cap actually limit concentration over time, not just
+    # per-cycle. Defensive fallback to asset_type when no sector data.
+    sector_count: dict[str, int] = {}
+    for sym, pos in (ctx.positions or {}).items():
+        if not pos or float(pos.get("qty") or 0.0) <= 0:
+            continue
+        sec = (ctx.asset_sectors.get(sym)
+               or ctx.asset_types.get(sym)
+               or pos.get("asset_type")
+               or "unknown")
+        sector_count[sec] = sector_count.get(sec, 0) + 1
+
+    ordered = sorted(buy_signals,
+                     key=lambda s: (-(s.confidence or 0.0), s.symbol))
+    accepted: list[Signal] = []
+    rejected: list[dict] = []
+    accepted_syms: set[str] = set()
+    for sig in ordered:
+        # Implicit per-symbol cap (1 buy per cycle) — strategies
+        # generally already do this, but be defensive.
+        if sig.symbol in accepted_syms:
+            rejected.append({"symbol": sig.symbol, "action": "buy",
+                             "why": "duplicate symbol in this cycle"})
+            continue
+        if len(accepted) >= max_fresh_buys:
+            rejected.append({"symbol": sig.symbol, "action": "buy",
+                             "why": f"max_fresh_buys={max_fresh_buys} reached"})
+            continue
+        sec = (ctx.asset_sectors.get(sig.symbol)
+               or ctx.asset_types.get(sig.symbol)
+               or "unknown")
+        if sector_count.get(sec, 0) >= max_per_sector:
+            rejected.append({"symbol": sig.symbol, "action": "buy",
+                             "why": f"sector cap {max_per_sector} reached for sector={sec!r}"})
+            continue
+        accepted.append(sig)
+        accepted_syms.add(sig.symbol)
+        sector_count[sec] = sector_count.get(sec, 0) + 1
+    return accepted, rejected
 
 
 def _size_buy(signal: Signal, ctx: DecisionContext, max_frac: float) -> float:
@@ -227,12 +299,29 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
 
     max_frac = sd.max_position_frac if sd.max_position_frac is not None else CFG.max_position_frac
 
+    # Phase H-4: diversification gate runs BEFORE sizing/fill-to-target
+    # so we don't waste H-1 headroom on buys we'd reject anyway. The
+    # gate enforces max_fresh_buys total + max_buys_per_sector.
+    # Non-buy signals pass through unchanged.
+    raw_buys = [s for s in signals if s.action == "buy"]
+    other    = [s for s in signals if s.action != "buy"]
+    gate_skipped: list[dict] = []
+    if raw_buys:
+        gated_buys, gate_skipped = _apply_diversification_gate(
+            raw_buys, ctx,
+            max_fresh_buys=CFG.max_fresh_buys,
+            max_per_sector=CFG.max_buys_per_sector,
+        )
+        signals_post_gate = other + gated_buys
+    else:
+        signals_post_gate = signals
+
     # Phase H-1+H-2: pre-resolve qty for every buy-with-sizer signal so
     # the fill-to-target pass below can reason about uniform per-symbol
     # EUR values, then upscale qty proportional to confidence until the
     # FINANCE_GURU_TARGET_INVESTED_FRAC cash-utilization target is met.
     resolved: list[Signal] = []
-    for sig in signals:
+    for sig in signals_post_gate:
         if (sig.action == "buy"
                 and sig.extra.get("eur_target") == "max_position_frac"):
             qty = _size_buy(sig, ctx, max_frac)
@@ -259,7 +348,7 @@ def run_strategy_once(sd: StrategyDef, asset_type_map: dict[str, str],
                     for s in resolved]
 
     executed: list[dict] = []
-    skipped: list[dict] = []
+    skipped: list[dict] = list(gate_skipped)  # Phase H-4 rejections show up as skips
     for sig in resolved:
         if sig.action == "hold":
             continue

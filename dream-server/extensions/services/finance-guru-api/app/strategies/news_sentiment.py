@@ -25,6 +25,7 @@ import logging
 import pandas as pd
 
 from .. import llm
+from ..config import CFG
 from . import DecisionContext, Signal, strategy
 
 log = logging.getLogger("finance-guru.strat.news_sentiment")
@@ -124,7 +125,7 @@ def decide(ctx: DecisionContext) -> list[Signal]:
         candidates.append((score, sym, best))
 
     candidates.sort(reverse=True, key=lambda t: t[0])
-    for score, sym, rows in candidates[:3]:
+    for score, sym, rows in candidates[:CFG.max_fresh_buys]:
         mark = ctx.latest_prices[sym]
         # qty sizing handled by the orchestrator (it knows max_position_frac).
         # Passing qty=0 would be ambiguous — pass a sentinel of 1.0 unit and

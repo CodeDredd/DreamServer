@@ -31,6 +31,7 @@ import logging
 import pandas as pd
 
 from .. import llm
+from ..config import CFG
 from . import DecisionContext, Signal, strategy
 
 log = logging.getLogger("finance-guru.strat.social_buzz")
@@ -42,7 +43,11 @@ BUY_MEAN_SENT       = 0.30
 SELL_MEAN_SENT      = -0.30
 TAKE_PROFIT_PCT     = 0.05
 MIN_POSTS_FOR_BUY   = 3        # one upvoted post is not a trend
-MAX_FRESH_BUYS      = 3
+# Phase H-4: the per-strategy fresh-buy cap is now driven by CFG so a
+# single env var (FINANCE_GURU_MAX_FRESH_BUYS) controls both this
+# strategy's emission ceiling and the orchestrator's diversification
+# gate. Kept as a module-level constant for back-compat with any
+# notebook/import that referenced it; resolved lazily at decide-time.
 
 
 def _summarise_reason(symbol: str, action: str, posts: pd.DataFrame) -> str:
@@ -152,7 +157,7 @@ def decide(ctx: DecisionContext) -> list[Signal]:
         candidates.append((score, sym, sym_posts))
 
     candidates.sort(reverse=True, key=lambda t: t[0])
-    for score, sym, rows in candidates[:MAX_FRESH_BUYS]:
+    for score, sym, rows in candidates[:CFG.max_fresh_buys]:
         signals.append(Signal(
             symbol=sym,
             action="buy",
